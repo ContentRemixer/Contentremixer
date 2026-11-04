@@ -1,0 +1,9 @@
+# one folder per video: content/videos/YYYY/YYYY-MM-DD-<slug>/
+title: ""
+author: henrik          # henrik | jeff | adriana | katriana
+youtube_url: ""
+recorded_date: ""
+duration_min: 0
+tags: []
+files:
+  teleprompter: teleprompter.md

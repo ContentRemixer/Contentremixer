@@ -1,0 +1,26 @@
+name: "Recycle request"
+description: "Ask the agent to remix a piece of content into other formats"
+title: "[Recycle] "
+labels: ["recycle"]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Source content path
+      description: "Path in content/ (ex: content/videos/2026/2026-11-04-otel-k8s/) or external URL"
+      placeholder: "content/videos/..."
+    validations:
+      required: true
+  - type: checkboxes
+    id: targets
+    attributes:
+      label: Target formats
+      options:
+        - label: "blog"
+        - label: "YouTube short"
+        - label: "teleprompter script"
+        - label: "GitHub tutorial"
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for the agent (angle, audience, length...)

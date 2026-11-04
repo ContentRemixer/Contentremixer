@@ -1,0 +1,6 @@
+title: ""
+hosts: [adriana, katriana]
+youtube_url: ""
+date: ""
+chapters: []            # "00:12:34 Topic" - used by the agent to find short-worthy moments
+tags: []

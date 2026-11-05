@@ -1,0 +1,10 @@
+# Binaries
+bin/
+
+# Test artifacts
+cover.out
+*.test
+
+# Output of the go build
+app/bin/
+manager

@@ -1,0 +1,79 @@
+# LiteLLM gateway (design §7). The litellm-config ConfigMap is RENDERED by
+# the ModelProfile controller from all ModelProfiles — the placeholder below
+# is replaced on first reconcile. The controller also owns the per-model
+# API-key env wiring (MODEL_KEY_<ALIAS> from the Secrets referenced by
+# ModelProfile.apiKeyRef, design §8 — zero secret values in the repo) and the
+# contentremixer.io/litellm-config-checksum pod-template annotation, which
+# rolls the Deployment whenever the rendered config changes.
+# This manifest is the curated base; if absent, the controller creates an
+# equivalent Deployment itself (ISI-7078).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: litellm
+        app.kubernetes.io/part-of: contentremixer
+      annotations:
+        # Maintained by the ModelProfile controller (sha256 of rendered config).
+        contentremixer.io/litellm-config-checksum: ""
+    spec:
+      containers:
+        - name: litellm
+          # Pinned by subtask C (was main-latest). Bump deliberately.
+          image: ghcr.io/berriai/litellm:main-v1.82.3
+          args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+          # MODEL_KEY_* env entries are appended by the controller from
+          # ModelProfile.spec.apiKeyRef — do not hand-edit them here.
+          ports:
+            - name: http
+              containerPort: 4000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selector:
+    app.kubernetes.io/name: litellm
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+      protocol: TCP

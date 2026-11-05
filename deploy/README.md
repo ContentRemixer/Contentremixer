@@ -118,7 +118,58 @@ shows a `200` in GitHub → Settings → Webhooks → *Recent Deliveries* and th
 operator posts the ack comment. This is the infra prerequisite for the E2E gate
 ([ISI-7085](https://.../ISI-7085)).
 
-### Option A — Cloudflare Tunnel (RECOMMENDED)
+> **Edge choice (ISI-7112, board + CEO):** **Option C — Tailscale Funnel** is
+> the chosen turnkey path. **Option A (Cloudflare Tunnel)** and **Option B
+> (router port-forward)** are kept as documented fallbacks.
+
+#### Irreducible owner-provided inputs (Tailscale path) — the whole bundle
+
+Everything below is a credential/network action **no agent here can self-serve**.
+Once these three land, an agent finishes the apply + webhook wiring, leaving
+only the `recycle:*` E2E on [ISI-7085](https://.../ISI-7085):
+
+1. **Tailscale tailnet access** — a **Tailscale auth key** (or OAuth client for
+   the Kubernetes operator) scoped to the homelab tailnet, **with Funnel enabled
+   for the tailnet** (ACL `nodeAttrs` → `funnel`) and **HTTPS + MagicDNS on**.
+   The auth key/OAuth client cannot be minted without tailnet-admin access.
+2. **Operator `github-pat`** — a PAT with **`contents`, `pull_requests`, and
+   `issues` write** on `ContentRemixer/Contentremixer`, for the operator to ack
+   issues and open PRs.
+3. **One of** (who runs the apply + webhook wiring):
+   - **(a)** a **k8Squad-test kubeconfig for ProxOps** *and* a **GitHub token
+     with the Webhooks permission** → an agent runs the `kubectl apply` +
+     `POST /repos/.../hooks` end-to-end; **or**
+   - **(b)** the **owner runs the Option C runbook** below by hand.
+
+   > The default ProxOps `GITHUB_TOKEN` has repo-admin **but not** the Webhooks
+   > permission (confirmed `403` on `/repos/.../hooks`), so (a)'s separate
+   > Webhooks-scoped token is genuinely required for the agent to create the hook.
+
+### Option C — Tailscale Funnel (RECOMMENDED)
+
+No domain to own, no router/WAN change, no home-IP exposure, works through
+CGNAT, and the homelab already runs Tailscale. Funnel terminates TLS at the
+tailnet edge with a **Let's-Encrypt, GitHub-trusted cert** — so **this option
+satisfies the "GitHub-trusted cert" requirement for free** (no on-cluster ACME
+issuer). Funnel only serves public ports **443 / 8443 / 10000**; the webhook
+lands on **443**. `tailscale-funnel.example.yaml` in this overlay is the ready
+Tailscale-operator `Ingress` (SHAPE ONLY, not in `kustomization.yaml`).
+
+1. **[owner]** In the Tailscale admin console: enable **Funnel** for the tailnet
+   (ACL `nodeAttrs` → `"attr": ["funnel"]`), ensure **HTTPS certificates** and
+   **MagicDNS** are on, and mint an **auth key** (or OAuth client) for the
+   Kubernetes operator (see the owner-inputs bundle above).
+2. **[agent]** Install the Tailscale Kubernetes operator (owns
+   `ingressClassName: tailscale`) with that credential — e.g. via the upstream
+   `tailscale/tailscale-operator` Helm chart — then apply the Funnel Ingress:
+   ```sh
+   kubectl apply -f deploy/overlays/k8squad-test/tailscale-funnel.example.yaml
+   kubectl -n contentremixer get ingress operator-webhook-funnel \
+     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'   # recycler.<tailnet>.ts.net
+   ```
+   Public host is now `https://recycler.<tailnet>.ts.net/github/webhook`.
+
+### Option A — Cloudflare Tunnel (fallback)
 
 No router/WAN change, no home-IP exposure, and Cloudflare terminates TLS at its
 edge with a trusted cert — so **this option satisfies the "GitHub-trusted cert"
@@ -141,7 +192,7 @@ this overlay is the ready cloudflared Deployment (SHAPE ONLY, not in
 ### Option B — Router port-forward + ACME cert
 
 Forward WAN `:443` → `10.0.0.222` and serve a real cert on the Gateway. Exposes
-the home WAN IP and is fragile on a dynamic IP; prefer Option A.
+the home WAN IP and is fragile on a dynamic IP; prefer Option C (or A).
 
 1. **[owner]** Port-forward WAN `:443` → `10.0.0.222:443` on the homelab router,
    and add a public DNS `A` record `recycler.<domain>` → <home WAN IP>.
@@ -168,7 +219,11 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option A.
    # kind: ClusterIssuer}; dnsNames: [recycler.<domain>]; drop ipAddresses.
    ```
 
-### Shared steps (both options)
+### Shared steps (all options)
+
+> Public host: **Option C** → `https://recycler.<tailnet>.ts.net`, **Option A**
+> → `https://recycler.<domain>` (Cloudflare), **Option B** → your public DNS
+> host. Substitute it for `recycler.<domain>` in the Payload URL below.
 
 3. **Secrets** (out-of-band, never in repo — see "Secrets mechanism" above):
    - **[agent]** `github-webhook` HMAC — generate a fresh random secret; it only

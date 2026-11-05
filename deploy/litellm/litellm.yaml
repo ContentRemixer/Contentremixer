@@ -1,0 +1,71 @@
+# LiteLLM gateway (design §7). The litellm-config ConfigMap is RENDERED by
+# the ModelProfile controller from all ModelProfiles — the placeholder below
+# is replaced on first reconcile. No model secrets in the ConfigMap (design §8):
+# keys are wired as env from Secrets by subtask C.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: litellm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: litellm
+        app.kubernetes.io/part-of: contentremixer
+      annotations:
+        # Roll on config change (subtask C maintains the checksum).
+        contentremixer.io/litellm-config-checksum: ""
+    spec:
+      containers:
+        - name: litellm
+          image: ghcr.io/berriai/litellm:main-latest # pin in subtask C
+          args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+          ports:
+            - name: http
+              containerPort: 4000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: litellm-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selector:
+    app.kubernetes.io/name: litellm
+  ports:
+    - name: http
+      port: 4000
+      targetPort: http
+      protocol: TCP

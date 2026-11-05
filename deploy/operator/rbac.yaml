@@ -1,0 +1,55 @@
+# Operator RBAC (curated from the controller/webhook kubebuilder markers).
+# Namespace-scoped to the install namespace (design §2: Phase 1 operator is
+# namespace-scoped).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: contentremixer-operator
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+rules:
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles", "referencerepos"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles/status", "referencerepos/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles/finalizers", "referencerepos/finalizers"]
+    verbs: ["update"]
+  # PAT / webhook HMAC resolution (ReferenceRepo controller) and API key
+  # resolution (ModelProfile controller / subtask C). Read-only, no values
+  # are ever written back.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # litellm-config rendering (ModelProfile controller).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader election lock.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: contentremixer-operator
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: contentremixer-operator
+subjects:
+  - kind: ServiceAccount
+    name: contentremixer-operator
+    namespace: contentremixer

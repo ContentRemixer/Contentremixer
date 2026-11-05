@@ -1,0 +1,74 @@
+# Operator Deployment (design §7): manager with both controllers + the
+# admission webhook server. 1 replica, leader-elected (room to scale later;
+# controllers stay single-active).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contentremixer-operator
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: contentremixer-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: contentremixer-operator
+        app.kubernetes.io/part-of: contentremixer
+    spec:
+      serviceAccountName: contentremixer-operator
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: ghcr.io/contentremixer/operator:latest # set by CI/subtask I
+          args:
+            - --leader-elect=true
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+          ports:
+            - name: admission
+              containerPort: 9443
+              protocol: TCP
+            - name: github
+              containerPort: 8443 # subtask D: GitHub delivery receiver (non-admission)
+              protocol: TCP
+          volumeMounts:
+            - name: webhook-cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: webhook-cert
+          secret:
+            # cert-manager-issued (design §7); subtask I finalises the issuer.
+            secretName: contentremixer-operator-webhook-tls

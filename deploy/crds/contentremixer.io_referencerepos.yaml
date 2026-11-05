@@ -1,0 +1,236 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: referencerepos.contentremixer.io
+spec:
+  group: contentremixer.io
+  names:
+    kind: ReferenceRepo
+    listKind: ReferenceRepoList
+    plural: referencerepos
+    shortNames:
+    - refrepo
+    singular: referencerepo
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.repo
+      name: Repo
+      type: string
+    - jsonPath: .status.routeCount
+      name: Routes
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ReferenceRepo is the Schema for the referencerepos API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ReferenceRepoSpec defines the desired state of a ReferenceRepo: the crate
+              (repo of reference), its GitHub PAT (Secret ref), PR target settings, and the
+              label→format routes. Admin-owned (platform-wide).
+            properties:
+              labelRoutes:
+                description: |-
+                  LabelRoutes maps a GitHub label to an (inputFormat, outputFormat) pair.
+                  Routing is fully config-driven: the webhook resolves formats from here,
+                  never by parsing the label string. See design §3.
+                items:
+                  description: LabelRoute maps an exact GitHub label to a format transformation.
+                  properties:
+                    inputFormat:
+                      default: auto
+                      description: |-
+                        InputFormat is the source document type the analyzer parses:
+                        teleprompter | livestream | blog | podcast | auto.
+                        "auto" => detect from the source meta.yaml (design §3).
+                        Defaults to "auto" server-side when omitted; omitempty lets Go clients
+                        trigger the default instead of sending an explicit empty string.
+                      enum:
+                      - teleprompter
+                      - livestream
+                      - blog
+                      - podcast
+                      - auto
+                      type: string
+                    label:
+                      description: Label is the exact GitHub label, e.g. "recycle:blog".
+                      minLength: 1
+                      type: string
+                    outputFormat:
+                      description: |-
+                        OutputFormat selects the writer style guide styles/<outputFormat>.md:
+                        blog | short | tutorial | teleprompter.
+                      enum:
+                      - blog
+                      - short
+                      - tutorial
+                      - teleprompter
+                      type: string
+                  required:
+                  - label
+                  - outputFormat
+                  type: object
+                minItems: 1
+                type: array
+              owner:
+                description: Owner — Admin/platform-owned when empty (Phase-1 default).
+                properties:
+                  subject:
+                    description: |-
+                      Subject is the IdP subject (OIDC `sub`) of the owning DevRel, or empty
+                      for Admin/platform-owned resources.
+                    type: string
+                type: object
+              prTarget:
+                description: PRTarget controls how/where PRs are opened.
+                properties:
+                  baseBranch:
+                    default: main
+                    description: BaseBranch is the PR base (default "main").
+                    type: string
+                  branchPrefix:
+                    default: recycle/
+                    description: BranchPrefix prefixes generated PR branches (default
+                      "recycle/").
+                    type: string
+                  draft:
+                    description: Draft opens PRs as drafts when true (default false).
+                    type: boolean
+                type: object
+              repo:
+                description: Repo is "owner/name" on GitHub (e.g. "ContentRemixer/Contentremixer").
+                pattern: ^[^/\s]+/[^/\s]+$
+                type: string
+              tokenRef:
+                description: |-
+                  TokenRef references the Secret key holding the GitHub PAT used to read the
+                  repo, post ack comments, and open PRs. Never inlined.
+                properties:
+                  key:
+                    minLength: 1
+                    type: string
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+              webhookSecretRef:
+                description: |-
+                  WebhookSecretRef references the Secret key holding the GitHub webhook HMAC
+                  secret used to verify `X-Hub-Signature-256` on deliveries.
+                properties:
+                  key:
+                    minLength: 1
+                    type: string
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+            required:
+            - labelRoutes
+            - repo
+            - tokenRef
+            - webhookSecretRef
+            type: object
+          status:
+            description: ReferenceRepoStatus defines the observed state of a ReferenceRepo.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              routeCount:
+                description: RouteCount mirrors len(spec.labelRoutes) once validated.
+                type: integer
+              tokenResolved:
+                description: TokenResolved is true once the PAT Secret ref resolves
+                  successfully.
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,17 @@
+# Admission webhook Service (cluster-internal only, design §7).
+apiVersion: v1
+kind: Service
+metadata:
+  name: operator-admission
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selector:
+    app.kubernetes.io/name: contentremixer-operator
+  ports:
+    - name: https
+      port: 443
+      targetPort: admission
+      protocol: TCP

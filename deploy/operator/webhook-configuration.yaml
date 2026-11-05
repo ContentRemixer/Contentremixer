@@ -1,0 +1,42 @@
+# ValidatingWebhookConfiguration (curated copy of app/config/webhook/manifests.yaml
+# pointed at the operator-admission Service). cert-manager CA injection is
+# annotated; subtask I finalises the issuer.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: contentremixer-validating-webhooks
+  annotations:
+    cert-manager.io/inject-ca-from: contentremixer/contentremixer-operator-webhook-tls
+webhooks:
+  - admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: operator-admission
+        namespace: contentremixer
+        path: /validate-contentremixer-io-v1alpha1-modelprofile
+        port: 443
+    failurePolicy: Fail
+    sideEffects: None
+    name: vmodelprofile-v1alpha1.contentremixer.io
+    rules:
+      - apiGroups: ["contentremixer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["modelprofiles"]
+        scope: Namespaced
+  - admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: operator-admission
+        namespace: contentremixer
+        path: /validate-contentremixer-io-v1alpha1-referencerepo
+        port: 443
+    failurePolicy: Fail
+    sideEffects: None
+    name: vreferencerepo-v1alpha1.contentremixer.io
+    rules:
+      - apiGroups: ["contentremixer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["referencerepos"]
+        scope: Namespaced

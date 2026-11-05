@@ -1,0 +1,19 @@
+# GitHub webhook delivery receiver Service + TLS Ingress (design §7).
+# NOTE: the delivery path (:8443, non-admission) is DISTINCT from the
+# admission webhook Service. The Go receiver itself lands with subtask D.
+apiVersion: v1
+kind: Service
+metadata:
+  name: operator-webhook
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selector:
+    app.kubernetes.io/name: contentremixer-operator
+  ports:
+    - name: github
+      port: 8443
+      targetPort: github
+      protocol: TCP

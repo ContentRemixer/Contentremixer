@@ -1,0 +1,29 @@
+# Content CI validator image (ISI-7118, subtask C7). Builds the `contentremixer`
+# CLI whose `content validate` subcommand runs the Content CI rule registry
+# (internal/contentvalidate) over a mounted reference-repo checkout.
+#
+# The composite action (.github/actions/content-validate) and the ReferenceRepo
+# install (C8, ISI-7120) both run THIS image — zero duplication of the checks.
+# The binary only reads files (no git, no network), so a distroless static base
+# with no extra tooling is sufficient.
+FROM golang:1.23 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY cmd/ cmd/
+COPY api/ api/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -a -ldflags "-X main.version=${VERSION}" -o contentremixer ./cmd/contentremixer
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/contentremixer .
+USER 65532:65532
+
+# Invoke as: contentremixer content validate [flags]
+ENTRYPOINT ["/contentremixer"]

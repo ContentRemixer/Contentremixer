@@ -1,0 +1,167 @@
+# Content CI — ISI-7118 (subtask C7), ISI-7093 plan §3 "Content CI pipeline".
+#
+# Runs the `content validate` checks (required assets, structure, quality, SEO,
+# PR template) on changed content folders, via the composite action this repo
+# publishes (.github/actions/content-validate). This is the reference wiring
+# C8 (ISI-7120) installs into the ReferenceRepo — the ReferenceRepo workflow
+# will `uses:` the published action + image instead of building locally.
+#
+# Separate from ci.yml (C1 Code CI) by design: ci.yml explicitly scopes the
+# ReferenceRepo content CI out to C7+.
+name: content-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "content/**"
+      - "app/internal/contentvalidate/**"
+      - "app/cmd/contentremixer/**"
+      - "app/internal/pipeline/pr/**"
+      - "app/Dockerfile.content-validate"
+      - ".github/actions/content-validate/**"
+      - ".github/workflows/content-ci.yml"
+  pull_request:
+    paths:
+      - "content/**"
+      - "app/internal/contentvalidate/**"
+      - "app/cmd/contentremixer/**"
+      - "app/internal/pipeline/pr/**"
+      - "app/Dockerfile.content-validate"
+      - ".github/actions/content-validate/**"
+      - ".github/workflows/content-ci.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: content-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/contentremixer/content-validate
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validate this repo's own changed content folders through the action.
+  validate-content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the action diffs against the base ref
+      - name: Build validator image
+        run: docker build -f app/Dockerfile.content-validate -t content-validate:ci app
+      - name: content validate (changed folders)
+        uses: ./.github/actions/content-validate
+        with:
+          image: content-validate:ci
+
+  # ---------------------------------------------------------------------------
+  # Self-test: prove the action PASSES a well-formed fixture and FAILS a broken
+  # one (missing title + missing required asset). Fixtures are generated at run
+  # time under the workspace (no secret-shaped bytes ever committed, so the
+  # whole-repo gitleaks gate stays green).
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build validator image
+        run: docker build -f app/Dockerfile.content-validate -t content-validate:ci app
+      - name: Generate pass/fail fixtures
+        run: |
+          set -euo pipefail
+          for v in pass fail; do
+            mkdir -p ".cv-fixtures/$v/content/blog"
+            cp content/blog/meta.template.yaml ".cv-fixtures/$v/content/blog/meta.template.yaml"
+          done
+          # PASS: complete, clean blog item.
+          mkdir -p .cv-fixtures/pass/content/blog/hello-world
+          cat >.cv-fixtures/pass/content/blog/hello-world/meta.yaml <<'EOF'
+          title: A Perfectly Reasonable Blog Title
+          author: jeff
+          url: https://example.com/hello-world
+          published_date: 2026-11-05
+          tags: [kubernetes, platform]
+          files:
+            post: index.md
+          EOF
+          printf '# A Perfectly Reasonable Blog Title\n\nClean prose, single H1.\n' \
+            >.cv-fixtures/pass/content/blog/hello-world/index.md
+          # FAIL: empty title + declared index.md is absent.
+          mkdir -p .cv-fixtures/fail/content/blog/broken
+          cat >.cv-fixtures/fail/content/blog/broken/meta.yaml <<'EOF'
+          title: ""
+          author: jeff
+          url: ""
+          published_date: ""
+          tags: []
+          files:
+            post: index.md
+          EOF
+      - name: Action PASSES the clean fixture
+        uses: ./.github/actions/content-validate
+        with:
+          image: content-validate:ci
+          repo-root: .cv-fixtures/pass
+          all: "true"
+      - name: Action FAILS the broken fixture
+        id: failcase
+        continue-on-error: true
+        uses: ./.github/actions/content-validate
+        with:
+          image: content-validate:ci
+          repo-root: .cv-fixtures/fail
+          all: "true"
+      - name: Assert the broken fixture failed
+        run: |
+          if [ "${{ steps.failcase.outcome }}" != "failure" ]; then
+            echo "::error::content-validate should have failed the broken fixture but did not"
+            exit 1
+          fi
+          echo "Broken fixture correctly failed validation. ✓"
+
+  # ---------------------------------------------------------------------------
+  # Publish the validator image to GHCR so consumers (the composite action's
+  # default image, and the ReferenceRepo install C8 wires up) can pull it.
+  # amd64 only (homelab nodes are x86_64); PRs build-only. Gated on the checks
+  # above passing.
+  image:
+    needs: [validate-content, selftest]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Compute tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          TAGS="${IMAGE}:sha-${SHA}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME}"
+          fi
+          echo "tags=${TAGS}" >>"$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME}-${SHA}" >>"$GITHUB_OUTPUT"
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build/push content-validate image
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: app/Dockerfile.content-validate
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          provenance: false

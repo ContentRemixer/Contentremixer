@@ -1,0 +1,133 @@
+# Content CI composite action (ISI-7118, subtask C7).
+#
+# Thin wrapper around the published `contentremixer content validate` container
+# image (ISI-7118 Dockerfile.content-validate). It resolves the changed content
+# folders, runs the validator inside the image against the checked-out
+# reference repo, emits inline PR annotations (the image writes GitHub
+# workflow-commands to stdout), and appends the markdown summary table to the
+# job summary.
+#
+# This action is the central Content CI entrypoint C8 (ISI-7120) installs into
+# the ReferenceRepo — zero duplication: the ReferenceRepo workflow references
+#   uses: ContentRemixer/contentremixer/.github/actions/content-validate@vX
+# and gets exactly these checks.
+name: Content CI — content validate
+description: >-
+  Validate changed content folders (required assets, structure, quality, SEO,
+  PR template) against the ContentRemixer Content CI rules.
+
+inputs:
+  image:
+    description: Validator container image (ref or tag) to run.
+    required: false
+    default: ghcr.io/contentremixer/content-validate:latest
+  repo-root:
+    description: Reference-repo root relative to the workspace.
+    required: false
+    default: "."
+  changed-files:
+    description: >-
+      Newline- or space-separated changed paths to validate. When empty and
+      'all' is false, the action computes the PR diff against base-ref.
+    required: false
+    default: ""
+  all:
+    description: Validate every content folder under content/ (ignores diff).
+    required: false
+    default: "false"
+  base-ref:
+    description: >-
+      Git ref to diff against for changed-file detection (used only when
+      changed-files is empty and all is false). Defaults to the PR base.
+    required: false
+    default: ""
+  pr-body-file:
+    description: Path to a file with the PR body, enabling the pr-template check.
+    required: false
+    default: ""
+  pr-content-type:
+    description: Force the content PR template type (blog|social|newsletter|default).
+    required: false
+    default: ""
+  fail-on:
+    description: Severity that fails the run (error|warning).
+    required: false
+    default: "error"
+
+outputs:
+  summary-file:
+    description: Path to the generated markdown summary.
+    value: ${{ steps.run.outputs.summary-file }}
+
+runs:
+  using: composite
+  steps:
+    - id: changed
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.all }}" = "true" ]; then
+          echo "mode=all" >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+        files="${{ inputs.changed-files }}"
+        if [ -z "${files// /}" ]; then
+          base="${{ inputs.base-ref }}"
+          if [ -z "$base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+            base="origin/${GITHUB_BASE_REF}"
+          fi
+          if [ -n "$base" ]; then
+            git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF:-main}" || true
+            files="$(git diff --name-only "${base}...HEAD" -- 'content/**' || true)"
+          else
+            files="$(git diff --name-only HEAD~1 HEAD -- 'content/**' || true)"
+          fi
+        fi
+        # Write the resolved list to a file the container can read via --changed-file.
+        printf '%s\n' $files >"${RUNNER_TEMP}/content-validate-changed.txt"
+        echo "mode=changed" >>"$GITHUB_OUTPUT"
+        echo "list=${RUNNER_TEMP}/content-validate-changed.txt" >>"$GITHUB_OUTPUT"
+
+    - id: run
+      shell: bash
+      run: |
+        set -euo pipefail
+        summary="${RUNNER_TEMP}/content-validate-summary.md"
+        : >"$summary"
+        echo "summary-file=${summary}" >>"$GITHUB_OUTPUT"
+
+        args=(content validate --repo-root "${{ inputs.repo-root }}" \
+              --format github --fail-on "${{ inputs.fail-on }}" \
+              --summary-out /summary/content-validate-summary.md)
+        mounts=(-v "${GITHUB_WORKSPACE}:/work" -w /work \
+                -v "${RUNNER_TEMP}:/summary")
+
+        if [ "${{ steps.changed.outputs.mode }}" = "all" ]; then
+          args+=(--all)
+        else
+          list="${{ steps.changed.outputs.list }}"
+          if [ ! -s "$list" ]; then
+            echo "content-validate: no changed content paths; nothing to validate."
+            exit 0
+          fi
+          mounts+=(-v "${list}:/changed.txt:ro")
+          args+=(--changed-file /changed.txt)
+        fi
+
+        if [ -n "${{ inputs.pr-body-file }}" ]; then
+          mounts+=(-v "${GITHUB_WORKSPACE}/${{ inputs.pr-body-file }}:/prbody.md:ro")
+          args+=(--pr-body-file /prbody.md)
+        fi
+        if [ -n "${{ inputs.pr-content-type }}" ]; then
+          args+=(--pr-content-type "${{ inputs.pr-content-type }}")
+        fi
+
+        status=0
+        docker run --rm "${mounts[@]}" "${{ inputs.image }}" "${args[@]}" || status=$?
+
+        # The container wrote the summary straight to $summary (RUNNER_TEMP is
+        # mounted at /summary). Append it to the job summary if non-empty.
+        if [ -s "$summary" ]; then
+          cat "$summary" >>"$GITHUB_STEP_SUMMARY"
+        fi
+        exit $status

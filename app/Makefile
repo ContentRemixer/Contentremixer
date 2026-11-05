@@ -72,6 +72,21 @@ build: manifests generate fmt vet ## Build manager binary.
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
 
+# Content CI validator (ISI-7118, subtask C7).
+CONTENT_VALIDATE_IMG ?= ghcr.io/contentremixer/content-validate:latest
+
+.PHONY: content-validate
+content-validate: fmt vet ## Build the contentremixer (content validate) CLI binary.
+	go build -o bin/contentremixer ./cmd/contentremixer
+
+.PHONY: content-validate-run
+content-validate-run: ## Run content validate over the whole content/ tree (REPO_ROOT overridable).
+	go run ./cmd/contentremixer content validate --repo-root $(or $(REPO_ROOT),..) --all
+
+.PHONY: docker-build-content-validate
+docker-build-content-validate: ## Build the content-validate docker image.
+	$(CONTAINER_TOOL) build -f Dockerfile.content-validate -t ${CONTENT_VALIDATE_IMG} .
+
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .

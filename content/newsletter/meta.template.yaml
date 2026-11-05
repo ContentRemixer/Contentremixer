@@ -1,0 +1,31 @@
+title: ""
+author: jeff
+url: ""
+published_date: ""
+tags: []
+files:
+  issue: index.md
+
+# PR-template field contract (ISI-7119 / plan §4 "Content PR template").
+# Content CI (C7/C8) validates the submitted content PR template against these
+# keys. Keep in lock-step with .github/PULL_REQUEST_TEMPLATE/newsletter.md and
+# app/internal/pipeline/pr/template.go (typeFields["newsletter"]).
+pr_template:
+  type: newsletter
+  common:
+    - content_type
+    - source
+    - target_format
+    - slug
+    - summary
+    - linked_issue
+  fields:
+    - key: subject
+      label: Subject line
+      required: true
+    - key: preview
+      label: Preview text
+      required: true
+    - key: cta
+      label: Call to action (CTA)
+      required: true

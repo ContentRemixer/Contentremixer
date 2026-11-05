@@ -103,12 +103,115 @@ kubectl -n contentremixer rollout status deploy/contentremixer-operator
    admission path + self-signed CA injection.
 5. **Probes:** operator pod `READY 1/1` (liveness `/healthz`, readiness
    `/readyz` on :8081).
-6. **Real github.com delivery (remaining, owner-gated):** expose `10.0.0.222`
-   publicly (DNS + tunnel/port-forward) with a GitHub-trusted cert, then
-   configure the repo webhook (`https://<public-host>/github/webhook`,
-   `application/json`, secret = `github-webhook` HMAC, event *Issues*) and
-   create a `ReferenceRepo` CR + its Secrets. Open a `recycle:*` issue →
-   *Recent Deliveries* `200` and the operator posts the ack.
+6. **Real github.com delivery:** see "Real github.com delivery" below.
+
+## Real github.com delivery (ISI-7112)
+
+LAN TLS is verified (above). To get **real github.com deliveries** the webhook
+needs a public edge, a GitHub-trusted cert, real Secrets, a `ReferenceRepo` CR,
+and the repo webhook configured. Each step is tagged **[owner]** (needs an
+account/credential/network no agent here holds) or **[agent]** (a manifest/API
+call an agent can run once it has a k8Squad-test kubeconfig).
+
+**Done when:** opening a `recycle:*` issue on `ContentRemixer/Contentremixer`
+shows a `200` in GitHub → Settings → Webhooks → *Recent Deliveries* and the
+operator posts the ack comment. This is the infra prerequisite for the E2E gate
+([ISI-7085](https://.../ISI-7085)).
+
+### Option A — Cloudflare Tunnel (RECOMMENDED)
+
+No router/WAN change, no home-IP exposure, and Cloudflare terminates TLS at its
+edge with a trusted cert — so **this option satisfies the "GitHub-trusted cert"
+requirement for free** (no on-cluster ACME issuer). `tunnel.example.yaml` in
+this overlay is the ready cloudflared Deployment (SHAPE ONLY, not in
+`kustomization.yaml`).
+
+1. **[owner]** In Cloudflare Zero Trust (a Cloudflare account + a zone/domain is
+   required): create a tunnel, copy its **token**, and add a Public Hostname
+   route `recycler.<domain>` → `http://operator-webhook.contentremixer.svc:8443`.
+2. **[agent]** Create the token Secret and apply the connector:
+   ```sh
+   kubectl -n contentremixer create secret generic cloudflared-tunnel-token \
+     --from-literal=token="$CF_TUNNEL_TOKEN"
+   kubectl apply -f deploy/overlays/k8squad-test/tunnel.example.yaml
+   kubectl -n contentremixer rollout status deploy/cloudflared
+   ```
+   Public host is now `https://recycler.<domain>/github/webhook`.
+
+### Option B — Router port-forward + ACME cert
+
+Forward WAN `:443` → `10.0.0.222` and serve a real cert on the Gateway. Exposes
+the home WAN IP and is fragile on a dynamic IP; prefer Option A.
+
+1. **[owner]** Port-forward WAN `:443` → `10.0.0.222:443` on the homelab router,
+   and add a public DNS `A` record `recycler.<domain>` → <home WAN IP>.
+2. **[owner]** Provide an ACME issuer credential (e.g. a Cloudflare API token for
+   DNS-01, or open `:80` for HTTP-01).
+3. **[agent]** Replace the self-signed `github-webhook-tls` Certificate in
+   `exposure.yaml` with a real issuer, e.g.:
+   ```yaml
+   # ClusterIssuer (apply once; DNS-01 shown):
+   apiVersion: cert-manager.io/v1
+   kind: ClusterIssuer
+   metadata: { name: letsencrypt-dns01 }
+   spec:
+     acme:
+       server: https://acme-v02.api.letsencrypt.org/directory
+       email: <owner-email>
+       privateKeySecretRef: { name: letsencrypt-dns01-key }
+       solvers:
+         - dns01:
+             cloudflare:
+               apiTokenSecretRef: { name: cloudflare-api-token, key: token }
+   ---
+   # github-webhook-tls Certificate change: issuerRef -> {name: letsencrypt-dns01,
+   # kind: ClusterIssuer}; dnsNames: [recycler.<domain>]; drop ipAddresses.
+   ```
+
+### Shared steps (both options)
+
+3. **Secrets** (out-of-band, never in repo — see "Secrets mechanism" above):
+   - **[agent]** `github-webhook` HMAC — generate a fresh random secret; it only
+     has to match the value entered in the GitHub webhook:
+     ```sh
+     WEBHOOK_SECRET="$(openssl rand -hex 32)"
+     kubectl -n contentremixer create secret generic github-webhook \
+       --from-literal=hmac="$WEBHOOK_SECRET"
+     ```
+   - **[owner→agent]** `github-pat` — a PAT with `contents`, `pull_requests`, and
+     `issues` write on `ContentRemixer/Contentremixer`, for the operator to ack
+     issues and open PRs. An agent can mint/apply this **iff** it is given a token
+     with that scope; the default ProxOps `GITHUB_TOKEN` has repo-admin **but not
+     the Webhooks permission** (confirmed `403` on `/repos/.../hooks`), so it
+     cannot create the repo webhook in step 5 below.
+     ```sh
+     kubectl -n contentremixer create secret generic github-pat \
+       --from-literal=token="$GITHUB_PAT"
+     ```
+4. **[agent]** Apply the `ReferenceRepo` CR (shape in
+   `deploy/secrets/referencerepo.example.yaml`; already points at
+   `ContentRemixer/Contentremixer` with the `tokenRef`/`webhookSecretRef`/
+   labelRoutes above):
+   ```sh
+   kubectl apply -f deploy/secrets/referencerepo.example.yaml
+   ```
+5. **[owner OR agent-with-Webhooks-token]** Configure the repo webhook — GitHub →
+   repo Settings → Webhooks → Add webhook:
+   - Payload URL: `https://recycler.<domain>/github/webhook`
+   - Content type: `application/json`
+   - Secret: the `$WEBHOOK_SECRET` from step 3
+   - Events: *Issues* only
+   Equivalent API call (needs a token with the **Webhooks** permission):
+   ```sh
+   curl -X POST -H "Authorization: Bearer $HOOK_TOKEN" \
+     -H "Accept: application/vnd.github+json" \
+     https://api.github.com/repos/ContentRemixer/Contentremixer/hooks \
+     -d '{"name":"web","active":true,"events":["issues"],
+          "config":{"url":"https://recycler.<domain>/github/webhook",
+                    "content_type":"json","secret":"'"$WEBHOOK_SECRET"'"}}'
+   ```
+6. **Verify:** open a `recycle:blog` issue on the repo → GitHub *Recent
+   Deliveries* shows `200`, and the operator posts the ack comment.
 
 > **litellm note:** the LiteLLM gateway pod currently can't schedule — k8Squad
 > test worker nodes are under **ephemeral-storage pressure** and evict the

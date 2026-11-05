@@ -1,0 +1,73 @@
+# Public edge for real github.com webhook delivery — Cloudflare Tunnel (ISI-7112).
+#
+# WHY A TUNNEL: the Gateway is pinned to 10.0.0.222, a PRIVATE LAN IP that
+# github.com (public) cannot reach. A Cloudflare Tunnel gives a public hostname
+# WITHOUT exposing the homelab WAN IP or touching the router, and Cloudflare
+# terminates TLS at its edge with a **GitHub-trusted cert** — so this path also
+# satisfies ISI-7112 item 2 (no on-cluster ACME issuer needed). The origin hop
+# stays inside the cluster: cloudflared -> operator-webhook:8443 (plain HTTP,
+# the receiver does not do TLS; see exposure.yaml).
+#
+# SHAPE ONLY — this is an *.example.yaml like deploy/secrets/*. It is NOT in
+# kustomization.yaml and is never applied as-is. The owner supplies the tunnel
+# token out-of-band (see deploy/README.md "Real delivery", Option A) and the
+# public-hostname -> service route is set in the Cloudflare Zero Trust dashboard
+# (Public Hostname: recycler.<domain>  ->  http://operator-webhook.contentremixer.svc:8443).
+#
+# Create the token Secret out-of-band (value from Cloudflare Zero Trust, never
+# committed):
+#   kubectl -n contentremixer create secret generic cloudflared-tunnel-token \
+#     --from-literal=token="$CF_TUNNEL_TOKEN"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 2 # HA: two connectors so a node drain does not drop deliveries
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app.kubernetes.io/part-of: contentremixer
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2024.12.2
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --metrics
+            - 0.0.0.0:2000
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-tunnel-token
+                  key: token
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

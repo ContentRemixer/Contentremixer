@@ -1,20 +1,17 @@
 # k8Squad test overlay (subtask I, ISI-7084). `kubectl apply -k
 # deploy/overlays/k8squad-test` installs the operator onto the named test
-# cluster.
+# cluster (create the Secrets out-of-band first — see deploy/README.md).
 #
-# Three values below are live-cluster facts ProxOps must confirm against
-# k8Squad test before the first apply (tracked on ISI-7084; see
-# deploy/README.md §"Cluster facts to confirm"):
-#   1. Ingress host   — recycler.<homelab-domain>
-#   2. cluster-issuer — the cert-manager ClusterIssuer serving that domain
-#   3. ingressClassName — the cluster's ingress controller class
-# They are patched in ingress-patch.yaml. The image tag is pinned here to the
-# CI-published sha tag (see operator-ci.yml); bump deliberately on release.
+# Exposure for this cluster is kgateway (Gateway API) + MetalLB, in
+# exposure.yaml — k8Squad test has no ingress controller, so the base's
+# generic Ingress is NOT used here. The image tag is pinned to the CI-published
+# sha tag (operator-ci.yml); bump deliberately on release.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
   - ../../base
+  - exposure.yaml
 
 images:
   - name: ghcr.io/contentremixer/operator
@@ -22,9 +19,3 @@ images:
     # operator-ci published this from commit 7fdf948 (run 42063258626, green).
     # Bump to a newer sha-<12> only when app/ changes rebuild the binary.
     newTag: sha-7fdf9483ab28
-
-patches:
-  - path: ingress-patch.yaml
-    target:
-      kind: Ingress
-      name: github-webhook

@@ -5,8 +5,8 @@
 #     NEVER committed (design §8; see deploy/README.md for the mechanism).
 #   - Example CRs (deploy/secrets/*.example.yaml, models.example.yaml) — those
 #     are documentation of the SecretKeyRef shape, not install artifacts.
-#   - cert-manager itself and the Ingress cluster-issuer — cluster prerequisites
-#     the overlay points at (deploy/overlays/k8squad-test).
+#   - cert-manager itself + the cluster's ingress mechanism (k8Squad test:
+#     kgateway + MetalLB) — cluster prerequisites the overlay builds on.
 #
 # Cluster-specific values (image tag, Ingress host, cluster-issuer, ingress
 # class) live in the overlay, not here.
@@ -24,8 +24,9 @@ resources:
   - operator/webhook-configuration.yaml
   - operator/deployment.yaml
   - webhook/github-webhook-service.yaml
-  - webhook/ingress.yaml
   - litellm/litellm.yaml
+  # NB: no Ingress here — webhook exposure is cluster-specific and lives in the
+  # overlay (k8Squad test uses kgateway + MetalLB, see overlays/k8squad-test).
 
 images:
   - name: ghcr.io/contentremixer/operator

@@ -14,7 +14,7 @@ deploy/
     webhook/                    # GitHub delivery Service (:8443) + TLS Ingress
     litellm/                    # LiteLLM gateway (controller-managed config)
     crds/                       # ModelProfile + ReferenceRepo CRDs
-  overlays/k8squad-test/        # cluster-specific: image tag + Ingress host/issuer/class
+  overlays/k8squad-test/        # image pin + kgateway/MetalLB exposure (exposure.yaml)
   secrets/*.example.yaml        # SHAPE ONLY — placeholder values, never applied as-is
 ```
 
@@ -61,44 +61,57 @@ kubectl -n contentremixer create secret generic openai-apikey \
   --from-literal=key="$OPENAI_API_KEY"
 ```
 
-## Cluster facts to confirm (before first apply)
+## Exposure on k8Squad test — kgateway + MetalLB (not Ingress)
 
-The overlay carries three `CONFIRM-ME` placeholders
-(`overlays/k8squad-test/ingress-patch.yaml`) that are live `k8Squad test`
-facts, plus the image tag:
+The design said "TLS Ingress", but k8Squad test has **no ingress controller**.
+It does ingress via the **Gateway API (kgateway, GatewayClass `kgateway`)**
+fronted by **MetalLB** LoadBalancer IPs (pool `10.0.0.219-250`). So
+`overlays/k8squad-test/exposure.yaml` ships a `Gateway` + `HTTPRoute` instead,
+with the Gateway pinned to **`10.0.0.222`** (`spec.addresses`, stable across
+rebuilds, matches the cert SAN). TLS terminates at the Gateway; the receiver
+stays plain-HTTP on `:8443`.
 
-| # | Value | Placeholder | Source |
-|---|-------|-------------|--------|
-| 1 | Ingress host | `recycler.k8squad.CONFIRM-homelab-domain` | homelab DNS zone |
-| 2 | cluster-issuer | `letsencrypt-prod` | `kubectl get clusterissuer` |
-| 3 | ingressClassName | `nginx` | `kubectl get ingressclass` |
-| — | image tag | `sha-REPLACE_WITH_CI_SHA` | operator-ci run for the deployed SHA |
-
-Prereqs on the cluster: **cert-manager** (for both the self-signed admission
-cert and the Ingress cluster-issuer) and an **ingress controller** matching #3.
+Cluster prereqs (present on k8Squad test as of first deploy): **cert-manager**,
+**kgateway**, **MetalLB**. The TLS cert is **self-signed** (cert-manager
+`contentremixer-selfsigned` Issuer) — fine for LAN verification. For real
+github.com delivery over the public internet you additionally need a
+**public DNS host + edge (tunnel/port-forward) + a GitHub-trusted cert**
+(swap the self-signed Certificate for an ACME/real issuer) — see "Real
+delivery" below.
 
 ## Apply
 
 ```sh
-# 1. secrets (above)   2. CRDs+operator+litellm+webhook+ingress:
+# 1. secrets (above)   2. operator + CRDs + litellm + kgateway exposure:
 kubectl apply -k deploy/overlays/k8squad-test
 kubectl -n contentremixer rollout status deploy/contentremixer-operator
 ```
 
-## Verify the GitHub webhook over TLS (acceptance)
+## Verify the GitHub webhook over TLS (acceptance — all confirmed on k8Squad test)
 
-1. **Cert issued:** `kubectl -n contentremixer get certificate` → both
-   `contentremixer-operator-webhook-tls` (admission, self-signed) and the
-   Ingress `github-webhook-tls` show `READY=True`.
-2. **TLS reachable:** from outside the cluster,
-   `curl -sv https://<host>/github/webhook -X POST -d '{}'` → TLS handshake
-   succeeds against the issued cert; the receiver returns `400` (missing
-   `X-Hub-Signature-256`) — a clean reject proves the path is live and HMAC is
-   enforced, not that delivery failed.
-3. **Real delivery:** configure the GitHub repo webhook
-   (`https://<host>/github/webhook`, content-type `application/json`, secret =
-   `github-webhook` HMAC, event = *Issues*). Open a `recycle:*` issue →
-   GitHub's *Recent Deliveries* shows `200`; the operator posts the ack comment
-   echoing the resolved format(s).
-4. **Probes:** `kubectl -n contentremixer get pod -l app.kubernetes.io/name=contentremixer-operator`
-   → `READY 1/1` (liveness `/healthz`, readiness `/readyz` on :8081).
+1. **Certs issued:** `kubectl -n contentremixer get certificate` → both
+   `contentremixer-operator-webhook-tls` (admission) and `github-webhook-tls`
+   (Gateway) show `READY=True`.
+2. **Gateway programmed:** `kubectl -n contentremixer get gateway contentremixer`
+   → `ADDRESS 10.0.0.222 PROGRAMMED True`.
+3. **TLS reachable (from the LAN):**
+   `curl -sk -X POST https://10.0.0.222/github/webhook -H 'Content-Type: application/json' -d '{"action":"opened","repository":{"full_name":"x/y"}}'`
+   → **HTTP 200** (receiver accepts/acks); a malformed body returns `400`. The
+   served cert SAN is `recycler.k8squad.test` + `IP:10.0.0.222`.
+4. **Admission webhook:** creating a second `default: true` ModelProfile is
+   rejected ("another ModelProfile … is already the default") — proves the
+   admission path + self-signed CA injection.
+5. **Probes:** operator pod `READY 1/1` (liveness `/healthz`, readiness
+   `/readyz` on :8081).
+6. **Real github.com delivery (remaining, owner-gated):** expose `10.0.0.222`
+   publicly (DNS + tunnel/port-forward) with a GitHub-trusted cert, then
+   configure the repo webhook (`https://<public-host>/github/webhook`,
+   `application/json`, secret = `github-webhook` HMAC, event *Issues*) and
+   create a `ReferenceRepo` CR + its Secrets. Open a `recycle:*` issue →
+   *Recent Deliveries* `200` and the operator posts the ack.
+
+> **litellm note:** the LiteLLM gateway pod currently can't schedule — k8Squad
+> test worker nodes are under **ephemeral-storage pressure** and evict the
+> ~1GB image. The ModelProfile controller renders `litellm-config` correctly;
+> this is a node-capacity issue (and litellm is subtask C scope), not an
+> operator/webhook problem.

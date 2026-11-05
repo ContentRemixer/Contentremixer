@@ -1,11 +1,22 @@
 # Operator RBAC (curated from the controller/webhook kubebuilder markers).
-# Namespace-scoped to the install namespace (design §2: Phase 1 operator is
-# namespace-scoped).
+#
+# ClusterRole, not Role: the manager binary (cmd/main.go) builds a
+# cluster-wide controller-runtime cache — it has no --namespace flag and sets
+# no cache.Options.DefaultNamespaces, so its informers list/watch Secrets,
+# ModelProfiles and ReferenceRepos at CLUSTER scope. A namespaced Role made
+# every watch fail ("... is forbidden ... at the cluster scope"), so the
+# controllers never reconciled. Granting cluster scope matches what the image
+# actually does today.
+#
+# NOTE (hardening, binary-side / ISI-7077): design §2 intends a
+# namespace-scoped operator. To honor that, the manager must restrict its
+# cache to the install namespace (cache.Options{DefaultNamespaces: ...}); once
+# it does, this can drop back to a namespaced Role. Tracked with the
+# controller follow-ups.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: contentremixer-operator
-  namespace: contentremixer
   labels:
     app.kubernetes.io/name: contentremixer-operator
     app.kubernetes.io/part-of: contentremixer
@@ -45,16 +56,15 @@ rules:
     verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: contentremixer-operator
-  namespace: contentremixer
   labels:
     app.kubernetes.io/name: contentremixer-operator
     app.kubernetes.io/part-of: contentremixer
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: contentremixer-operator
 subjects:
   - kind: ServiceAccount

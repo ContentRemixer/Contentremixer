@@ -15,12 +15,12 @@ import (
 type servingGateway struct {
 	server *httptest.Server
 
-	gotAuth       string
-	gotModel      any // JSON "model" value (nil when omitted)
-	gotMessages   []ChatMessage
-	gotPath       string
-	status        int
-	responseBody  string
+	gotAuth      string
+	gotModel     any // JSON "model" value (nil when omitted)
+	gotMessages  []ChatMessage
+	gotPath      string
+	status       int
+	responseBody string
 }
 
 func newServingGateway(t *testing.T, status int, body string) *servingGateway {

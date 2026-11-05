@@ -1,0 +1,7 @@
+title: "Demo blog post"
+author: jeff
+url: "https://blog.example.com/demo-post"
+published_date: "2026-09-12"
+tags: [go, operators]
+files:
+  post: index.md

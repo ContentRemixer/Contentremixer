@@ -1,0 +1,8 @@
+title: "Demo livestream"
+hosts: [adriana, katriana]
+youtube_url: "https://www.youtube.com/watch?v=demostream"
+date: "2026-10-28"
+chapters: ["00:12:34 Intro", "00:45:00 Deep dive"]
+tags: [observability]
+files:
+  transcript: transcript.txt

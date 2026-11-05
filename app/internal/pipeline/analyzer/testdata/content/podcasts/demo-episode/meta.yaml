@@ -1,0 +1,8 @@
+title: "Demo podcast episode"
+author: adriana
+episode: 7
+url: "https://podcast.example.com/ep7"
+date: "2026-10-01"
+tags: [platform]
+files:
+  transcript: transcript.md

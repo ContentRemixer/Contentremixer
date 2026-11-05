@@ -1,0 +1,8 @@
+title: "Demo video"
+author: henrik
+youtube_url: "https://www.youtube.com/watch?v=demovideo"
+recorded_date: "2026-11-01"
+duration_min: 12
+tags: [otel, k8s]
+files:
+  teleprompter: teleprompter.md

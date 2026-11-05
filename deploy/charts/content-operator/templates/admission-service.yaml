@@ -1,0 +1,18 @@
+{{- if .Values.webhook.enabled }}
+# Admission webhook Service (cluster-internal only, design §7).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.webhook.serviceName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "content-operator.operatorSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      port: 443
+      targetPort: admission
+      protocol: TCP
+{{- end }}

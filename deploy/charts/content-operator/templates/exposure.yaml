@@ -1,0 +1,87 @@
+{{- if .Values.exposure.enabled }}
+# Public webhook exposure via the Gateway API (reproduces the k8squad-test
+# overlay: kgateway + MetalLB). TLS terminates at the Gateway; the receiver
+# stays plain-HTTP on :8443. OFF by default (exposure.enabled=false).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.exposure.gatewayName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.exposure.gatewayClassName }}
+  {{- with .Values.exposure.address }}
+  addresses:
+    - type: IPAddress
+      value: {{ . | quote }}
+  {{- end }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.exposure.tls.secretName }}
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Values.exposure.httpRouteName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.exposure.gatewayName }}
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.exposure.pathPrefix }}
+      backendRefs:
+        - name: {{ .Values.githubWebhookService.name }}
+          port: {{ .Values.operator.ports.github }}
+{{- if .Values.certManager.enabled }}
+---
+# Serving cert for the Gateway HTTPS listener. Swap issuerRef for a real
+# ClusterIssuer + public host for github.com delivery.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.exposure.tls.secretName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.exposure.tls.secretName }}
+  issuerRef:
+    name: {{ .Values.exposure.tls.issuerName }}
+    kind: {{ .Values.exposure.tls.issuerKind }}
+  {{- with .Values.exposure.tls.dnsNames }}
+  dnsNames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.exposure.tls.ipAddresses }}
+  ipAddresses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  duration: {{ .Values.exposure.tls.duration }}
+  renewBefore: {{ .Values.exposure.tls.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+{{- end }}
+{{- end }}

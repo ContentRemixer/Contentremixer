@@ -23,6 +23,7 @@ import (
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 	"github.com/ContentRemixer/Contentremixer/app/internal/controller"
+	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp"
 	opwebhook "github.com/ContentRemixer/Contentremixer/app/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
@@ -48,10 +49,12 @@ func main() {
 	var metricsAddr string
 	var probeAddr string
 	var certDir string
+	var githubWebhookAddr string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&certDir, "webhook-cert-path", webhookCertDir, "Directory containing tls.crt/tls.key for the admission webhook server.")
+	flag.StringVar(&githubWebhookAddr, "github-webhook-bind-address", ":8443", "The address the GitHub delivery receiver binds to (TLS terminated at the Ingress).")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -102,6 +105,13 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// GitHub delivery receiver (subtask D): non-admission HTTP server behind
+	// the TLS Ingress, acks recycle:* issues with labelRoutes-resolved formats.
+	if err := mgr.Add(&githubapp.Server{Addr: githubWebhookAddr, Client: mgr.GetClient()}); err != nil {
+		setupLog.Error(err, "unable to add GitHub webhook receiver")
+		os.Exit(1)
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

@@ -9,7 +9,7 @@
 # This cert is INTERNAL (kube-apiserver -> operator-admission Service) and is
 # self-signed on purpose: admission clients trust it via the injected CA
 # bundle, not a public chain. It is DISTINCT from the GitHub-webhook Ingress
-# TLS (deploy/webhook/ingress.yaml), which uses a real cluster-issuer.
+# TLS (deploy/base/webhook/ingress.yaml), which uses a real cluster-issuer.
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:

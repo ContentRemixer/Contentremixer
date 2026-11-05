@@ -1,0 +1,20 @@
+# gitleaks config for the secret-scan CI gate (ISI-7084, design §8).
+# Extends the full default ruleset; only narrows it with a path allowlist for
+# files that legitimately contain secret-SHAPED fixtures, never real creds.
+title = "ContentRemixer gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+The checker/Mastering scrubber (subtask G, ISI-7082) is the component that
+redacts leaked secrets from generated content; its unit tests MUST embed
+intentionally secret-shaped strings (fake ghp_* PATs, fake API keys, curl
+auth headers) to prove the scrubber catches and redacts them. These are
+test fixtures, not credentials. Scoped to that one file so a real leak
+anywhere else still fails the gate.
+"""
+paths = [
+  '''app/internal/pipeline/checker/checker_test\.go$''',
+]

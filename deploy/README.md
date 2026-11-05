@@ -8,12 +8,13 @@ and [§8 (secrets policy)](../docs/design/phase1-operator-design.md).
 
 ```
 deploy/
-  kustomization.yaml            # installable base (apply -k deploy/)
+  base/                         # installable base (kustomize root)
+    kustomization.yaml
+    operator/                   # namespace, SA, RBAC, certs, services, webhook cfg, Deployment
+    webhook/                    # GitHub delivery Service (:8443) + TLS Ingress
+    litellm/                    # LiteLLM gateway (controller-managed config)
+    crds/                       # ModelProfile + ReferenceRepo CRDs
   overlays/k8squad-test/        # cluster-specific: image tag + Ingress host/issuer/class
-  operator/                     # namespace, SA, RBAC, certs, services, webhook cfg, Deployment
-  webhook/                      # GitHub delivery Service (:8443) + TLS Ingress
-  litellm/                      # LiteLLM gateway (controller-managed config)
-  crds/                         # ModelProfile + ReferenceRepo CRDs
   secrets/*.example.yaml        # SHAPE ONLY — placeholder values, never applied as-is
 ```
 

@@ -1,5 +1,6 @@
 # ContentRemixer operator — deployable base (subtask I, ISI-7084).
-# `kubectl apply -k deploy/` installs the whole component set from §7 EXCEPT:
+# Apply via an overlay (`kubectl apply -k deploy/overlays/k8squad-test`); this
+# base installs the whole component set from §7 EXCEPT:
 #   - Secrets (github-pat / github-webhook / model keys) — created out-of-band,
 #     NEVER committed (design §8; see deploy/README.md for the mechanism).
 #   - Example CRs (deploy/secrets/*.example.yaml, models.example.yaml) — those

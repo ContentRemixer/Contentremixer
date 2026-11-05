@@ -29,7 +29,8 @@ const webhookPath = "/github/webhook"
 // Server is the GitHub delivery receiver: a plain-HTTP server (TLS is
 // terminated at the Ingress, design §7) added to the manager as a Runnable. It
 // acks recycle:* issues with the routes Resolve derives from the matching
-// ReferenceRepo's spec.labelRoutes.
+// ReferenceRepo's spec.labelRoutes, and enqueues matched routes for the
+// pipeline run worker when Runner is wired (subtask H).
 type Server struct {
 	// Addr is the listen address (default ":8443").
 	Addr string
@@ -37,6 +38,13 @@ type Server struct {
 	Client client.Client
 	// Poster posts the ack comment; defaults to a real GitHubClient.
 	Poster CommentPoster
+	// Runner, when non-nil, executes matched routes end-to-end off the
+	// delivery path (analyzer → writer → checker → PR assembly, design §4).
+	// When nil the receiver stays ack-only (pre-H behavior).
+	Runner RouteRunner
+
+	// runs is the enqueue built from Runner in Start; tests may pre-set it.
+	runs *runQueue
 }
 
 // issuesEvent is the minimal slice of the GitHub `issues` webhook payload we
@@ -44,7 +52,8 @@ type Server struct {
 type issuesEvent struct {
 	Action string `json:"action"`
 	Issue  struct {
-		Number int `json:"number"`
+		Number int    `json:"number"`
+		Body   string `json:"body"`
 		Labels []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
@@ -62,6 +71,12 @@ func (s *Server) NeedLeaderElection() bool { return false }
 func (s *Server) Start(ctx context.Context) error {
 	if s.Poster == nil {
 		s.Poster = &GitHubClient{}
+	}
+	if s.Runner != nil && s.runs == nil {
+		s.runs = newRunQueue(s.Runner)
+	}
+	if s.runs != nil {
+		s.runs.start(ctx)
 	}
 	addr := s.Addr
 	if addr == "" {
@@ -183,9 +198,31 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Matched routes enqueue pipeline runs — the run worker lands with the
-	// analyzer→writer→checker orchestration (subtask H). This subtask (D)
-	// stops at the ack per its acceptance criteria.
+	// Matched routes enqueue pipeline runs (design §4): the worker chains
+	// analyzer → writer → checker → PR assembly (subtasks E–H). The ack
+	// above already told the issue what will run.
+	if s.runs != nil {
+		sourcePath, notes := issueFormBody(ev.Issue.Body)
+		for _, route := range matched {
+			req := RouteRequest{
+				Repo:        repoCR.Spec.Repo,
+				IssueNumber: ev.Issue.Number,
+				Token:       string(token),
+				Route:       route,
+				SourcePath:  sourcePath,
+				Notes:       notes,
+				PRTarget:    repoCR.Spec.PRTarget,
+			}
+			if !s.runs.enqueue(req) {
+				// Queue full: answer 503 so GitHub redelivers instead of
+				// dropping the run.
+				log.Info("run queue full; asking GitHub to redeliver", "repo", req.Repo, "issue", req.IssueNumber, "label", req.Route.Label)
+				http.Error(w, "run queue full, retry later", http.StatusServiceUnavailable)
+				return
+			}
+		}
+	}
+
 	log.Info("acked recycle issue", "repo", repoCR.Spec.Repo, "issue", ev.Issue.Number, "routes", len(matched), "ignored", len(unmapped))
 	writeStatus(w, http.StatusOK, "acked: %d route(s), %d ignored", len(matched), len(unmapped))
 }

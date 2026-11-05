@@ -7,14 +7,28 @@ platform. Phase-1 subtask B of [ISI-7077] — see the Phase-1 technical design
 ## Layout
 
 ```
-cmd/main.go                 manager: 2 controllers + admission webhook server
+cmd/main.go                 manager: 2 controllers + admission webhook server + GitHub receiver
 api/v1alpha1/               ModelProfile + ReferenceRepo CRD types (generated deepcopy)
 internal/controller/        reconcilers + envtest suite
 internal/webhook/           validating webhooks (§2.1a exactly-one-default, §2.2a labelRoutes)
-internal/litellm/           minimal LiteLLM config renderer (subtask C extends)
+internal/litellm/           LiteLLM config renderer + chat client
+internal/githubapp/          GitHub delivery receiver (subtask D) + route run queue
+internal/pipeline/           recycle stages: analyzer → writer → checker → pr (E–H)
 config/                     controller-gen output (CRD bases, webhook manifests)
 ../deploy/                  curated overlay applied to the cluster
 ```
+
+## Recycle pipeline (subtasks D–H)
+
+`recycle:*` issue → HMAC-verified webhook → ack comment + enqueued run →
+analyzer (source + parser by inputFormat) → writer (styles/<format>.md via
+LiteLLM) → checker (fail-closed Mastering) → PR assembly:
+branch `recycle/<issue>-<format>-<source>/` + `recycled/<slug>/{index.md,meta.yaml}`
++ PR with the **Sample clearance** block (source path, source commit SHA,
+model) linking back `Closes #<n>`. Runs are enabled by starting the operator
+with `--recycle-checkout <path>` and `--litellm-endpoint <url>`
+(`LITELLM_API_KEY` env for the gateway key); without both, the receiver is
+ack-only.
 
 ## Commands
 

@@ -1,0 +1,35 @@
+title: ""
+author: jeff
+platform: ""
+url: ""
+published_date: ""
+tags: []
+files:
+  post: post.md
+
+# PR-template field contract (ISI-7119 / plan §4 "Content PR template").
+# Content CI (C7/C8) validates the submitted content PR template against these
+# keys. Keep in lock-step with .github/PULL_REQUEST_TEMPLATE/social.md and
+# app/internal/pipeline/pr/template.go (typeFields["social"]).
+pr_template:
+  type: social
+  common:
+    - content_type
+    - source
+    - target_format
+    - slug
+    - summary
+    - linked_issue
+  fields:
+    - key: platform
+      label: Platform
+      required: true
+    - key: char_count
+      label: Character-count confirmed
+      required: true
+    - key: hashtags
+      label: Hashtags
+      required: true
+    - key: alt_text
+      label: Media alt text
+      required: true

@@ -1,7 +1,12 @@
 # LiteLLM gateway (design §7). The litellm-config ConfigMap is RENDERED by
 # the ModelProfile controller from all ModelProfiles — the placeholder below
-# is replaced on first reconcile. No model secrets in the ConfigMap (design §8):
-# keys are wired as env from Secrets by subtask C.
+# is replaced on first reconcile. The controller also owns the per-model
+# API-key env wiring (MODEL_KEY_<ALIAS> from the Secrets referenced by
+# ModelProfile.apiKeyRef, design §8 — zero secret values in the repo) and the
+# contentremixer.io/litellm-config-checksum pod-template annotation, which
+# rolls the Deployment whenever the rendered config changes.
+# This manifest is the curated base; if absent, the controller creates an
+# equivalent Deployment itself (ISI-7078).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,13 +26,16 @@ spec:
         app.kubernetes.io/name: litellm
         app.kubernetes.io/part-of: contentremixer
       annotations:
-        # Roll on config change (subtask C maintains the checksum).
+        # Maintained by the ModelProfile controller (sha256 of rendered config).
         contentremixer.io/litellm-config-checksum: ""
     spec:
       containers:
         - name: litellm
-          image: ghcr.io/berriai/litellm:main-latest # pin in subtask C
+          # Pinned by subtask C (was main-latest). Bump deliberately.
+          image: ghcr.io/berriai/litellm:main-v1.82.3
           args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+          # MODEL_KEY_* env entries are appended by the controller from
+          # ModelProfile.spec.apiKeyRef — do not hand-edit them here.
           ports:
             - name: http
               containerPort: 4000

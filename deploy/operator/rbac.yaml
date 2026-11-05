@@ -29,6 +29,13 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # LiteLLM gateway Deployment ownership (ModelProfile controller / subtask C):
+  # create-if-missing, per-model API-key env wiring, rollout checksum
+  # annotation (design §7 config flow). No delete — the gateway Deployment is
+  # never removed behind the installer's back.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Leader election lock.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

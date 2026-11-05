@@ -165,10 +165,12 @@ var _ = Describe("ReferenceRepo controller + webhook (envtest)", func() {
 		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
 
 		got := &contentremixerv1alpha1.ReferenceRepo{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "crate-defaults"}, got)).To(Succeed())
-		Expect(got.Spec.LabelRoutes[0].InputFormat).To(Equal("auto"))
-		Expect(got.Spec.PRTarget.BaseBranch).To(Equal("main"))
-		Expect(got.Spec.PRTarget.BranchPrefix).To(Equal("recycle/"))
-		Expect(got.Spec.PRTarget.Draft).To(BeFalse())
+		Eventually(func(g Gomega) {
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "crate-defaults"}, got)).To(Succeed())
+			g.Expect(got.Spec.LabelRoutes[0].InputFormat).To(Equal("auto"))
+			g.Expect(got.Spec.PRTarget.BaseBranch).To(Equal("main"))
+			g.Expect(got.Spec.PRTarget.BranchPrefix).To(Equal("recycle/"))
+			g.Expect(got.Spec.PRTarget.Draft).To(BeFalse())
+		}).Should(Succeed())
 	})
 })

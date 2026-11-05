@@ -68,3 +68,29 @@ type Analyzer interface {
 	// by InputFormat, parses meta.yaml, and emits the normalized brief.
 	Analyze(ctx context.Context, rc RunContext) (Sample, error)
 }
+
+// Mix is the styled draft the writer emits for the checker and the PR
+// assembler (design §4). Markdown is the full generated body (leading with
+// the `# ` title heading); Meta is the meta.yaml content for the
+// recycled/<slug>/ folder, including the Sample-clearance refs (design §5).
+type Mix struct {
+	// OutputFormat is the style that drove generation (rc.OutputFormat).
+	OutputFormat string
+	// Title is the draft title extracted from the leading `# ` heading.
+	Title string
+	// Markdown is the generated Mix body (including the title heading).
+	Markdown string
+	// Meta is the meta.yaml for the recycled/ folder (incl. source refs).
+	Meta map[string]any
+	// ModelUsed is the concrete model/alias that produced it (for
+	// Sample-clearance).
+	ModelUsed string
+}
+
+// Writer is the pipeline stage contract implemented by subtask F
+// (internal/pipeline/writer).
+type Writer interface {
+	// Write loads styles/<OutputFormat>.md; conditions on the Sample brief
+	// + rc.Notes; returns the styled Mix draft.
+	Write(ctx context.Context, rc RunContext, s Sample) (Mix, error)
+}

@@ -1,0 +1,61 @@
+# E2E fixture ReferenceRepo (ISI-7117). Mirrors the Phase-1 starter
+# (deploy/secrets/referencerepo.example.yaml) so the kind job exercises the
+# real reconcile path: the ReferenceRepoReconciler resolves tokenRef +
+# webhookSecretRef and validates labelRoutes, then reports Ready=True.
+#
+# The two referenced Secrets carry PLACEHOLDER values only (design §8 — never
+# real creds). resolveSecretKey only asserts the Secret/key EXIST, not their
+# value, so placeholders are sufficient to drive Ready=True; the kind job never
+# makes a live GitHub call (that is ISI-7112).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-pat
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/part-of: contentremixer
+type: Opaque
+stringData:
+  token: "ghp_REPLACE_ME"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-webhook
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/part-of: contentremixer
+type: Opaque
+stringData:
+  hmac: "REPLACE_ME_WEBHOOK_HMAC_SECRET"
+---
+apiVersion: contentremixer.io/v1alpha1
+kind: ReferenceRepo
+metadata:
+  name: contentremixer-crate
+  namespace: contentremixer
+spec:
+  repo: ContentRemixer/Contentremixer
+  tokenRef:
+    name: github-pat
+    key: token
+  webhookSecretRef:
+    name: github-webhook
+    key: hmac
+  prTarget:
+    baseBranch: main
+    branchPrefix: recycle/
+    draft: true
+  labelRoutes:
+    - label: "recycle:blog"
+      inputFormat: auto
+      outputFormat: blog
+    - label: "recycle:short"
+      inputFormat: auto
+      outputFormat: short
+    - label: "recycle:tutorial"
+      inputFormat: auto
+      outputFormat: tutorial
+    - label: "recycle:teleprompter"
+      inputFormat: auto
+      outputFormat: teleprompter

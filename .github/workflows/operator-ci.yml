@@ -72,13 +72,9 @@ jobs:
           go vet ./...
 
   # ---------------------------------------------------------------------------
-  # envtest suite. Reported, but NOT a gate on the image publish: one
-  # pre-existing controller spec ("recovers once the missing Secret appears")
-  # fails because the ReferenceRepo reconciler never Watches Secrets — a
-  # subtask-B/ISI-7077 defect tracked in ISI-7106, not introduced here. Image
-  # publish is gated on build + manifests + secret-scan instead, so the deploy
-  # pipeline is not held hostage to that fix. Re-fold into the image gate once
-  # ISI-7106 lands and this job is green.
+  # envtest suite. Gates the image publish: the ReferenceRepo reconciler now
+  # Watches Secrets (ISI-7106), so the fail-closed recovery spec is green and
+  # this job no longer needs to be de-gated from the publish path.
   test:
     runs-on: ubuntu-latest
     defaults:
@@ -131,7 +127,7 @@ jobs:
   # homelab nodes are x86_64 (AGENTS.md storage/node notes); multi-arch is
   # ISI-7093's buildx matrix if the board wants it.
   image:
-    needs: [secret-scan, build, manifests]
+    needs: [secret-scan, build, test, manifests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

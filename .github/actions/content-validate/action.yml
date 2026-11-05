@@ -78,9 +78,9 @@ runs:
           fi
           if [ -n "$base" ]; then
             git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF:-main}" || true
-            files="$(git diff --name-only "${base}...HEAD" -- 'content/**' || true)"
+            files="$(git diff --name-only "${base}...HEAD" -- 'content/**' 'recycled/**' || true)"
           else
-            files="$(git diff --name-only HEAD~1 HEAD -- 'content/**' || true)"
+            files="$(git diff --name-only HEAD~1 HEAD -- 'content/**' 'recycled/**' || true)"
           fi
         fi
         # Write the resolved list to a file the container can read via --changed-file.

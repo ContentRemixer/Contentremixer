@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/analyzer"
+	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/pr"
 )
 
 // typeToFormat maps a content type to the ISI-7080 analyzer input format
@@ -68,12 +69,14 @@ type Template struct {
 	Fields []string
 }
 
-// Discover maps a set of changed repo-relative paths to the unique content
+// Discover maps a set of changed repo-relative paths to the unique item
 // folders (Targets) they belong to, loads each folder's meta.yaml and its
 // type template, and resolves the body via the reused ISI-7080 analyzer.
 //
-// A content folder is the nearest ancestor directory containing a meta.yaml.
-// Paths that resolve to no content folder (e.g. a changed styles/*.md, or the
+// An item folder is the nearest ancestor directory containing a meta.yaml that
+// sits under either content/<type>/<folder> (a Crate item) or recycled/<slug>/
+// (a recycled draft — the folder a remix PR adds, ISI-7076 §4). Paths that
+// resolve to no item folder (e.g. a changed styles/*.md, or the
 // meta.template.yaml itself) are skipped — Skipped lists them for the caller to
 // log. Discovery reads through analyzer.LocalFS (reuse) so path traversal is
 // bounded to the repo root.
@@ -89,7 +92,7 @@ func Discover(ctx context.Context, repoRoot string, changed []string) (targets [
 			skipped = append(skipped, raw)
 			continue
 		}
-		dir := nearestContentDir(repoRoot, rel)
+		dir := nearestItemDir(repoRoot, rel)
 		if dir == "" {
 			skipped = append(skipped, raw)
 			continue
@@ -106,7 +109,6 @@ func Discover(ctx context.Context, repoRoot string, changed []string) (targets [
 		t := Target{
 			Dir:      dir,
 			MetaPath: path.Join(dir, "meta.yaml"),
-			Type:     contentType(dir),
 		}
 
 		metaBytes, readErr := fs.ReadFile(t.MetaPath)
@@ -117,6 +119,11 @@ func Discover(ctx context.Context, repoRoot string, changed []string) (targets [
 		} else {
 			t.Meta = meta
 		}
+
+		// Type is resolved AFTER meta is read: a Crate item carries its type in
+		// the path (content/<type>/...), but a recycled/<slug>/ draft has no
+		// type path segment and resolves its type from meta.output_format.
+		t.Type = resolveType(dir, t.Meta)
 
 		if t.Type != "" {
 			tmpl, ok := templates[t.Type]
@@ -141,48 +148,85 @@ func Discover(ctx context.Context, repoRoot string, changed []string) (targets [
 	return targets, skipped, nil
 }
 
-// DiscoverAll finds every content folder under content/ (the --all mode),
-// then delegates to Discover so loading/body resolution is identical.
+// DiscoverAll finds every item folder under content/ AND recycled/ (the --all
+// mode), then delegates to Discover so loading/body resolution is identical.
 func DiscoverAll(ctx context.Context, repoRoot string) ([]Target, []string, error) {
-	contentDir := filepath.Join(repoRoot, "content")
 	var metas []string
-	walkErr := filepath.WalkDir(contentDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return filepath.SkipDir
+	for _, base := range []string{"content", "recycled"} {
+		baseDir := filepath.Join(repoRoot, base)
+		walkErr := filepath.WalkDir(baseDir, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return filepath.SkipDir
+				}
+				return err
 			}
-			return err
-		}
-		if !d.IsDir() && d.Name() == "meta.yaml" {
-			rel, rerr := filepath.Rel(repoRoot, p)
-			if rerr != nil {
-				return rerr
+			if !d.IsDir() && d.Name() == "meta.yaml" {
+				rel, rerr := filepath.Rel(repoRoot, p)
+				if rerr != nil {
+					return rerr
+				}
+				metas = append(metas, filepath.ToSlash(rel))
 			}
-			metas = append(metas, filepath.ToSlash(rel))
+			return nil
+		})
+		if walkErr != nil && !os.IsNotExist(walkErr) {
+			return nil, nil, fmt.Errorf("scanning %s/: %w", base, walkErr)
 		}
-		return nil
-	})
-	if walkErr != nil && !os.IsNotExist(walkErr) {
-		return nil, nil, fmt.Errorf("scanning content/: %w", walkErr)
 	}
 	return Discover(ctx, repoRoot, metas)
 }
 
-// nearestContentDir walks rel's ancestors (including rel itself if it is a
-// directory) for the nearest one that both contains a meta.yaml and sits under
-// content/. Returns "" when none qualifies.
-func nearestContentDir(repoRoot, rel string) string {
+// nearestItemDir walks rel's ancestors (including rel itself if it is a
+// directory) for the nearest one that contains a meta.yaml and sits under
+// content/<type>/<folder> (a Crate item) or recycled/<slug>/ (a recycled
+// draft). Returns "" when none qualifies.
+func nearestItemDir(repoRoot, rel string) string {
 	// Candidate dirs: if rel itself is a dir, start there; else its parent.
 	start := rel
 	if info, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(rel))); err != nil || !info.IsDir() {
 		start = path.Dir(rel)
 	}
 	for dir := start; dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
-		if !underContent(dir) {
+		if !underContent(dir) && !underRecycled(dir) {
 			continue
 		}
 		if fileExists(repoRoot, path.Join(dir, "meta.yaml")) {
 			return dir
+		}
+	}
+	return ""
+}
+
+// underRecycled reports whether dir is a recycled draft folder: a "recycled"
+// segment with at least one folder segment after it (recycled/<slug>[/...]).
+// This is where a remix PR lands its generated Mix (ISI-7076 §4); excludes the
+// recycled/ root itself.
+func underRecycled(dir string) bool {
+	segs := strings.Split(strings.Trim(dir, "/"), "/")
+	for i, s := range segs {
+		if s == "recycled" && i+1 <= len(segs)-1 {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveType determines an item's content type. Crate items carry it in the
+// path (the segment after content/). A recycled/<slug>/ draft has no type path
+// segment, so its type comes from meta.output_format via the C9 pr.ContentType
+// mapping (blog|social|newsletter; "short"/"tutorial"/"teleprompter" and the
+// like map to "default", returned here as "" so the type-specific rules
+// degrade gracefully while content-quality/seo/pr-template still run).
+func resolveType(dir string, meta map[string]any) string {
+	if t := contentType(dir); t != "" {
+		return t
+	}
+	if underRecycled(dir) && meta != nil {
+		if of, ok := meta["output_format"].(string); ok {
+			if ct := pr.ContentType(of); knownTypes[ct] {
+				return ct
+			}
 		}
 	}
 	return ""

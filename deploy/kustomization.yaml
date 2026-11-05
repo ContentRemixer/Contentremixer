@@ -1,0 +1,31 @@
+# ContentRemixer operator — deployable base (subtask I, ISI-7084).
+# `kubectl apply -k deploy/` installs the whole component set from §7 EXCEPT:
+#   - Secrets (github-pat / github-webhook / model keys) — created out-of-band,
+#     NEVER committed (design §8; see deploy/README.md for the mechanism).
+#   - Example CRs (deploy/secrets/*.example.yaml, models.example.yaml) — those
+#     are documentation of the SecretKeyRef shape, not install artifacts.
+#   - cert-manager itself and the Ingress cluster-issuer — cluster prerequisites
+#     the overlay points at (deploy/overlays/k8squad-test).
+#
+# Cluster-specific values (image tag, Ingress host, cluster-issuer, ingress
+# class) live in the overlay, not here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - operator/namespace.yaml
+  - crds/contentremixer.io_modelprofiles.yaml
+  - crds/contentremixer.io_referencerepos.yaml
+  - operator/serviceaccount.yaml
+  - operator/rbac.yaml
+  - operator/certificates.yaml
+  - operator/admission-service.yaml
+  - operator/webhook-configuration.yaml
+  - operator/deployment.yaml
+  - webhook/github-webhook-service.yaml
+  - webhook/ingress.yaml
+  - litellm/litellm.yaml
+
+images:
+  - name: ghcr.io/contentremixer/operator
+    newTag: latest # overlay pins a real sha-/vX.Y.Z tag

@@ -1,0 +1,69 @@
+{{- if .Values.litellm.enabled }}
+# LiteLLM gateway (design §7). The litellm-config ConfigMap is RENDERED by the
+# ModelProfile controller from all ModelProfiles; this chart does NOT ship it
+# (matches kustomize), and the controller also appends MODEL_KEY_* env + the
+# litellm-config-checksum annotation that rolls this Deployment on config change.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.litellm.name }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.litellm.name }}
+    {{- include "content-operator.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.litellm.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.litellm.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Values.litellm.name }}
+        {{- include "content-operator.labels" . | nindent 8 }}
+      annotations:
+        # Maintained by the ModelProfile controller (sha256 of rendered config).
+        contentremixer.io/litellm-config-checksum: ""
+    spec:
+      containers:
+        - name: litellm
+          image: {{ include "content-operator.litellmImage" . }}
+          imagePullPolicy: {{ .Values.litellm.image.pullPolicy }}
+          args: ["--config", "/etc/litellm/config.yaml", "--port", "{{ .Values.litellm.port }}"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.litellm.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: {{ .Values.litellm.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Values.litellm.configMapName }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.litellm.name }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.litellm.name }}
+    {{- include "content-operator.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ .Values.litellm.name }}
+  ports:
+    - name: http
+      port: {{ .Values.litellm.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

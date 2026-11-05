@@ -1,0 +1,18 @@
+{{- if .Values.githubWebhookService.enabled }}
+# GitHub webhook delivery receiver Service (:8443, non-admission; design §7).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.githubWebhookService.name }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "content-operator.operatorSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: github
+      port: {{ .Values.operator.ports.github }}
+      targetPort: github
+      protocol: TCP
+{{- end }}

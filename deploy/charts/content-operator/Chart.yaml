@@ -1,0 +1,29 @@
+apiVersion: v2
+name: content-operator
+description: >-
+  ContentRemixer operator — the Phase-1 CRD-driven platform (design §7):
+  manager with the ModelProfile + ReferenceRepo controllers, the admission
+  webhook, the GitHub delivery receiver, and the LiteLLM gateway. Authored
+  from the deploy/base kustomize manifests (ISI-7116, C4 of ISI-7093).
+type: application
+
+# Chart version — bump on chart changes.
+version: 0.1.0
+
+# appVersion = the operator image tag rendered by default (overridable via
+# .Values.operator.image.tag). Pinned to the CI-published, k8Squad-verified
+# image (operator-ci run 42063258626, commit 7fdf948).
+appVersion: "sha-7fdf9483ab28"
+
+kubeVersion: ">=1.27.0-0"
+
+keywords:
+  - contentremixer
+  - operator
+  - content
+  - kubernetes-operator
+home: https://github.com/henrikrexed/contentremixer
+sources:
+  - https://github.com/henrikrexed/contentremixer
+maintainers:
+  - name: ProxOps

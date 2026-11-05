@@ -1,0 +1,139 @@
+# Default values for the content-operator chart.
+# Authored from deploy/base (ISI-7116). `helm template` with these defaults
+# renders the same resource set as `kubectl kustomize deploy/base`, except the
+# image repository defaults to the ISI-7093 published name (content-operator);
+# see README.md "Equivalence with kustomize".
+
+# -- Install namespace. `create: true` emits the Namespace object (matches
+# deploy/base/operator/namespace.yaml); set false when the namespace is managed
+# out-of-band or by `helm --namespace ... --create-namespace`.
+namespace:
+  name: contentremixer
+  create: true
+
+# -- Extra labels merged onto every rendered object (on top of the chart's
+# app.kubernetes.io/* labels).
+commonLabels: {}
+
+operator:
+  # -- Resource basename for the operator (Deployment, SA, ClusterRole, ...).
+  name: contentremixer-operator
+  replicas: 1
+  image:
+    # NOTE: ISI-7093 publishes the operator to ghcr.io/contentremixer/content-operator
+    # (plan rev2, accepted). deploy/base kustomize still declares the legacy
+    # `.../operator` name; override here if you deploy the legacy image.
+    repository: ghcr.io/contentremixer/content-operator
+    # tag defaults to .Chart.AppVersion when empty.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Manager flags (cmd/main.go). Keep in sync with the cert mount path below.
+  args:
+    - --leader-elect=true
+    - --metrics-bind-address=:8080
+    - --health-probe-bind-address=:8081
+    - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+  # -- Container ports. `admission` serves the ValidatingWebhook; `github` is
+  # the (non-admission) delivery receiver.
+  ports:
+    admission: 9443
+    github: 8443
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# RBAC — ClusterRole/ClusterRoleBinding (the manager builds a cluster-wide
+# cache; see deploy/base/operator/rbac.yaml). Disable only if RBAC is managed
+# externally.
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  # defaults to operator.name when empty
+  name: ""
+
+# Admission webhook server + its cert-manager serving cert.
+webhook:
+  enabled: true
+  # ValidatingWebhookConfiguration name.
+  name: contentremixer-validating-webhooks
+  # Admission Service name (also the cert SAN host).
+  serviceName: operator-admission
+  # Secret holding the serving cert (mounted by the Deployment; produced by the
+  # Certificate below and injected into the webhook config CA bundle).
+  certSecretName: contentremixer-operator-webhook-tls
+  failurePolicy: Fail
+
+# cert-manager Issuer + Certificate for the admission serving cert (design §7).
+# Requires cert-manager in the cluster.
+certManager:
+  enabled: true
+  issuerName: contentremixer-selfsigned
+  duration: 8760h
+  renewBefore: 720h
+
+# GitHub delivery receiver Service (:8443, non-admission).
+githubWebhookService:
+  enabled: true
+  name: operator-webhook
+
+# LiteLLM gateway (design §7). The litellm-config ConfigMap is rendered by the
+# ModelProfile controller at runtime — the chart does NOT ship it (matches
+# kustomize), so the pod stays Pending until the controller creates it.
+litellm:
+  enabled: true
+  name: litellm
+  replicas: 1
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: main-v1.82.3
+    pullPolicy: IfNotPresent
+  configMapName: litellm-config
+  port: 4000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+# Public webhook exposure (Gateway API). OFF by default so the chart renders
+# the deploy/base set; enable + set values to reproduce the k8squad-test
+# overlay (kgateway + MetalLB), or adapt for another edge.
+exposure:
+  enabled: false
+  gatewayName: contentremixer
+  gatewayClassName: kgateway
+  # Pin a MetalLB IP (empty = let the controller assign).
+  address: ""
+  httpRouteName: github-webhook
+  pathPrefix: /github/webhook
+  tls:
+    # cert-manager Certificate for the Gateway HTTPS listener (self-signed by
+    # default via certManager.issuerName). Point issuerRef at a real
+    # ClusterIssuer for public github.com delivery.
+    secretName: github-webhook-tls
+    issuerName: contentremixer-selfsigned
+    issuerKind: Issuer
+    dnsNames:
+      - recycler.k8squad.test
+    ipAddresses: []
+    duration: 8760h
+    renewBefore: 720h

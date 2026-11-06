@@ -122,6 +122,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
+          # Cold runners without the lint cache blow the default 1m analysis
+          # budget (exit 4 "Timeout exceeded"); 5m matches design/isi-7076.
+          timeout: 5m
           # Pinned to match app/Makefile (GOLANGCI_LINT_VERSION).
           version: v1.61.0
           working-directory: app

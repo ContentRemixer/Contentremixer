@@ -28,10 +28,11 @@ contract templates (shipped below).
 
 ## What it does
 
-On every PR that touches `content/**` or `recycled/**`, the workflow runs the
-`contentremixer content validate` checks (via the published container image) on
-the changed item folders and reports findings as inline PR annotations + a job
-summary:
+The workflow runs on **every** PR (so it can serve as a required status check —
+see *Branch protection* below) and runs the `contentremixer content validate`
+checks (via the published container image) on the `content/**` / `recycled/**`
+folders the PR changed, reporting findings as inline PR annotations + a job
+summary. A PR touching neither folder is a clean pass (nothing to validate):
 
 | Rule | Severity | Enforces |
 | --- | --- | --- |
@@ -103,6 +104,38 @@ the code repo (`ContentRemixer/contentremixer` is code-only). This bundle is
 
 Once (1) + (2) land, installing is the copy-and-PR above — no further code work
 on this bundle. The install itself is tracked as a follow-up issue.
+
+## Branch protection (C10 / [ISI-7123](https://.../ISI-7123))
+
+So agent-authored content PRs **cannot merge red** (plan §4 board requirement),
+make Content CI a required gate on the ReferenceRepo's `main`. The workflow
+exposes a single aggregate job, **`ci-required`**, that is green only when every
+content check passed — pin *that* as the required check so it stays stable as
+the individual jobs evolve, and so it is never left `pending` on a non-content
+PR (the workflow is intentionally un-path-filtered for exactly this reason).
+
+After installing the bundle and letting Content CI run once on a PR (so GitHub
+learns the `ci-required` check), apply this on `main` — either the **Ruleset**
+UI (Settings → Rules → Rulesets → New branch ruleset) or the equivalent API
+(needs **Administration: write** on the ReferenceRepo):
+
+```sh
+gh api -X PUT repos/<OWNER>/<REFERENCEREPO>/branches/main/protection \
+  -H 'Accept: application/vnd.github+json' \
+  -f 'required_status_checks[strict]=true' \
+  -f 'required_status_checks[checks][][context]=ci-required' \
+  -F 'enforce_admins=true' \
+  -F 'required_pull_request_reviews[required_approving_review_count]=0' \
+  -F 'restrictions=' \
+  -F 'allow_force_pushes=false' -F 'allow_deletions=false'
+```
+
+Pin **only** `ci-required` (not the individual content jobs). This mirrors the
+code repo (`ContentRemixer/contentremixer`), whose required check is the
+`ci-required` job in `ci.yml` (C1 / ISI-7115). `enforce_admins`/no-bypass means
+nobody can merge a red PR; `required_approving_review_count=0` forces the PR
+flow without a human-approval gate; `strict` requires the branch be up to date.
+Full runbook + the code-repo settings: `docs/ci/branch-protection.md`.
 
 ## Files
 

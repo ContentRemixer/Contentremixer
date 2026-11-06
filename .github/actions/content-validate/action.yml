@@ -83,8 +83,15 @@ runs:
             files="$(git diff --name-only HEAD~1 HEAD -- 'content/**' 'recycled/**' || true)"
           fi
         fi
-        # Write the resolved list to a file the container can read via --changed-file.
-        printf '%s\n' $files >"${RUNNER_TEMP}/content-validate-changed.txt"
+        # Write the resolved list (one path per line) to a file the container
+        # reads via --changed-file. Write real entries only: when nothing
+        # changed the file stays empty (0 bytes), so the run step's -s guard
+        # short-circuits to a clean no-op instead of handing the CLI a blank
+        # line (which it rejects with exit 2).
+        : >"${RUNNER_TEMP}/content-validate-changed.txt"
+        for f in $files; do
+          printf '%s\n' "$f" >>"${RUNNER_TEMP}/content-validate-changed.txt"
+        done
         echo "mode=changed" >>"$GITHUB_OUTPUT"
         echo "list=${RUNNER_TEMP}/content-validate-changed.txt" >>"$GITHUB_OUTPUT"
 

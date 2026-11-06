@@ -84,3 +84,28 @@ func TestRetrieve_EmbedErrorPropagates(t *testing.T) {
 		t.Fatal("expected embed error to propagate")
 	}
 }
+
+func TestRetrieve_NilRetriever(t *testing.T) {
+	var r *Retriever
+	if _, err := r.Retrieve(context.Background(), Params{OwnerSubject: "o", PersonaName: "p", Seed: "x"}); err == nil {
+		t.Fatal("expected error on nil/empty retriever")
+	}
+	if _, err := New(nil, &stubStore{}).Retrieve(context.Background(), Params{OwnerSubject: "o", PersonaName: "p", Seed: "x"}); err == nil {
+		t.Fatal("expected error when embedder is nil")
+	}
+}
+
+func TestRetrieve_EmptySeedVector(t *testing.T) {
+	// embedder returns a vector slice of length 1 but with an empty inner vector.
+	r := New(&stubEmbedder{vec: []float32{}}, &stubStore{})
+	if _, err := r.Retrieve(context.Background(), Params{OwnerSubject: "o", PersonaName: "p", Seed: "x"}); err == nil {
+		t.Fatal("expected error on empty seed vector")
+	}
+}
+
+func TestRetrieve_EmptyPersonaFailsClosed(t *testing.T) {
+	r := New(&stubEmbedder{vec: []float32{1}}, &stubStore{})
+	if _, err := r.Retrieve(context.Background(), Params{OwnerSubject: "o", PersonaName: "", Seed: "x"}); err == nil {
+		t.Fatal("expected empty-persona rejection")
+	}
+}

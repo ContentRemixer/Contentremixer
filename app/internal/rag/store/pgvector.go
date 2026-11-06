@@ -5,10 +5,10 @@
 // predicate present in EVERY read and delete (§8). A future Qdrant swap
 // replaces only this package.
 //
-// The operator embeds no vector-DB client beyond pgx/v5 + pgvector-go. Vectors
-// are passed as pgvector.Vector parameters with an explicit `::vector` cast so
-// pgx needs no custom type registration; the frozen retrieval SELECT (§4.1)
-// never reads a vector back.
+// The operator embeds no vector-DB client beyond pgx/v5 + pgvector-go. The
+// pgvector binary codec is registered on every pooled connection (Open's
+// AfterConnect → pgvector-go/pgx RegisterTypes), so vectors encode natively as
+// pgvector.Vector parameters — no ::vector casts, no manual OID handling.
 package store
 
 import (
@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
 )
@@ -46,9 +48,30 @@ func Open(ctx context.Context, dsn string, dim int) (*Store, error) {
 	if dim <= 0 {
 		dim = DefaultDim
 	}
+
+	// Bootstrap the extension on a throwaway connection BEFORE building the
+	// pool. The pool's AfterConnect registers the pgvector binary codec, which
+	// queries to_regtype('vector') — NULL (and an error) until the extension
+	// exists. So the extension must be installed first, outside the codec path.
+	boot, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("store: bootstrap connect: %w", err)
+	}
+	if _, err := boot.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
+		_ = boot.Close(ctx)
+		return nil, fmt.Errorf("store: creating vector extension: %w", err)
+	}
+	_ = boot.Close(ctx)
+
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: parsing DSN: %w", err)
+	}
+	// Register the pgvector type codec on every pooled connection so vectors
+	// encode/decode in binary natively — no ::vector casts, no manual OID
+	// handling (pgvector-go/pgx canonical path).
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		return pgxvec.RegisterTypes(ctx, conn)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -63,7 +86,9 @@ func Open(ctx context.Context, dsn string, dim int) (*Store, error) {
 }
 
 // NewWithPool wraps an existing pool (for tests / shared pools). It does NOT run
-// the migration; call Migrate explicitly. dim <= 0 defaults to DefaultDim.
+// the migration; call Migrate explicitly. The pool MUST register the pgvector
+// codec in its AfterConnect (see Open) for vector parameters to encode.
+// dim <= 0 defaults to DefaultDim.
 func NewWithPool(pool *pgxpool.Pool, dim int) *Store {
 	if dim <= 0 {
 		dim = DefaultDim
@@ -162,7 +187,7 @@ func (s *Store) Upsert(ctx context.Context, chunks []rag.Chunk) error {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO persona_chunks
 			   (id, owner_subject, persona_name, source_url, source_kind, ordinal, text, embedding, metadata)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector,$9)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 			 ON CONFLICT (id) DO UPDATE SET
 			   owner_subject = EXCLUDED.owner_subject,
 			   persona_name  = EXCLUDED.persona_name,
@@ -209,12 +234,12 @@ func (s *Store) Query(ctx context.Context, q rag.Query) ([]rag.Match, error) {
 
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_subject, persona_name, source_url, source_kind, ordinal, text, metadata,
-		        1 - (embedding <=> $3::vector) AS score
+		        1 - (embedding <=> $3) AS score
 		   FROM persona_chunks
 		  WHERE owner_subject = $1
 		    AND persona_name  = $2
-		    AND 1 - (embedding <=> $3::vector) >= $5
-		  ORDER BY embedding <=> $3::vector
+		    AND 1 - (embedding <=> $3) >= $5
+		  ORDER BY embedding <=> $3
 		  LIMIT $4`,
 		q.OwnerSubject, q.PersonaName, pgvector.NewVector(q.Embedding), topK, q.MinScore,
 	)

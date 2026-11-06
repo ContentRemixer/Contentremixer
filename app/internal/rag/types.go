@@ -83,3 +83,59 @@ type Scraper interface {
 type Chunker interface {
 	Chunk(doc RawDoc, owner, persona string) []Chunk
 }
+
+// Query is an owner-scoped nearest-neighbour search (design §4). OwnerSubject is
+// MANDATORY and non-empty — a VectorStore implementation MUST reject an empty
+// OwnerSubject rather than scan across tenants (§8 tenancy invariant).
+// PersonaName scopes further to one persona.
+type Query struct {
+	// OwnerSubject is the tenancy scope — REQUIRED, non-empty. An empty value
+	// fails closed (error), never a cross-tenant read.
+	OwnerSubject string
+	// PersonaName is the persona scope — REQUIRED.
+	PersonaName string
+	// Embedding is the query vector (the writer's retrieval seed, §5), produced
+	// by the SAME embedding model/alias as the stored chunks (§6 symmetry).
+	Embedding []float32
+	// TopK is the maximum number of matches to return.
+	TopK int
+	// MinScore drops matches below this cosine similarity (0 = keep all top-k).
+	MinScore float64
+}
+
+// Match is one retrieved chunk with its cosine similarity score in 0..1 (design
+// §4): 1 is identical, 0 is orthogonal.
+type Match struct {
+	Chunk
+	Score float64
+}
+
+// VectorStore is the storage seam for persona voice chunks (design §4, decision
+// #6: pgvector). Owner scoping is enforced in EVERY method — there is no
+// unscoped read or delete. A future Qdrant adapter replaces only the
+// implementation; this interface is the frozen contract.
+type VectorStore interface {
+	// Upsert replaces-by-source: for each distinct (PersonaOwner, PersonaName,
+	// SourceURL) in chunks, existing rows are deleted then the new chunks
+	// inserted (idempotent re-index, §2.3 step 4). Every chunk must carry a
+	// non-empty PersonaOwner; an empty one is a programming error and is
+	// rejected (fail closed). Each embedding's length must equal the store's
+	// configured dimension (§6) or the upsert fails — a misconfigured embedding
+	// model is caught at index time, not as silent garbage retrieval.
+	Upsert(ctx context.Context, chunks []Chunk) error
+
+	// Query returns the TopK nearest chunks WITHIN (OwnerSubject, PersonaName)
+	// only. The owner predicate is applied in SQL, never in Go after a broad
+	// scan. Empty OwnerSubject => error (fail closed), never a cross-tenant
+	// read.
+	Query(ctx context.Context, q Query) ([]Match, error)
+
+	// DeletePersona purges all chunks for one persona (finalizer path, §2.3
+	// step 6), scoped to (ownerSubject, personaName). Empty ownerSubject =>
+	// error (fail closed).
+	DeletePersona(ctx context.Context, ownerSubject, personaName string) error
+
+	// CountPersona returns the stored chunk count for status.chunkCount (§2.2),
+	// scoped to (ownerSubject, personaName). Empty ownerSubject => error.
+	CountPersona(ctx context.Context, ownerSubject, personaName string) (int, error)
+}

@@ -2,19 +2,22 @@
 #
 # The Booth is a separate Go module from the operator (app/), so it gets its own
 # build/test/coverage/quality pipeline rather than being bolted onto ci.yml.
-# Path-filtered to booth/** so operator-only PRs don't pay for it; the operator's
-# ci.yml stays authoritative for app/.
+# It now holds BOTH Phase-3 halves in one module: P3-2 (ISI-7150) auth/ AuthN
+# provider and P3-1 (ISI-7149) the §6.3 authz API (internal/{authz,store,server,
+# audit} + cmd/booth).
 #
-# Introduced by P3-2 (ISI-7150, the AuthN provider). P3-1 (ISI-7149, the Booth
-# API) lands in the same module and is covered by these same jobs automatically.
+# Path-filtered to booth/** plus app/api/** — the Booth consumes the operator's
+# CRD types via `replace => ../app`, so a change to those API types can break the
+# Booth build. This is a standalone check, not part of the operator's
+# `ci-required` aggregate.
 name: booth-ci
 
 on:
   push:
     branches: [main]
-    paths: ['booth/**', '.github/workflows/booth-ci.yml']
+    paths: ['booth/**', 'app/api/**', '.github/workflows/booth-ci.yml']
   pull_request:
-    paths: ['booth/**', '.github/workflows/booth-ci.yml']
+    paths: ['booth/**', 'app/api/**', '.github/workflows/booth-ci.yml']
 
 permissions:
   contents: read
@@ -28,7 +31,7 @@ defaults:
     working-directory: booth
 
 jobs:
-  build-test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,13 +41,19 @@ jobs:
           cache-dependency-path: booth/go.sum
       - name: Build
         run: go build ./...
-      - name: Test with coverage
-        run: go test ./... -covermode=atomic -coverprofile=cover.out
-      - name: Enforce 80% coverage
-        run: |
-          pct=$(go tool cover -func=cover.out | awk '/^total:/ {sub(/%/,"",$3); print $3}')
-          echo "total coverage: ${pct}%"
-          awk -v p="$pct" 'BEGIN { if (p+0 < 80) { print "::error::coverage " p "% < 80% gate"; exit 1 } }'
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: booth/go.mod
+          cache-dependency-path: booth/go.sum
+      - name: Run tests
+        run: go test -race -coverprofile=cover.out ./...
+      - name: Enforce 80% coverage gate
+        run: ../.github/scripts/coverage-gate.sh cover.out 80
 
   quality:
     runs-on: ubuntu-latest
@@ -69,3 +78,13 @@ jobs:
             echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' in booth/ and commit."
             exit 1
           fi
+      - name: golangci-lint
+        # Installed directly (not via the marketplace action) to match the repo
+        # convention in security.yml and to decouple from the action's
+        # golangci-lint-version matrix. Booth is on go 1.26 (its deps — x/net
+        # v0.62 etc. — require it), so it pins golangci-lint v2, the series built
+        # against go 1.26. (ci.yml's app module stays on go 1.23 + golangci-lint
+        # v1.61; the two modules lint independently.)
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...

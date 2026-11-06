@@ -26,3 +26,7 @@
 # ---------------------------------------------------------------------------
 # No active exceptions. The gate is fully enforced: every HIGH/CRITICAL finding
 # blocks the build until fixed or explicitly accepted above.
+#
+# (ISI-7149 note: the Booth module's transitive golang.org/x/* advisories were
+# fixed at the SOURCE — booth/ bumped to go 1.26 with x/net v0.62, x/crypto
+# v0.58, x/text v0.43, x/oauth2 v0.37 — so no ignore entries are needed.)

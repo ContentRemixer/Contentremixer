@@ -1,0 +1,65 @@
+# Content CI — ReferenceRepo install (ISI-7122, subtask C8; ISI-7093 plan §3, §5).
+#
+# Drop this file into the ContentRemixer ReferenceRepo (the content-hub / "The
+# Crate") at .github/workflows/content-ci.yml. It gates pull requests that touch
+# content on the central Content CI checks (required assets, structure, quality
+# /Mastering scrub, SEO, PR template) by calling the published composite action
+# — zero duplication of validation logic lives here.
+#
+# Triggers on both content paths (ISI-7122):
+#   - content/**   The Crate: reference/published source content.
+#   - recycled/**  The Mixes: the folder a ContentRemixer remix PR adds
+#                  (recycled/<slug>/{index.md,meta.yaml}, ISI-7076 §4).
+#
+# The action pulls ghcr.io/contentremixer/content-validate and runs the exact
+# `contentremixer content validate` rules. Pin the action + image to a released
+# major (@v1) so a ReferenceRepo gets reproducible checks.
+name: content-ci
+
+on:
+  pull_request:
+    paths:
+      - "content/**"
+      - "recycled/**"
+
+permissions:
+  contents: read
+  # Needed only if you later post a summary comment; the action's inline
+  # ::error / ::warning annotations and the job summary need no extra scope.
+  pull-requests: read
+
+concurrency:
+  group: content-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the action can diff the PR against its base ref to
+          # find exactly which content/recycled folders changed.
+          fetch-depth: 0
+
+      # Surface the PR body to the validator so the pr-template rule (C9,
+      # ISI-7119) runs — it checks the content-type template fields +
+      # Sample-clearance section are present.
+      - name: Capture PR body
+        id: prbody
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${PR_BODY:-}" > pr-body.md
+          echo "file=pr-body.md" >>"$GITHUB_OUTPUT"
+
+      - name: Content validate (changed folders)
+        uses: ContentRemixer/contentremixer/.github/actions/content-validate@v1
+        with:
+          # All inputs are optional; defaults validate the content/ + recycled/
+          # folders changed in this PR against ghcr.io/contentremixer/content-validate:latest.
+          # Pin the image to the same tag you pin the action at for a reproducible gate:
+          image: ghcr.io/contentremixer/content-validate:v1
+          pr-body-file: ${{ steps.prbody.outputs.file }}
+          fail-on: error

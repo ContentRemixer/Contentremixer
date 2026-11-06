@@ -64,11 +64,14 @@ type Finding struct {
 	Line int
 }
 
-// Target is one changed content folder to validate: a directory directly
-// containing a meta.yaml, under content/<type>/.
+// Target is one changed item folder to validate: a directory directly
+// containing a meta.yaml, under content/<type>/ (a Crate item) or
+// recycled/<slug>/ (a recycled draft a remix PR adds, ISI-7076 §4).
 type Target struct {
-	// Type is the content type segment after content/ (blog, videos,
-	// podcasts, livestreams) or "" when the folder is outside a known type.
+	// Type is the content type: the segment after content/ for a Crate item
+	// (blog, videos, podcasts, livestreams, social, newsletter), or — for a
+	// recycled/<slug>/ draft — meta.output_format mapped via C9 pr.ContentType.
+	// "" when the folder resolves to no known type (type-specific rules skip).
 	Type string
 	// Dir is the repo-relative content folder path.
 	Dir string

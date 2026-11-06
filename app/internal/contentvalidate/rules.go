@@ -88,7 +88,7 @@ func (r AssetStructureRule) Check(_ context.Context, vc *ValidateContext) []Find
 		if t.Type == "" {
 			out = append(out, Finding{
 				Rule: r.ID(), Severity: SeverityWarning, Target: t.Dir, File: t.MetaPath,
-				Message: "folder is under content/ but not a known type (blog|videos|podcasts|livestreams); skipping type-specific checks",
+				Message: "folder has no known content type (blog|videos|podcasts|livestreams|social|newsletter); skipping type-specific checks",
 			})
 			continue
 		}

@@ -265,6 +265,67 @@ func TestDiscoverAll(t *testing.T) {
 	}
 }
 
+func TestDiscoverRecycledDraft(t *testing.T) {
+	// A remix PR lands recycled/<slug>/{index.md,meta.yaml} (ISI-7076 §4). The
+	// draft has no content/<type>/ path segment; its type resolves from
+	// meta.output_format via the C9 pr.ContentType mapping.
+	root := writeRepo(t, map[string]string{
+		// recycled blog draft → type resolves to "blog" (template-driven rules run).
+		"recycled/hello-remix/meta.yaml": "title: A Recycled Blog Title Long Enough\noutput_format: blog\nfiles:\n  post: index.md\n",
+		"recycled/hello-remix/index.md":  "# A Recycled Blog Title Long Enough\n\nClean prose.\n",
+		// recycled short draft → output_format with no dedicated template → Type "".
+		"recycled/quick-short/meta.yaml": "title: A Short Social Snippet\noutput_format: short\nfiles:\n  post: index.md\n",
+		"recycled/quick-short/index.md":  "# A Short Social Snippet\n\nBody.\n",
+	})
+
+	// Changed-path discovery resolves each recycled draft folder.
+	targets, _, err := Discover(context.Background(), root,
+		[]string{"recycled/hello-remix/index.md", "recycled/quick-short/meta.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 recycled drafts discovered; got %d: %+v", len(targets), targets)
+	}
+	byDir := map[string]Target{}
+	for _, tg := range targets {
+		byDir[tg.Dir] = tg
+	}
+	if got := byDir["recycled/hello-remix"].Type; got != "blog" {
+		t.Fatalf("recycled blog draft should resolve type=blog; got %q", got)
+	}
+	if got := byDir["recycled/quick-short"].Type; got != "" {
+		t.Fatalf("recycled short draft should resolve type=\"\" (graceful); got %q", got)
+	}
+
+	// --all mode walks recycled/ too.
+	all, _, err := DiscoverAll(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("DiscoverAll should find both recycled drafts; got %d: %+v", len(all), all)
+	}
+
+	// content-quality (the Mastering scrub) must actually run on a recycled
+	// draft — the whole point of gating a remix PR. A leaked secret fails closed.
+	leak := writeRepo(t, map[string]string{
+		"recycled/leaky/meta.yaml": "title: A Leaky Recycled Draft Title\noutput_format: blog\nfiles:\n  post: index.md\n",
+		"recycled/leaky/index.md":  "# A Leaky Recycled Draft Title\n\ntoken: ghp_0123456789abcdefghijABCDEFGHIJ0123456789\n",
+	})
+	lt, _, err := Discover(context.Background(), leak, []string{"recycled/leaky/index.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := DefaultEngine().Run(context.Background(), &ValidateContext{RepoRoot: leak, Targets: lt})
+	if r.OK(false) {
+		t.Fatalf("a recycled draft leaking a secret must fail content-quality closed; findings: %+v", r.Findings)
+	}
+	if len(findingsBy(r.Findings, "content-quality")) == 0 {
+		t.Fatalf("expected a content-quality finding on the leaky recycled draft; got %+v", r.Findings)
+	}
+}
+
 func TestSummaryAndAnnotationsRender(t *testing.T) {
 	root := writeRepo(t, map[string]string{
 		"content/blog/untitled/meta.yaml": "title: \"\"\nauthor: jeff\nurl: \"\"\npublished_date: \"\"\ntags: []\nfiles:\n  post: index.md\n",

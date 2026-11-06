@@ -1,0 +1,152 @@
+# Code CI — ISI-7093 plan §2 jobs 1–4 (built by C1 / ISI-7115).
+#
+# The core quality pipeline for the ContentRemixer operator (Go, under app/):
+#   build (compile + manifest/CRD drift) · test (unit + envtest) ·
+#   coverage (hard 80% gate) · quality (golangci-lint, vet, gofmt, mod tidy).
+#
+# The `ci-required` job aggregates them into ONE stable status check for branch
+# protection to require (referenced by C10 / ISI-7123). Not path-filtered on
+# purpose: a required check that never triggers leaves PRs stuck "pending", so
+# this runs on every PR.
+#
+# Out of scope here (later children, will extend this file / supersede
+# operator-ci.yml): security + SARIF, image buildx + cosign, SBOM, Trivy,
+# Helm OCI publish (C2 ISI-7120 / C3 ISI-7121), and the ReferenceRepo content
+# CI (C7+). Do not grow those into this workflow before their tickets land.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded runs for the same PR/branch; never cancel main.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — Build: compile + fail on generated-manifest/CRD drift vs committed.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Regenerate manifests + DeepCopy (pinned controller-gen)
+        run: make manifests generate
+      - name: Fail on generated drift
+        run: |
+          if ! git diff --exit-code -- config api; then
+            echo "::error::generated manifests/CRDs or DeepCopy code are stale."
+            echo "Run 'make manifests generate' in app/ and commit the result." >&2
+            exit 1
+          fi
+      - name: Build manager
+        run: go build ./...
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — Test: unit + envtest suite, excludes e2e (per the Makefile). The
+  # coverage profile is uploaded for the coverage gate job.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: Run tests (unit + envtest)
+        run: make test
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-out
+          path: app/cover.out
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — Coverage: hard-fail below 80% total line coverage (board decision).
+  # Generated DeepCopy code and the main() entrypoint are excluded — they carry
+  # no hand-written logic. Per-package breakdown lands in the job summary.
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download coverage profile
+        uses: actions/download-artifact@v4
+        with:
+          name: cover-out
+          path: app
+      - name: Enforce 80% coverage gate
+        run: ../.github/scripts/coverage-gate.sh cover.out 80
+
+  # ---------------------------------------------------------------------------
+  # Job 4 — Code quality: pinned golangci-lint + vet + gofmt + go mod tidy drift.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needs to be run on:"; echo "$unformatted"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go mod tidy drift
+        run: |
+          go mod tidy
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' in app/ and commit."
+            exit 1
+          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          timeout: 5m
+          # Pinned to match app/Makefile (GOLANGCI_LINT_VERSION).
+          version: v1.61.0
+          working-directory: app
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate — the single required status check for branch protection
+  # (C10 / ISI-7123). Green only if all four jobs pass; fails fast if any
+  # dependency was skipped or failed.
+  ci-required:
+    if: always()
+    needs: [build, test, coverage, quality]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .  # no checkout in this job; don't cd into app/
+    steps:
+      - name: Verify all required jobs succeeded
+        run: |
+          results="${{ needs.build.result }} ${{ needs.test.result }} ${{ needs.coverage.result }} ${{ needs.quality.result }}"
+          echo "job results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a required CI job did not succeed ($r)"
+              exit 1
+            fi
+          done
+          echo "all required CI jobs passed"

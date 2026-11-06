@@ -120,17 +120,6 @@ func (f *fakeGitHub) countCalls(pathSuffix string) int {
 	return n
 }
 
-func (f *fakeGitHub) findCall(pathPart string) (recordedCall, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, c := range f.calls {
-		if strings.Contains(c.Path, pathPart) {
-			return c, true
-		}
-	}
-	return recordedCall{}, false
-}
-
 func (f *fakeGitHub) lastCall(method, pathPart string) (recordedCall, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -60,13 +60,32 @@ jobs:
   # coverage profile is uploaded for the coverage gate job.
   test:
     runs-on: ubuntu-latest
+    # Postgres + pgvector so the P2-C (ISI-7146) store adapter's integration test
+    # runs for real (migrate/upsert/owner-scoped query/replace-by-source/
+    # cross-tenant isolation/delete) instead of skipping — see
+    # internal/rag/store/integration_test.go, gated on PGVECTOR_TEST_DSN.
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: app/go.mod
           cache-dependency-path: app/go.sum
-      - name: Run tests (unit + envtest)
+      - name: Run tests (unit + envtest + pgvector integration)
+        env:
+          PGVECTOR_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
         run: make test
       - name: Upload coverage profile
         uses: actions/upload-artifact@v4

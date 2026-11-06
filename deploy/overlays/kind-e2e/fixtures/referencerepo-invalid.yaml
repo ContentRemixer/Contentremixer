@@ -1,0 +1,27 @@
+# Negative admission fixture (ISI-7117). outputFormat "podcast" is not in the
+# Phase-1 KnownOutputFormats set, so the ReferenceRepo validating webhook
+# (opwebhook.ReferenceRepoCustomValidator, wired in cmd/main.go) MUST reject
+# this CREATE. The kind job applies it expecting a NON-ZERO kubectl exit — that
+# is the proof the admission webhook is actually serving over the
+# cert-manager-issued TLS, not merely installed.
+apiVersion: contentremixer.io/v1alpha1
+kind: ReferenceRepo
+metadata:
+  name: contentremixer-crate-invalid
+  namespace: contentremixer
+spec:
+  repo: ContentRemixer/Contentremixer
+  tokenRef:
+    name: github-pat
+    key: token
+  webhookSecretRef:
+    name: github-webhook
+    key: hmac
+  prTarget:
+    baseBranch: main
+    branchPrefix: recycle/
+    draft: true
+  labelRoutes:
+    - label: "recycle:podcast"
+      inputFormat: auto
+      outputFormat: podcast

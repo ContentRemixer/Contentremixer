@@ -116,10 +116,14 @@ var _ = Describe("ModelProfile controller + webhook (envtest)", func() {
 		mp.Spec.Owner = contentremixerv1alpha1.OwnerRef{Subject: subject}
 		Expect(k8sClient.Create(ctx, mp)).To(Succeed())
 
+		// k8sClient reads through the manager cache; tolerate read-after-write
+		// lag instead of racing the informer (suite_test.go note).
 		got := &contentremixerv1alpha1.ModelProfile{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "owned"}, got)).To(Succeed())
-		Expect(got.Spec.Owner.Subject).To(Equal(subject))
-		Expect(client.ObjectKeyFromObject(got)).To(Equal(types.NamespacedName{Namespace: ns, Name: "owned"}))
+		Eventually(func(g Gomega) {
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "owned"}, got)).To(Succeed())
+			g.Expect(got.Spec.Owner.Subject).To(Equal(subject))
+			g.Expect(client.ObjectKeyFromObject(got)).To(Equal(types.NamespacedName{Namespace: ns, Name: "owned"}))
+		}).Should(Succeed())
 	})
 
 	It("defaults and validates owner is optional (empty means platform)", func() {

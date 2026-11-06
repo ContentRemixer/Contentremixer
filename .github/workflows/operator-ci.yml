@@ -1,0 +1,123 @@
+# Operator CI — ISI-7084 (subtask I) deploy pipeline for the ContentRemixer
+# operator. Scope is deliberately minimal — the build/validate gates subtask I
+# needs:
+#   secret-scan (design §8 gate) · go build/vet/envtest · manifest + kustomize
+#   validation.
+#
+# Image build & publish was REMOVED from here: it now lives in image-publish.yml
+# (C3 / ISI-7121) as a signed, multi-arch publish to the dedicated
+# `content-operator` package. The rest of the comprehensive pipeline (SBOM,
+# trivy, golangci-lint, Helm publish, content-CI) is ISI-7093's umbrella and
+# will SUPERSEDE/absorb this workflow. Keep this one lean.
+name: operator-ci
+
+on:
+  push:
+    branches: [main, "design/**"]
+    tags: ["v*"]
+    paths:
+      - "app/**"
+      - "deploy/**"
+      - ".github/workflows/operator-ci.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "deploy/**"
+      - ".github/workflows/operator-ci.yml"
+
+# Image publish now lives in image-publish.yml (C3 / ISI-7121): signed,
+# multi-arch, dedicated `content-operator` package. This workflow no longer
+# needs `packages: write` — it builds/tests/validates only.
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Secret scan over the WHOLE repo (content + app/) — design §8. Fail-closed:
+  # any finding breaks CI so no credential can land in a commit.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: gitleaks (filesystem, whole tree)
+        run: |
+          set -euo pipefail
+          VER=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          # .gitleaks.toml allowlists the scrubber's secret-shaped test fixtures.
+          ./gitleaks detect --source . --no-git --config .gitleaks.toml --redact -v --exit-code 1
+
+  # ---------------------------------------------------------------------------
+  # Compile + vet. Proves the binary that gets containerized builds — GATES the
+  # image publish below.
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: app/go.sum
+      - name: build + vet
+        run: |
+          go build ./...
+          go vet ./...
+
+  # ---------------------------------------------------------------------------
+  # envtest suite. Gates the image publish: the ReferenceRepo reconciler now
+  # Watches Secrets (ISI-7106), so the fail-closed recovery spec is green and
+  # this job no longer needs to be de-gated from the publish path.
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: app/go.sum
+      - name: envtest
+        run: |
+          set -euo pipefail
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19
+          KUBEBUILDER_ASSETS="$("$(go env GOPATH)/bin/setup-envtest" use 1.31.0 -p path)"
+          export KUBEBUILDER_ASSETS
+          go test ./... -coverprofile cover.out
+
+  # ---------------------------------------------------------------------------
+  # Validate the deploy/ manifests + both kustomize layers render + schema-check.
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install kustomize + kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash -s 5.4.3 .
+          sudo mv kustomize /usr/local/bin/
+          KC=0.6.7
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/v${KC}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+      - name: render + validate base and overlay
+        run: |
+          set -euo pipefail
+          # CRDs carry custom schemas kubeconform cannot resolve; skip-kinds
+          # keeps the gate on the standard k8s resources (Deployment, Service,
+          # Ingress, Role, Secret, Issuer/Certificate via missing-schemas).
+          for layer in deploy/base deploy/overlays/k8squad-test; do
+            echo "== kustomize build $layer =="
+            kustomize build "$layer" \
+              | kubeconform -strict -summary -ignore-missing-schemas \
+                  -skip CustomResourceDefinition,ModelProfile,ReferenceRepo
+          done

@@ -1,0 +1,72 @@
+# Operator RBAC (curated from the controller/webhook kubebuilder markers).
+#
+# ClusterRole, not Role: the manager binary (cmd/main.go) builds a
+# cluster-wide controller-runtime cache — it has no --namespace flag and sets
+# no cache.Options.DefaultNamespaces, so its informers list/watch Secrets,
+# ModelProfiles and ReferenceRepos at CLUSTER scope. A namespaced Role made
+# every watch fail ("... is forbidden ... at the cluster scope"), so the
+# controllers never reconciled. Granting cluster scope matches what the image
+# actually does today.
+#
+# NOTE (hardening, binary-side / ISI-7077): design §2 intends a
+# namespace-scoped operator. To honor that, the manager must restrict its
+# cache to the install namespace (cache.Options{DefaultNamespaces: ...}); once
+# it does, this can drop back to a namespaced Role. Tracked with the
+# controller follow-ups.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: contentremixer-operator
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+rules:
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles", "referencerepos"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles/status", "referencerepos/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles/finalizers", "referencerepos/finalizers"]
+    verbs: ["update"]
+  # PAT / webhook HMAC resolution (ReferenceRepo controller) and API key
+  # resolution (ModelProfile controller / subtask C). Read-only, no values
+  # are ever written back.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # litellm-config rendering (ModelProfile controller).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # LiteLLM gateway Deployment ownership (ModelProfile controller / subtask C):
+  # create-if-missing, per-model API-key env wiring, rollout checksum
+  # annotation (design §7 config flow). No delete — the gateway Deployment is
+  # never removed behind the installer's back.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Leader election lock.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: contentremixer-operator
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: contentremixer-operator
+subjects:
+  - kind: ServiceAccount
+    name: contentremixer-operator
+    namespace: contentremixer

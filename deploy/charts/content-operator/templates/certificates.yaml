@@ -1,0 +1,37 @@
+{{- if .Values.certManager.enabled }}
+# Admission-webhook serving cert (design §7). INTERNAL (kube-apiserver ->
+# admission Service), self-signed on purpose — admission clients trust it via
+# the CA bundle injected into the ValidatingWebhookConfiguration.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.certManager.issuerName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  # Name MUST match the webhook-configuration inject-ca-from annotation.
+  name: {{ .Values.webhook.certSecretName }}
+  namespace: {{ include "content-operator.namespace" . }}
+  labels:
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
+spec:
+  # secretName MUST match the Deployment webhook-cert volume secretName.
+  secretName: {{ .Values.webhook.certSecretName }}
+  issuerRef:
+    name: {{ .Values.certManager.issuerName }}
+    kind: Issuer
+  dnsNames:
+    - {{ .Values.webhook.serviceName }}.{{ include "content-operator.namespace" . }}.svc
+    - {{ .Values.webhook.serviceName }}.{{ include "content-operator.namespace" . }}.svc.cluster.local
+  duration: {{ .Values.certManager.duration }}
+  renewBefore: {{ .Values.certManager.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+{{- end }}

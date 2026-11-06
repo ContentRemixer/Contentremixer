@@ -1,0 +1,90 @@
+# k8Squad test webhook exposure (subtask I, ISI-7084).
+#
+# The design (§7) called for a "TLS Ingress", but k8Squad test has NO ingress
+# controller — it does ingress with the Gateway API via **kgateway**
+# (GatewayClass `kgateway`) fronted by **MetalLB** LoadBalancer IPs
+# (pool 10.0.0.219-250). So the concrete exposure ProxOps finalised is a
+# kgateway Gateway + HTTPRoute, not an Ingress. TLS is terminated at the
+# Gateway; the receiver stays plain-HTTP on :8443 (app/internal/githubapp).
+#
+# The IP is pinned (spec.addresses) so it is stable across Gateway rebuilds
+# and matches the cert SAN. The TLS cert is self-signed (cert-manager
+# `contentremixer-selfsigned` Issuer) because k8Squad test has no public
+# ClusterIssuer; for real github.com delivery over the public internet,
+# replace with a public-DNS host + an ACME/real issuer and point the GitHub
+# webhook at that host (see deploy/README.md).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: contentremixer
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  gatewayClassName: kgateway
+  addresses:
+    - type: IPAddress
+      value: 10.0.0.222
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: github-webhook-tls
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: github-webhook
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  parentRefs:
+    - name: contentremixer
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /github/webhook
+      backendRefs:
+        - name: operator-webhook
+          port: 8443
+---
+# Self-signed serving cert for the Gateway HTTPS listener. SANs cover the
+# internal host and the pinned MetalLB IP so the endpoint verifies over TLS
+# from the LAN. Swap for a real issuer + public host for github.com delivery.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: github-webhook-tls
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  secretName: github-webhook-tls
+  issuerRef:
+    name: contentremixer-selfsigned
+    kind: Issuer
+  dnsNames:
+    - recycler.k8squad.test
+  ipAddresses:
+    - "10.0.0.222"
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256

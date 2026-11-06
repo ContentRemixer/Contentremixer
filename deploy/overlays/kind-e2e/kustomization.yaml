@@ -1,0 +1,23 @@
+# kind-e2e overlay (ISI-7117, C6 of ISI-7093). Installs the operator onto an
+# ephemeral `kind` cluster in CI: CRDs + RBAC + cert-manager-issued webhook TLS
+# + the manager Deployment from the base, with NO cluster-specific exposure
+# (the k8squad-test overlay's kgateway + MetalLB do not exist in kind; the
+# E2E job never delivers a webhook over the network — see the workflow and
+# docs/tests/isi-7117-e2e-kind-summary.md for the mock boundary).
+#
+# The image tag is `e2e`: the workflow builds app/ and `kind load`s it under
+# that tag, so IfNotPresent (the default for a non-:latest tag) resolves to the
+# loaded image instead of pulling from GHCR.
+#
+# Fixtures (fixtures/) are applied SEPARATELY by the workflow AFTER the operator
+# Deployment is Available, because the ReferenceRepo validating webhook must be
+# serving before a ReferenceRepo can be admitted.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/contentremixer/operator
+    newTag: e2e

@@ -12,7 +12,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 )
@@ -82,10 +84,31 @@ func (r *ReferenceRepoReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager wires the reconciler.
+// SetupWithManager wires the reconciler. Secrets are watched too (design
+// §2.2 fail-closed recovery): the CR may be applied before its Secrets
+// exist, so a create/update of a Secret named by any ReferenceRepo's
+// spec.tokenRef or spec.webhookSecretRef must enqueue that ReferenceRepo
+// instead of waiting for the 10h resync.
 func (r *ReferenceRepoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&contentremixerv1alpha1.ReferenceRepo{}).
+		Watches(&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+				var list contentremixerv1alpha1.ReferenceRepoList
+				if err := r.List(ctx, &list, client.InNamespace(o.GetNamespace())); err != nil {
+					return nil
+				}
+				reqs := make([]reconcile.Request, 0, len(list.Items))
+				for i := range list.Items {
+					if list.Items[i].Spec.TokenRef.Name == o.GetName() ||
+						list.Items[i].Spec.WebhookSecretRef.Name == o.GetName() {
+						reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
+							Namespace: list.Items[i].Namespace, Name: list.Items[i].Name,
+						}})
+					}
+				}
+				return reqs
+			})).
 		Named("referencerepo").
 		Complete(r)
 }

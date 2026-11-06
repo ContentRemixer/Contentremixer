@@ -1,14 +1,15 @@
+{{- if .Values.rbac.create }}
 # Operator RBAC (curated from the controller/webhook kubebuilder markers).
-# Namespace-scoped to the install namespace (design §2: Phase 1 operator is
-# namespace-scoped).
+# ClusterRole, not Role: the manager builds a cluster-wide controller-runtime
+# cache (no --namespace flag), so its informers list/watch at CLUSTER scope.
+# See deploy/base/operator/rbac.yaml for the full rationale (ISI-7077 tracks
+# narrowing this back to a namespaced Role once the cache is scoped).
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: contentremixer-operator
-  namespace: contentremixer
+  name: {{ .Values.operator.name }}
   labels:
-    app.kubernetes.io/name: contentremixer-operator
-    app.kubernetes.io/part-of: contentremixer
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["contentremixer.io"]
     resources: ["modelprofiles", "referencerepos"]
@@ -20,8 +21,7 @@ rules:
     resources: ["modelprofiles/finalizers", "referencerepos/finalizers"]
     verbs: ["update"]
   # PAT / webhook HMAC resolution (ReferenceRepo controller) and API key
-  # resolution (ModelProfile controller / subtask C). Read-only, no values
-  # are ever written back.
+  # resolution (ModelProfile controller). Read-only.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
@@ -29,10 +29,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # LiteLLM gateway Deployment ownership (ModelProfile controller / subtask C):
-  # create-if-missing, per-model API-key env wiring, rollout checksum
-  # annotation (design §7 config flow). No delete — the gateway Deployment is
-  # never removed behind the installer's back.
+  # LiteLLM gateway Deployment ownership (ModelProfile controller). No delete.
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
@@ -45,18 +42,17 @@ rules:
     verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
-  name: contentremixer-operator
-  namespace: contentremixer
+  name: {{ .Values.operator.name }}
   labels:
-    app.kubernetes.io/name: contentremixer-operator
-    app.kubernetes.io/part-of: contentremixer
+    {{- include "content-operator.operatorLabels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: contentremixer-operator
+  kind: ClusterRole
+  name: {{ .Values.operator.name }}
 subjects:
   - kind: ServiceAccount
-    name: contentremixer-operator
-    namespace: contentremixer
+    name: {{ include "content-operator.serviceAccountName" . }}
+    namespace: {{ include "content-operator.namespace" . }}
+{{- end }}

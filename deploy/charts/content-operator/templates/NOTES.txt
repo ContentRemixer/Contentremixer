@@ -1,0 +1,25 @@
+ContentRemixer operator installed as release {{ .Release.Name }} in namespace {{ include "content-operator.namespace" . }}.
+
+Image:   {{ include "content-operator.operatorImage" . }}
+Replicas: {{ .Values.operator.replicas }}
+
+Next steps:
+  1. Create the out-of-band Secrets (never in the repo) — see deploy/README.md:
+       kubectl -n {{ include "content-operator.namespace" . }} create secret generic github-pat     --from-literal=token=...
+       kubectl -n {{ include "content-operator.namespace" . }} create secret generic github-webhook --from-literal=hmac=...
+  2. Check rollout:
+       kubectl -n {{ include "content-operator.namespace" . }} rollout status deploy/{{ .Values.operator.name }}
+{{- if .Values.certManager.enabled }}
+  3. Admission serving cert (requires cert-manager):
+       kubectl -n {{ include "content-operator.namespace" . }} get certificate {{ .Values.webhook.certSecretName }}
+{{- end }}
+{{- if not .Values.exposure.enabled }}
+
+Public webhook exposure is DISABLED (exposure.enabled=false). To expose the
+GitHub delivery receiver (kgateway + MetalLB), set exposure.enabled=true and
+exposure.address=<MetalLB IP>. See deploy/README.md "Real github.com delivery".
+{{- else }}
+
+Public exposure enabled via Gateway {{ .Values.exposure.gatewayName }} ({{ .Values.exposure.gatewayClassName }}).
+  kubectl -n {{ include "content-operator.namespace" . }} get gateway {{ .Values.exposure.gatewayName }}
+{{- end }}

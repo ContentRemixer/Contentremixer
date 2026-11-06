@@ -94,3 +94,44 @@ type Writer interface {
 	// + rc.Notes; returns the styled Mix draft.
 	Write(ctx context.Context, rc RunContext, s Sample) (Mix, error)
 }
+
+// Severity levels for a checker Violation (design §4).
+const (
+	// SeverityBlock fails the gate closed — a run with any block violation
+	// must NOT open a PR.
+	SeverityBlock = "block"
+	// SeverityWarn is advisory (e.g. brand-voice) and does not block.
+	SeverityWarn = "warn"
+)
+
+// Violation is one checker finding against a Mix (design §4). Match is
+// redacted/truncated evidence — never the raw secret — so it is safe to
+// surface in the (public) recycle-issue comment.
+type Violation struct {
+	// Rule is the rule id: "tenant-id" | "token" | "ip" |
+	// "internal-hostname" | "brand-voice".
+	Rule string
+	// Match is redacted/truncated evidence of the hit.
+	Match string
+	// Severity is SeverityBlock or SeverityWarn.
+	Severity string
+	// Where names the scanned surface the hit came from ("markdown" or a
+	// meta.yaml field path) to aid remediation.
+	Where string
+}
+
+// CheckResult is the Mastering gate outcome (design §4). Passed is false
+// when any SeverityBlock violation is present (fail-closed).
+type CheckResult struct {
+	Passed     bool
+	Violations []Violation
+}
+
+// Checker is the pipeline stage contract implemented by subtask G
+// (internal/pipeline/checker). FAIL-CLOSED: any block violation =>
+// Passed=false and the pipeline must NOT open a PR.
+type Checker interface {
+	// Check runs the hard scrub rules + brand-voice over the final
+	// Mix.Markdown and Mix.Meta.
+	Check(ctx context.Context, m Mix) (CheckResult, error)
+}

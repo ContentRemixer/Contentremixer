@@ -1,0 +1,47 @@
+# Admission-webhook serving certificate (design §7: "mounts webhook TLS cert
+# from a cert-manager Secret"). Subtask I finalises this — the scaffold
+# referenced the Secret `contentremixer-operator-webhook-tls` (Deployment
+# volume) and the CA-injection annotation
+# (ValidatingWebhookConfiguration: cert-manager.io/inject-ca-from=
+#  contentremixer/contentremixer-operator-webhook-tls) but shipped no Issuer
+# or Certificate to produce it. These two objects close that gap.
+#
+# This cert is INTERNAL (kube-apiserver -> operator-admission Service) and is
+# self-signed on purpose: admission clients trust it via the injected CA
+# bundle, not a public chain. It is DISTINCT from the GitHub-webhook Ingress
+# TLS (deploy/base/webhook/ingress.yaml), which uses a real cluster-issuer.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: contentremixer-selfsigned
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  # Name MUST match the inject-ca-from annotation value
+  # (contentremixer/contentremixer-operator-webhook-tls).
+  name: contentremixer-operator-webhook-tls
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: contentremixer-operator
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  # secretName MUST match the Deployment volume (webhook-cert) secretName.
+  secretName: contentremixer-operator-webhook-tls
+  issuerRef:
+    name: contentremixer-selfsigned
+    kind: Issuer
+  dnsNames:
+    - operator-admission.contentremixer.svc
+    - operator-admission.contentremixer.svc.cluster.local
+  duration: 8760h # 1y
+  renewBefore: 720h # 30d
+  privateKey:
+    algorithm: ECDSA
+    size: 256

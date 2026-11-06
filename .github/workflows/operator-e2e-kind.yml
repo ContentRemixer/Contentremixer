@@ -1,0 +1,137 @@
+# Operator E2E on kind — ISI-7117 (C6 of ISI-7093, plan §2 job 3).
+#
+# Wires the ISI-7085 recycle E2E suite into CI plus a real-cluster gate on an
+# ephemeral `kind` cluster: install CRDs, run the operator, exercise a fixture
+# ReferenceRepo through the reconcile + admission path.
+#
+# Two layers, both must be green:
+#   1. BEHAVIORAL — the ISI-7085 suite (recycle:blog on a teleprompter source ->
+#      styled-blog PR with Sample-clearance, + the fail-closed leak variant).
+#      GitHub + LiteLLM are mocked at their BaseURL seams (deterministic, no
+#      network); this is the recycle:<format> -> PR assertion.
+#   2. CLUSTER — the shipped operator image runs on kind: CRDs Established,
+#      Deployment Available, the validating webhook REJECTS an invalid
+#      ReferenceRepo over cert-manager TLS, and a fixture ReferenceRepo
+#      reconciles to Ready=True.
+#
+# Boundary (keep it honest): live GitHub webhook delivery INTO the kind cluster
+# is NOT exercised here — that is ISI-7112 (real-delivery edge). See
+# docs/tests/isi-7117-e2e-kind-summary.md.
+#
+# Gating (plan §2): always on main/tags; on PRs only when the `run-e2e` label
+# is present, so normal PRs stay fast (the job is skipped, kind never spins up).
+name: operator-e2e-kind
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-e2e-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/contentremixer/operator
+  E2E_TAG: e2e
+  CERT_MANAGER_VERSION: v1.16.2
+  KIND_CLUSTER: contentremixer-e2e
+
+jobs:
+  recycle-e2e:
+    # Always on push (main/tags); on PRs only with the run-e2e label.
+    if: >-
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: app/go.sum
+
+      # --- Layer 1: behavioral gate (mocked GitHub + LiteLLM) ----------------
+      # No envtest needed: the ISI-7085 TestE2E cases drive the webhook Server +
+      # run queue with a fake client, so they run as a plain `go test`.
+      - name: ISI-7085 recycle E2E suite
+        working-directory: app
+        run: go test -run 'TestE2E' ./internal/githubapp/... -count=1 -v
+
+      # --- Layer 2: cluster gate (kind) --------------------------------------
+      - name: create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: contentremixer-e2e
+          wait: 120s
+
+      - name: build operator image
+        working-directory: app
+        run: docker build -t "${IMAGE}:${E2E_TAG}" .
+
+      - name: load operator image into kind
+        run: kind load docker-image "${IMAGE}:${E2E_TAG}" --name "${KIND_CLUSTER}"
+
+      - name: install cert-manager
+        run: |
+          set -euo pipefail
+          kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+          for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+            kubectl -n cert-manager rollout status "deploy/${d}" --timeout=180s
+          done
+
+      - name: install kustomize
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash -s 5.4.3 .
+          sudo mv kustomize /usr/local/bin/
+
+      - name: deploy operator (CRDs + RBAC + webhook + manager)
+        run: |
+          set -euo pipefail
+          kustomize build deploy/overlays/kind-e2e | kubectl apply -f -
+
+      - name: wait for CRDs, operator, and webhook cert
+        run: |
+          set -euo pipefail
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/referencerepos.contentremixer.io \
+            crd/modelprofiles.contentremixer.io
+          kubectl -n contentremixer rollout status deploy/contentremixer-operator --timeout=180s
+          kubectl -n contentremixer wait --for=condition=Ready --timeout=120s \
+            certificate/contentremixer-operator-webhook-tls
+
+      - name: negative admission — invalid ReferenceRepo must be REJECTED
+        run: |
+          set -euo pipefail
+          if kubectl apply -f deploy/overlays/kind-e2e/fixtures/referencerepo-invalid.yaml 2>err.txt; then
+            echo "::error::admission webhook ADMITTED an invalid outputFormat (fail-open)"; cat err.txt; exit 1
+          fi
+          cat err.txt
+          grep -q "unknown outputFormat" err.txt || {
+            echo "::error::ReferenceRepo was rejected, but not by the route validator"; exit 1; }
+          echo "OK: invalid ReferenceRepo rejected by the validating webhook over cert-manager TLS"
+
+      - name: apply fixture ReferenceRepo + secrets
+        run: kubectl apply -f deploy/overlays/kind-e2e/fixtures/referencerepo.yaml
+
+      - name: fixture ReferenceRepo reconciles to Ready
+        run: |
+          set -euo pipefail
+          kubectl -n contentremixer wait --for=condition=Ready --timeout=120s \
+            referencerepo/contentremixer-crate
+          kubectl -n contentremixer get referencerepo contentremixer-crate -o yaml
+
+      - name: diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl -n contentremixer describe deploy/contentremixer-operator || true
+          kubectl -n contentremixer logs deploy/contentremixer-operator --tail=200 || true
+          kubectl get referencerepo -A -o yaml || true
+          kubectl get validatingwebhookconfigurations -o yaml || true

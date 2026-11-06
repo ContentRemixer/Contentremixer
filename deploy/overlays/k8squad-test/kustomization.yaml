@@ -1,0 +1,21 @@
+# k8Squad test overlay (subtask I, ISI-7084). `kubectl apply -k
+# deploy/overlays/k8squad-test` installs the operator onto the named test
+# cluster (create the Secrets out-of-band first — see deploy/README.md).
+#
+# Exposure for this cluster is kgateway (Gateway API) + MetalLB, in
+# exposure.yaml — k8Squad test has no ingress controller, so the base's
+# generic Ingress is NOT used here. The image tag is pinned to the CI-published
+# sha tag (operator-ci.yml); bump deliberately on release.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - exposure.yaml
+
+images:
+  - name: ghcr.io/contentremixer/operator
+    # Pinned to an immutable CI tag, NOT :latest, so rollouts are deterministic.
+    # operator-ci published this from commit 7fdf948 (run 42063258626, green).
+    # Bump to a newer sha-<12> only when app/ changes rebuild the binary.
+    newTag: sha-7fdf9483ab28

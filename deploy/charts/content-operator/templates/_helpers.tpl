@@ -61,3 +61,20 @@ LiteLLM image.
 {{- define "content-operator.litellmImage" -}}
 {{- printf "%s:%s" .Values.litellm.image.repository .Values.litellm.image.tag -}}
 {{- end -}}
+
+{{/*
+Derive the ReferenceRepo CR name (a DNS-1123 label) for a referenceRepos entry.
+Input: a dict {"repo": "owner/name", "name": "<optional override>"}.
+Default = the repo's name part (after the "/"), lower-cased, with any char
+outside [a-z0-9-] collapsed to "-" and leading/trailing "-" trimmed. The same
+derivation is what hack/onboard-content-repo.sh and the per-repo Secret names
+(<name>-github-pat / <name>-webhook-hmac) are keyed on — keep them in sync.
+*/}}
+{{- define "content-operator.referenceRepoName" -}}
+{{- if .name -}}
+{{- .name -}}
+{{- else -}}
+{{- $leaf := last (splitList "/" .repo) -}}
+{{- regexReplaceAll "[^a-z0-9-]" (lower $leaf) "-" | trunc 63 | trimPrefix "-" | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}

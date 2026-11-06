@@ -286,3 +286,87 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option C (or A).
 > ~1GB image. The ModelProfile controller renders `litellm-config` correctly;
 > this is a node-capacity issue (and litellm is subtask C scope), not an
 > operator/webhook problem.
+
+## Onboard a content repo (ISI-7139 — repeatable install step)
+
+The "Real github.com delivery" steps above are the *first-time* walkthrough for
+one repo. ISI-7139 makes onboarding an **N-repo, repeatable install step**:
+
+> **One operator + one Funnel edge serves N target repos** (parent
+> [ISI-7126](https://.../ISI-7126) Q1). Each repo is its own `ReferenceRepo` CR
+> + its own GitHub webhook, all pointing at the **same** public Funnel host; the
+> operator routes each delivery by `repository.full_name`. Onboarding a new repo
+> never touches the operator, the edge, or hand-edited manifests.
+
+Onboarding = **two steps**, no manifest hand-edits:
+
+**1. Declare the repo (Helm values).** Add one entry to `referenceRepos` in
+[`charts/content-operator/values.yaml`](charts/content-operator/values.yaml) and
+`helm upgrade`. The chart renders exactly one `ReferenceRepo` CR per entry
+(`templates/referencerepos.yaml`):
+
+```yaml
+referenceRepos:
+  - repo: ContentRemixer/contentmixer-data        # "owner/name" (= $TARGET_REPO)
+    labelRoutes:
+      - { label: "recycle:blog", outputFormat: blog }
+      - { label: "recycle:short", outputFormat: short }
+      - { label: "recycle:tutorial", outputFormat: tutorial }
+      - { label: "recycle:teleprompter", outputFormat: teleprompter }
+    prTarget: { baseBranch: main, branchPrefix: recycle/, draft: true }
+```
+
+```sh
+helm upgrade --install contentremixer deploy/charts/content-operator \
+  -n contentremixer --create-namespace
+```
+
+**2. Create the repo webhook + Secrets (script).** The GitHub webhook can only
+be created via the API, so a thin idempotent script does it (plus the per-repo
+Secrets). Re-running never duplicates the webhook — it matches by payload URL
+and PATCHes in place:
+
+```sh
+PUBLIC_HOST=recycler.<tailnet>.ts.net \   # the shared Funnel host (ISI-7126)
+HOOK_TOKEN="$GITHUB_WEBHOOKS_TOKEN" \      # token with repo "Webhooks" write
+GITHUB_PAT="$OPERATOR_PAT" \              # contents+PRs+issues write on the repo
+  ./hack/onboard-content-repo.sh ContentRemixer/contentmixer-data
+```
+
+`WEBHOOK_SECRET` is auto-generated (`openssl rand -hex 32`) and stored in **both**
+the GitHub webhook and the k8s Secret so they match; pass an existing one to
+reuse it. `--help` lists every flag (`--apply-cr` for non-Helm installs,
+`--with-ci-bundle` to push `content-ci.yml` + PR templates, `--dry-run`, …).
+
+> **Who runs step 2:** the default ProxOps `GITHUB_TOKEN` has repo-admin **but
+> not** the Webhooks permission (`403` on `/repos/.../hooks`), so an owner must
+> supply `HOOK_TOKEN` with the Webhooks scope (same constraint as the manual
+> step 5 above).
+
+### Credential scope — per-repo vs shared (ISI-7139 Q3)
+
+By **default** each repo carries its **own** Secrets, named off the CR name
+(`<name>-github-pat` / `<name>-webhook-hmac`, where `<name>` is the repo's name
+part lower-cased). The script creates them; `tokenRef`/`webhookSecretRef` in the
+rendered CR point at them automatically — nothing to set in values.
+
+To **share one PAT + HMAC** across every repo instead, point each entry at a
+common Secret and run the script with `--shared-creds`:
+
+```yaml
+referenceRepos:
+  - repo: ContentRemixer/contentmixer-data
+    labelRoutes: [ { label: "recycle:blog", outputFormat: blog } ]
+    tokenRef: { name: github-pat, key: token }        # shared
+    webhookSecretRef: { name: github-webhook, key: hmac }
+```
+
+```sh
+PUBLIC_HOST=... HOOK_TOKEN=... WEBHOOK_SECRET="$SHARED_HMAC" \
+  ./hack/onboard-content-repo.sh ContentRemixer/contentmixer-data \
+  --shared-creds --no-secrets          # Secrets managed once, out-of-band
+```
+
+Per-repo is the recommended default (blast-radius isolation + per-repo rotation);
+shared is fine for a single-owner homelab tier. Either way the CR contract is
+identical — only the Secret `name`s differ.

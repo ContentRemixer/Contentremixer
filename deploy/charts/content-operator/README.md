@@ -9,7 +9,7 @@ OCI chart publish (C5).
 
 | Resource | Object(s) |
 |----------|-----------|
-| CRDs | `modelprofiles.contentremixer.io`, `referencerepos.contentremixer.io` (from `crds/`) |
+| CRDs | `modelprofiles.contentremixer.io`, `referencerepos.contentremixer.io`, `devrelpersonas.contentremixer.io` (from `crds/`) |
 | Namespace | `contentremixer` (toggle `namespace.create`) |
 | Operator | ServiceAccount, ClusterRole + ClusterRoleBinding, Deployment |
 | Admission webhook | `operator-admission` Service, `ValidatingWebhookConfiguration`, cert-manager Issuer + Certificate |
@@ -60,7 +60,7 @@ Full list with comments: [`values.yaml`](./values.yaml).
 ## Equivalence with kustomize
 
 `helm template cr deploy/charts/content-operator --include-crds` renders the
-same resource set as `kubectl kustomize deploy/base` (14 objects: 2 CRDs +
+same resource set as `kubectl kustomize deploy/base` (15 objects: 3 CRDs +
 Namespace + SA + ClusterRole + ClusterRoleBinding + 3 Services + 2 Deployments +
 Issuer + Certificate + ValidatingWebhookConfiguration). Intentional differences:
 

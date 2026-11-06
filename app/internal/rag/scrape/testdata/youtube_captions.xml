@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+<text start="0" dur="3.5">Welcome back to the channel.</text>
+<text start="3.5" dur="4.0">Today we&amp;#39;re talking about observability in Go.</text>
+<text start="7.5" dur="3.2">Metrics, traces, and logs &amp;mdash; the three pillars.</text>
+<text start="10.7" dur="2.1">Let&amp;#39;s dive in.</text>
+</transcript>

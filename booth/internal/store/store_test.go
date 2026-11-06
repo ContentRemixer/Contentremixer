@@ -11,8 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
-	"github.com/ContentRemixer/Contentremixer/booth/internal/authz"
 )
 
 const ns = "content-remixer"
@@ -24,8 +24,8 @@ const (
 )
 
 var (
-	admin = authz.Session{Subject: adminSub, Role: authz.RoleAdmin}
-	alice = authz.Session{Subject: aliceSub, Role: authz.RoleDevRel}
+	admin = auth.Session{Subject: adminSub, Role: auth.RoleAdmin}
+	alice = auth.Session{Subject: aliceSub, Role: auth.RoleDevRel}
 )
 
 // ownerScopedKind reuses ModelProfile storage but is marked NOT admin-only, so
@@ -129,7 +129,7 @@ func TestList(t *testing.T) {
 func TestGetMatrix(t *testing.T) {
 	cases := []struct {
 		name    string
-		sess    authz.Session
+		sess    auth.Session
 		kind    ResourceKind
 		target  string
 		wantErr error
@@ -156,7 +156,7 @@ func TestGetMatrix(t *testing.T) {
 func TestDeleteAndApproveMatrix(t *testing.T) {
 	cases := []struct {
 		name    string
-		sess    authz.Session
+		sess    auth.Session
 		kind    ResourceKind
 		target  string
 		wantErr error
@@ -192,7 +192,7 @@ func TestDeleteAndApproveMatrix(t *testing.T) {
 func TestCreateMatrix(t *testing.T) {
 	cases := []struct {
 		name    string
-		sess    authz.Session
+		sess    auth.Session
 		kind    ResourceKind
 		owner   string
 		wantErr error
@@ -268,7 +268,7 @@ func TestAuditRecordsMutation(t *testing.T) {
 	st, aud := newStore(t)
 	_ = st.Create(context.Background(), admin, ModelProfileKind, mp("m1", ""))
 	e := aud.last()
-	if e.Subject != adminSub || e.Role != authz.RoleAdmin || e.Verb != "create" ||
+	if e.Subject != adminSub || e.Role != string(auth.RoleAdmin) || e.Verb != "create" ||
 		e.ResourceKind != "ModelProfile" || e.ResourceName != "m1" || e.Decision != audit.DecisionAllow {
 		t.Fatalf("unexpected audit entry: %+v", e)
 	}

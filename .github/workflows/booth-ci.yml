@@ -1,26 +1,29 @@
-# Booth CI — ISI-7149 (P3-1). The Booth API is a second Go module in the
-# monorepo (board decision #7) under booth/, consuming the operator's CRD types
-# via a `replace => ../app` directive. It gets its own pipeline mirroring the
-# operator's code CI (ci.yml): build · test · 80% coverage gate · quality.
+# Booth CI — the Go module under booth/ (monorepo, board decision #7).
 #
-# Path-filtered to booth/** and app/** (a change to the operator's API types can
-# break the Booth build through the replace directive) plus this workflow file.
-# This is a standalone check, not part of the operator's `ci-required` aggregate,
-# so path filtering is safe here — it will not leave PRs stuck pending.
+# The Booth is a separate Go module from the operator (app/), so it gets its own
+# build/test/coverage/quality pipeline rather than being bolted onto ci.yml.
+# It now holds BOTH Phase-3 halves in one module: P3-2 (ISI-7150) auth/ AuthN
+# provider and P3-1 (ISI-7149) the §6.3 authz API (internal/{authz,store,server,
+# audit} + cmd/booth).
+#
+# Path-filtered to booth/** plus app/api/** — the Booth consumes the operator's
+# CRD types via `replace => ../app`, so a change to those API types can break the
+# Booth build. This is a standalone check, not part of the operator's
+# `ci-required` aggregate.
 name: booth-ci
 
 on:
   push:
     branches: [main]
-    paths: [booth/**, app/api/**, .github/workflows/booth-ci.yml]
+    paths: ['booth/**', 'app/api/**', '.github/workflows/booth-ci.yml']
   pull_request:
-    paths: [booth/**, app/api/**, .github/workflows/booth-ci.yml]
+    paths: ['booth/**', 'app/api/**', '.github/workflows/booth-ci.yml']
 
 permissions:
   contents: read
 
 concurrency:
-  group: booth-ci-${{ github.ref }}
+  group: booth-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -62,10 +65,9 @@ jobs:
           cache-dependency-path: booth/go.sum
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt needs to be run on:"; echo "$unformatted"
-            exit 1
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt needed on:"; echo "$out"; exit 1
           fi
       - name: go vet
         run: go vet ./...
@@ -80,9 +82,9 @@ jobs:
         # Installed directly (not via the marketplace action) to match the repo
         # convention in security.yml and to decouple from the action's
         # golangci-lint-version matrix. Booth is on go 1.26 (its deps — x/net
-        # v0.62 etc. — require it), so it pins golangci-lint v2, which is the
-        # series built against go 1.26. (ci.yml's app module stays on go 1.23 +
-        # golangci-lint v1.61; the two modules lint independently.)
+        # v0.62 etc. — require it), so it pins golangci-lint v2, the series built
+        # against go 1.26. (ci.yml's app module stays on go 1.23 + golangci-lint
+        # v1.61; the two modules lint independently.)
         run: |
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...

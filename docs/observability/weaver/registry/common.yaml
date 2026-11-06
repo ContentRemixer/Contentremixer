@@ -1,0 +1,230 @@
+# Shared attributes + enums for contentremixer persona/RAG telemetry.
+# Cardinality classes (from observability spec §3) are recorded in each attribute's `note`.
+groups:
+  - id: registry.contentremixer.common
+    type: attribute_group
+    stability: development
+    brief: >
+      Shared attributes and enumerations for ContentRemixer persona/RAG metrics.
+    attributes:
+      - id: contentremixer.result
+        type:
+          members:
+            - id: success
+              value: "success"
+              stability: development
+              brief: "Operation completed fully."
+            - id: degraded
+              value: "degraded"
+              stability: development
+              brief: "Operation completed with a correct fallback (not an error)."
+            - id: error
+              value: "error"
+              stability: development
+              brief: "Operation failed."
+        stability: development
+        brief: "Outcome class of a reconcile / scrape / embed operation."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.persona.name
+        type: string
+        stability: development
+        brief: "Name of the DevRelPersona the signal pertains to."
+        note: >
+          Cardinality class: bounded-at-p2. Used as a metric label only while the
+          DevRelPersona count is small; the per-series budget is capped. Mirrors the
+          `persona_name` attribute of the spec.
+        examples: ["devrel-k8s", "devrel-observability"]
+
+      - id: contentremixer.persona.phase
+        type:
+          members:
+            - id: pending
+              value: "Pending"
+              stability: development
+              brief: "Persona accepted, not yet processed."
+            - id: scraping
+              value: "Scraping"
+              stability: development
+              brief: "Reference sources are being scraped."
+            - id: indexing
+              value: "Indexing"
+              stability: development
+              brief: "Scraped docs are being chunked/embedded/stored."
+            - id: ready
+              value: "Ready"
+              stability: development
+              brief: "Corpus indexed and available for retrieval."
+            - id: degraded
+              value: "Degraded"
+              stability: development
+              brief: "Partially usable; one or more references failed."
+        stability: development
+        brief: "Reconciliation phase of a DevRelPersona."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.reference.kind
+        type:
+          members:
+            - id: youtube
+              value: "youtube"
+              stability: development
+              brief: "YouTube video (transcript/captions)."
+            - id: article
+              value: "article"
+              stability: development
+              brief: "Web article."
+            - id: blog
+              value: "blog"
+              stability: development
+              brief: "Blog post."
+            - id: rss
+              value: "rss"
+              stability: development
+              brief: "RSS/Atom feed item."
+            - id: transcript
+              value: "transcript"
+              stability: development
+              brief: "Standalone transcript document."
+        stability: development
+        brief: "Kind of reference source being scraped/indexed."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.reference.fail_reason
+        type:
+          members:
+            - id: network
+              value: "network"
+              stability: development
+              brief: "Network/transport error reaching the source."
+            - id: parse
+              value: "parse"
+              stability: development
+              brief: "Content could not be parsed."
+            - id: no_captions
+              value: "no_captions"
+              stability: development
+              brief: "YouTube source had no usable captions."
+            - id: empty
+              value: "empty"
+              stability: development
+              brief: "Source yielded no extractable text."
+            - id: cap_exceeded
+              value: "cap_exceeded"
+              stability: development
+              brief: "Per-persona reference/size cap exceeded."
+        stability: development
+        brief: "Reason a single reference failed to index."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.reindex.trigger
+        type:
+          members:
+            - id: spec_change
+              value: "spec_change"
+              stability: development
+              brief: "DevRelPersona spec changed."
+            - id: periodic_resync
+              value: "periodic_resync"
+              stability: development
+              brief: "Scheduled periodic re-index."
+        stability: development
+        brief: "What triggered a persona re-index."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.condition.outcome
+        type:
+          members:
+            - id: full
+              value: "full"
+              stability: development
+              brief: "Full persona conditioning applied (style + retrieved corpus)."
+            - id: self_description_only
+              value: "self_description_only"
+              stability: development
+              brief: "Only the persona self-description applied (sparse-corpus fallback; correct, not an incident)."
+            - id: degraded
+              value: "degraded"
+              stability: development
+              brief: "Conditioning degraded due to a runtime failure."
+            - id: no_persona
+              value: "no_persona"
+              stability: development
+              brief: "No persona bound to the recycle run."
+        stability: development
+        brief: "Outcome of applying persona conditioning to a writer run."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.condition.degraded_reason
+        type:
+          members:
+            - id: store_unavailable
+              value: "store_unavailable"
+              stability: development
+              brief: "pgvector store was unreachable."
+            - id: embed_failed
+              value: "embed_failed"
+              stability: development
+              brief: "Query embedding failed."
+            - id: empty_retrieval
+              value: "empty_retrieval"
+              stability: development
+              brief: "Retrieval returned no usable matches."
+            - id: persona_not_ready
+              value: "persona_not_ready"
+              stability: development
+              brief: "Bound persona was not in Ready phase."
+        stability: development
+        brief: "Reason persona conditioning degraded to a fallback."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.http.status_class
+        type:
+          members:
+            - id: client_error
+              value: "4xx"
+              stability: development
+              brief: "HTTP 4xx (excluding 429)."
+            - id: rate_limited
+              value: "429"
+              stability: development
+              brief: "HTTP 429 Too Many Requests."
+            - id: server_error
+              value: "5xx"
+              stability: development
+              brief: "HTTP 5xx."
+            - id: timeout
+              value: "timeout"
+              stability: development
+              brief: "Client-side timeout / no response."
+        stability: development
+        brief: "Coarse status class of an embedding-gateway response."
+        note: "Cardinality class: bounded."
+
+      - id: contentremixer.rag.scrape.drop_reason
+        type: string
+        stability: development
+        brief: "Reason a scraped document was dropped or a scrape errored."
+        note: "Cardinality class: bounded (operator-controlled reason strings)."
+        examples: ["too_small", "duplicate", "unsupported_mime"]
+
+      - id: contentremixer.rag.store.error_reason
+        type: string
+        stability: development
+        brief: "Reason a pgvector store operation errored."
+        note: "Cardinality class: bounded (operator-controlled reason strings)."
+        examples: ["conn_refused", "timeout", "constraint"]
+
+      - id: contentremixer.rag.retrieve.empty_reason
+        type: string
+        stability: development
+        brief: "Reason a retrieval returned no matches."
+        note: "Cardinality class: bounded (operator-controlled reason strings)."
+        examples: ["below_threshold", "empty_corpus", "no_rows"]
+
+      - id: contentremixer.rag.embed.expected_dim
+        type: int
+        stability: development
+        brief: "Embedding dimension the store contract expects, when a mismatch is observed."
+        note: "Cardinality class: bounded (small set of configured dimensions)."
+        examples: [768, 1536, 3072]

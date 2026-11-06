@@ -12,13 +12,13 @@ metadata:
     {{- include "content-operator.operatorLabels" . | nindent 4 }}
 rules:
   - apiGroups: ["contentremixer.io"]
-    resources: ["modelprofiles", "referencerepos"]
+    resources: ["modelprofiles", "referencerepos", "devrelpersonas"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["contentremixer.io"]
-    resources: ["modelprofiles/status", "referencerepos/status"]
+    resources: ["modelprofiles/status", "referencerepos/status", "devrelpersonas/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: ["contentremixer.io"]
-    resources: ["modelprofiles/finalizers", "referencerepos/finalizers"]
+    resources: ["modelprofiles/finalizers", "referencerepos/finalizers", "devrelpersonas/finalizers"]
     verbs: ["update"]
   # PAT / webhook HMAC resolution (ReferenceRepo controller) and API key
   # resolution (ModelProfile controller). Read-only.

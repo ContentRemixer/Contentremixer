@@ -100,10 +100,19 @@ var _ = BeforeSuite(func() {
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = (&DevRelPersonaReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	err = (&opwebhook.ModelProfileCustomValidator{Client: mgr.GetClient()}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = (&opwebhook.ReferenceRepoCustomValidator{}).SetupWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = (&opwebhook.DevRelPersonaCustomValidator{}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
 	k8sClient = mgr.GetClient()

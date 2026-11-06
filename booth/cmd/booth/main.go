@@ -2,14 +2,12 @@
 // ContentRemixer CRs, enforcing the frozen design §6.3 authz predicate on every
 // read and write (see internal/authz, internal/store).
 //
-// Phase 1 (ISI-7149) ships the authz core, the audit log, the bcrypt built-in
-// user table (board decision #8a), and CRUD over the admin-only ModelProfile
-// and ReferenceRepo kinds. OIDC login and the DevRelPersona kind slot in behind
-// the same interfaces without touching the enforcement path.
+// AuthN is the booth/auth provider (bcrypt user table + signed sessions, board
+// decision #8a/#8b), bootstrapped from the k8s Secret via BootstrapFromEnv.
+// AuthZ + the CR API are P3-1 (ISI-7149). Both live in this one module/binary.
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,9 +21,9 @@ import (
 
 	appv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 
+	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
-	"github.com/ContentRemixer/Contentremixer/booth/internal/session"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 )
 
@@ -42,6 +40,13 @@ func run() error {
 
 	namespace := envOr("BOOTH_NAMESPACE", "content-remixer")
 	addr := envOr("BOOTH_ADDR", ":8080")
+
+	// AuthN provider: bcrypt user table + signed sessions, seeded Admin from the
+	// mounted Secret (fails closed on a missing signing key / seed credential).
+	prov, err := auth.BootstrapFromEnv(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("bootstrap auth: %w", err)
+	}
 
 	// Kubernetes client, using the Booth ServiceAccount's in-cluster config (or
 	// the ambient kubeconfig when run out-of-cluster). Per design §6.2, per-user
@@ -63,13 +68,8 @@ func run() error {
 		return fmt.Errorf("build k8s client: %w", err)
 	}
 
-	auth, err := loadAuthenticator()
-	if err != nil {
-		return fmt.Errorf("load authenticator: %w", err)
-	}
-
 	st := store.New(k8s, namespace, audit.NewSlogLogger(log))
-	srv := server.New(auth, st, log)
+	srv := server.New(prov, st, log)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -79,38 +79,6 @@ func run() error {
 
 	log.Info("booth listening", slog.String("addr", addr), slog.String("namespace", namespace))
 	return httpServer.ListenAndServe()
-}
-
-// loadAuthenticator builds the Phase-1 bcrypt authenticator from BOOTH_USERS, a
-// JSON array of {username, subject, role, passwordHash}. Board decision #8b:
-// the initial Admin is seeded by the board/owner, so the user table is supplied
-// at deploy time (a Secret), never hard-coded here.
-func loadAuthenticator() (session.Authenticator, error) {
-	raw := os.Getenv("BOOTH_USERS")
-	if raw == "" {
-		return nil, fmt.Errorf("BOOTH_USERS is required (JSON user table; see README)")
-	}
-	var rows []struct {
-		Username     string `json:"username"`
-		Subject      string `json:"subject"`
-		Role         string `json:"role"`
-		PasswordHash string `json:"passwordHash"`
-	}
-	if err := json.Unmarshal([]byte(raw), &rows); err != nil {
-		return nil, fmt.Errorf("parse BOOTH_USERS: %w", err)
-	}
-	users := make(map[string]session.User, len(rows))
-	for _, r := range rows {
-		if r.Username == "" || r.Subject == "" || r.Role == "" || r.PasswordHash == "" {
-			return nil, fmt.Errorf("BOOTH_USERS row for %q missing a required field", r.Username)
-		}
-		users[r.Username] = session.User{
-			Subject:      r.Subject,
-			Role:         r.Role,
-			PasswordHash: []byte(r.PasswordHash),
-		}
-	}
-	return session.NewBcryptAuthenticator(users), nil
 }
 
 func envOr(key, def string) string {

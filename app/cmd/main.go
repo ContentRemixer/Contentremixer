@@ -128,6 +128,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ReferenceRepo")
 		os.Exit(1)
 	}
+	if err := (&controller.DevRelPersonaReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DevRelPersona")
+		os.Exit(1)
+	}
 
 	mpValidator := &opwebhook.ModelProfileCustomValidator{Client: mgr.GetClient()}
 	if err := mpValidator.SetupWithManager(mgr); err != nil {
@@ -137,6 +144,11 @@ func main() {
 	rrValidator := &opwebhook.ReferenceRepoCustomValidator{}
 	if err := rrValidator.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "ReferenceRepo")
+		os.Exit(1)
+	}
+	dpValidator := &opwebhook.DevRelPersonaCustomValidator{}
+	if err := dpValidator.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "DevRelPersona")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

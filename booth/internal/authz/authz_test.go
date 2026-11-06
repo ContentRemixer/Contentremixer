@@ -56,12 +56,3 @@ func TestAuthorizeMatrix(t *testing.T) {
 		})
 	}
 }
-
-func TestSessionIsAdmin(t *testing.T) {
-	if !(Session{Role: RoleAdmin}).IsAdmin() {
-		t.Error("Admin session should report IsAdmin() == true")
-	}
-	if (Session{Role: RoleDevRel}).IsAdmin() {
-		t.Error("DevRel session should report IsAdmin() == false")
-	}
-}

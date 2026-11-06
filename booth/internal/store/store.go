@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/authz"
 )
@@ -48,14 +49,14 @@ func New(c client.Client, namespace string, auditor audit.Logger) *Store {
 	return &Store{client: c, namespace: namespace, auditor: auditor}
 }
 
-func (s *Store) audit(ctx context.Context, sess authz.Session, verb, kind, name string, allowed bool) {
+func (s *Store) audit(ctx context.Context, sess auth.Session, verb, kind, name string, allowed bool) {
 	decision := audit.DecisionDeny
 	if allowed {
 		decision = audit.DecisionAllow
 	}
 	s.auditor.Log(ctx, audit.Entry{
 		Subject:      sess.Subject,
-		Role:         sess.Role,
+		Role:         string(sess.Role),
 		Verb:         verb,
 		ResourceKind: kind,
 		ResourceName: name,
@@ -63,11 +64,16 @@ func (s *Store) audit(ctx context.Context, sess authz.Session, verb, kind, name 
 	})
 }
 
+// authorize applies the frozen §6.3 predicate to a session + resource owner.
+func authorize(sess auth.Session, adminOnly bool, ownerSubject string) bool {
+	return authz.Authorize(string(sess.Role), sess.Subject, adminOnly, ownerSubject)
+}
+
 // List returns the resources of kind the caller is authorized to see, filtered
 // server-side by §6.3 (never client-side hiding). For admin-only kinds a
 // non-admin receives an empty set (and a deny audit record); an Admin receives
 // all rows.
-func (s *Store) List(ctx context.Context, sess authz.Session, kind ResourceKind) ([]client.Object, error) {
+func (s *Store) List(ctx context.Context, sess auth.Session, kind ResourceKind) ([]client.Object, error) {
 	list := kind.NewList()
 	if err := s.client.List(ctx, list, client.InNamespace(s.namespace)); err != nil {
 		s.audit(ctx, sess, verbList, kind.Kind, "", false)
@@ -76,14 +82,14 @@ func (s *Store) List(ctx context.Context, sess authz.Session, kind ResourceKind)
 
 	var out []client.Object
 	for _, obj := range kind.Items(list) {
-		if authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(obj)) {
+		if authorize(sess, kind.AdminOnly, kind.OwnerSubject(obj)) {
 			out = append(out, obj)
 		}
 	}
 	// A list is "allowed" for audit purposes if the predicate admits the caller
 	// to the class at all; an all-filtered empty result for a non-admin on an
 	// admin-only class is itself a denial worth recording.
-	allowed := sess.IsAdmin() || (!kind.AdminOnly)
+	allowed := sess.Role == auth.RoleAdmin || (!kind.AdminOnly)
 	s.audit(ctx, sess, verbList, kind.Kind, "", allowed)
 	return out, nil
 }
@@ -103,14 +109,14 @@ func (s *Store) get(ctx context.Context, kind ResourceKind, name string) (client
 }
 
 // Get returns one resource if the caller is authorized, else ErrForbidden.
-func (s *Store) Get(ctx context.Context, sess authz.Session, kind ResourceKind, name string) (client.Object, error) {
+func (s *Store) Get(ctx context.Context, sess auth.Session, kind ResourceKind, name string) (client.Object, error) {
 	obj, err := s.get(ctx, kind, name)
 	if err != nil {
 		// Existence is not revealed before the predicate; but a NotFound here
 		// carries no owner to leak, so returning it is safe and more useful.
 		return nil, err
 	}
-	if !authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(obj)) {
+	if !authorize(sess, kind.AdminOnly, kind.OwnerSubject(obj)) {
 		s.audit(ctx, sess, verbGet, kind.Kind, name, false)
 		return nil, ErrForbidden
 	}
@@ -122,9 +128,9 @@ func (s *Store) Get(ctx context.Context, sess authz.Session, kind ResourceKind, 
 // §6.3 evaluated against the OBJECT'S OWN declared owner. A DevRel therefore
 // cannot create an admin-only kind, nor a resource owned by someone else, nor a
 // platform-owned (empty-owner) resource. Admins may create anything.
-func (s *Store) Create(ctx context.Context, sess authz.Session, kind ResourceKind, obj client.Object) error {
+func (s *Store) Create(ctx context.Context, sess auth.Session, kind ResourceKind, obj client.Object) error {
 	obj.SetNamespace(s.namespace)
-	if !authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(obj)) {
+	if !authorize(sess, kind.AdminOnly, kind.OwnerSubject(obj)) {
 		s.audit(ctx, sess, verbCreate, kind.Kind, obj.GetName(), false)
 		return ErrForbidden
 	}
@@ -141,14 +147,14 @@ func (s *Store) Create(ctx context.Context, sess authz.Session, kind ResourceKin
 // neither edit a resource they cannot see nor re-home it to an owner they are
 // not authorized for. The incoming object's resourceVersion is preserved from
 // the server copy to keep the update a safe read-modify-write.
-func (s *Store) Update(ctx context.Context, sess authz.Session, kind ResourceKind, obj client.Object) error {
+func (s *Store) Update(ctx context.Context, sess auth.Session, kind ResourceKind, obj client.Object) error {
 	name := obj.GetName()
 	current, err := s.get(ctx, kind, name)
 	if err != nil {
 		return err
 	}
-	okCurrent := authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(current))
-	okIncoming := authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(obj))
+	okCurrent := authorize(sess, kind.AdminOnly, kind.OwnerSubject(current))
+	okIncoming := authorize(sess, kind.AdminOnly, kind.OwnerSubject(obj))
 	if !okCurrent || !okIncoming {
 		s.audit(ctx, sess, verbUpdate, kind.Kind, name, false)
 		return ErrForbidden
@@ -169,12 +175,12 @@ func (s *Store) Update(ctx context.Context, sess authz.Session, kind ResourceKin
 // or run CR yet, so the method is generic over any registered kind; when the
 // run/PR views land (Phase 2/3) they reuse this gate unchanged — the point of
 // the frozen invariant is that approve is never a special-cased bypass.
-func (s *Store) Approve(ctx context.Context, sess authz.Session, kind ResourceKind, name string) error {
+func (s *Store) Approve(ctx context.Context, sess auth.Session, kind ResourceKind, name string) error {
 	current, err := s.get(ctx, kind, name)
 	if err != nil {
 		return err
 	}
-	if !authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(current)) {
+	if !authorize(sess, kind.AdminOnly, kind.OwnerSubject(current)) {
 		s.audit(ctx, sess, verbApprove, kind.Kind, name, false)
 		return ErrForbidden
 	}
@@ -184,12 +190,12 @@ func (s *Store) Approve(ctx context.Context, sess authz.Session, kind ResourceKi
 
 // Delete removes one resource if the caller is authorized under §6.3 against
 // the current server-side state.
-func (s *Store) Delete(ctx context.Context, sess authz.Session, kind ResourceKind, name string) error {
+func (s *Store) Delete(ctx context.Context, sess auth.Session, kind ResourceKind, name string) error {
 	current, err := s.get(ctx, kind, name)
 	if err != nil {
 		return err
 	}
-	if !authz.Authorize(sess.Role, sess.Subject, kind.AdminOnly, kind.OwnerSubject(current)) {
+	if !authorize(sess, kind.AdminOnly, kind.OwnerSubject(current)) {
 		s.audit(ctx, sess, verbDelete, kind.Kind, name, false)
 		return ErrForbidden
 	}

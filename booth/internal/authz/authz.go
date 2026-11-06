@@ -12,30 +12,19 @@
 //   - Empty-owner (platform-owned) resources are Admin-only: clause 2 cannot
 //     match an empty subject against a real session subject.
 //
-// This package has no knowledge of HTTP, k8s, or any concrete CR type. It is a
-// pure decision function so the invariant is auditable in one place and covered
-// by the table-driven matrix in authz_test.go.
+// This package is a pure decision function. It has no knowledge of HTTP, k8s,
+// or the auth mechanism — the {subject, role} session is supplied by the
+// booth/auth provider and passed in as plain strings — so the invariant is
+// auditable in one place and covered by the table-driven matrix in authz_test.go.
 package authz
 
-// Roles recognized by the Booth API (design §6.1).
+// Role names recognized by the Booth API (design §6.1). These mirror the
+// booth/auth role vocabulary; keeping a local copy keeps this predicate free of
+// any import so it stays a pure, dependency-light decision function.
 const (
 	RoleAdmin  = "Admin"
 	RoleDevRel = "DevRel"
 )
-
-// Session is the authenticated caller identity, resolved by the auth middleware
-// (design §6.4). The authz predicate consumes only {Subject, Role}; it is blind
-// to how they were obtained (bcrypt now, OIDC later).
-type Session struct {
-	// Subject is the IdP subject (OIDC `sub`) of the caller, or the built-in
-	// user's stable id in the bcrypt Phase-1 fallback.
-	Subject string
-	// Role is RoleAdmin or RoleDevRel.
-	Role string
-}
-
-// IsAdmin reports whether the session holds the Admin role.
-func (s Session) IsAdmin() bool { return s.Role == RoleAdmin }
 
 // Authorize evaluates the frozen §6.3 predicate for one target resource.
 //

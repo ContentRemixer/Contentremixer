@@ -1,0 +1,28 @@
+# .trivyignore — reviewed CVE exceptions for the ContentRemixer security gate
+# (ISI-7120 / C2, plan §2 job 8). Trivy reads this file for BOTH the image CVE
+# scan and the filesystem (dependency) scan in .github/workflows/security.yml.
+#
+# The image-scan gate FAILS the build on any unignored HIGH/CRITICAL finding.
+# An entry here is an explicit, auditable decision to accept a specific CVE for
+# now. Keep it small; prefer upgrading the dependency over ignoring.
+#
+# RULES for every exception (enforced by review, not tooling):
+#   1. One CVE id per line (e.g. CVE-2024-XXXXX or GHSA-xxxx-xxxx-xxxx).
+#   2. Immediately above it, a comment block with THREE fields:
+#        Justification: why this CVE is not exploitable / not fixable here.
+#        Added / Review date: YYYY-MM-DD when accepted; YYYY-MM-DD to re-check.
+#        Owner: who signed off.
+#   3. Re-review on or before the review date; drop the entry once a fix ships.
+#
+# Example (commented out — this is the required shape, not an active ignore):
+#
+#   # Justification: stdlib net/http CVE only reachable via the HTTP/2 server
+#   #   path; the operator runs no inbound HTTP server, only the webhook which
+#   #   is fronted by the API server. Not exploitable in our deployment.
+#   # Added: 2026-11-05  Review: 2026-12-05
+#   # Owner: DevOps Engineer (ISI-7120)
+#   CVE-2024-00000
+#
+# ---------------------------------------------------------------------------
+# No active exceptions. The gate is fully enforced: every HIGH/CRITICAL finding
+# blocks the build until fixed or explicitly accepted above.

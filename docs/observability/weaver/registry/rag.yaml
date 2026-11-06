@@ -1,0 +1,148 @@
+# RAG pipeline metrics (contentremixer.rag.*): scrape, chunk, embed, store/retrieve.
+# NOTE: gen_ai.client.* and db.client.* metrics from the spec are emitted by OTel
+# instrumentation libraries and are intentionally not redefined in this registry.
+groups:
+  - id: metric.contentremixer.rag.scrape.duration
+    type: metric
+    metric_name: contentremixer.rag.scrape.duration
+    stability: development
+    brief: "Duration of scraping a single reference source."
+    instrument: histogram
+    unit: "s"
+    attributes:
+      - ref: contentremixer.reference.kind
+      - ref: contentremixer.result
+
+  - id: metric.contentremixer.rag.scrape.docs
+    type: metric
+    metric_name: contentremixer.rag.scrape.docs
+    stability: development
+    brief: "Number of documents produced by a scrape."
+    instrument: histogram
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reference.kind
+
+  - id: metric.contentremixer.rag.scrape.dropped
+    type: metric
+    metric_name: contentremixer.rag.scrape.dropped.total
+    stability: development
+    brief: "Count of scraped documents dropped before indexing."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reference.kind
+      - ref: contentremixer.rag.scrape.drop_reason
+
+  - id: metric.contentremixer.rag.scrape.errors
+    type: metric
+    metric_name: contentremixer.rag.scrape.errors.total
+    stability: development
+    brief: "Count of scrape errors."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reference.kind
+      - ref: contentremixer.rag.scrape.drop_reason
+
+  - id: metric.contentremixer.rag.chunk.count
+    type: metric
+    metric_name: contentremixer.rag.chunk.count
+    stability: development
+    brief: "Number of chunks produced per document."
+    instrument: histogram
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reference.kind
+
+  - id: metric.contentremixer.rag.chunk.size_tokens
+    type: metric
+    metric_name: contentremixer.rag.chunk.size_tokens
+    stability: development
+    brief: "Chunk size distribution in tokens."
+    instrument: histogram
+    unit: "1"
+    attributes: []
+
+  - id: metric.contentremixer.rag.embed.batch.duration
+    type: metric
+    metric_name: contentremixer.rag.embed.batch.duration
+    stability: development
+    brief: "Duration of an embedding batch request."
+    instrument: histogram
+    unit: "s"
+    attributes:
+      - ref: contentremixer.result
+
+  - id: metric.contentremixer.rag.embed.dimension_mismatch
+    type: metric
+    metric_name: contentremixer.rag.embed.dimension_mismatch.total
+    stability: development
+    brief: "Count of embeddings whose dimension did not match the store contract."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: gen_ai.request.model
+      - ref: contentremixer.rag.embed.expected_dim
+
+  - id: metric.contentremixer.rag.embed.gateway.errors
+    type: metric
+    metric_name: contentremixer.rag.embed.gateway.errors.total
+    stability: development
+    brief: "Count of embedding-gateway (LiteLLM) errors by status class."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.http.status_class
+      - ref: gen_ai.request.model
+
+  - id: metric.contentremixer.rag.store.up
+    type: metric
+    metric_name: contentremixer.rag.store.up
+    stability: development
+    brief: "Authoritative pgvector reachability from a `SELECT 1` health ping (1=up, 0=down)."
+    instrument: gauge
+    unit: "1"
+    attributes: []
+
+  - id: metric.contentremixer.rag.store.errors
+    type: metric
+    metric_name: contentremixer.rag.store.errors.total
+    stability: development
+    brief: "Count of pgvector store operation errors."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: db.operation.name
+      - ref: contentremixer.rag.store.error_reason
+
+  - id: metric.contentremixer.rag.retrieve.matches
+    type: metric
+    metric_name: contentremixer.rag.retrieve.matches
+    stability: development
+    brief: "Number of matches returned by a retrieval query."
+    instrument: histogram
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.rag.retrieve.top_score
+    type: metric
+    metric_name: contentremixer.rag.retrieve.top_score
+    stability: development
+    brief: "Top similarity score of a retrieval query."
+    instrument: histogram
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.rag.retrieve.empty
+    type: metric
+    metric_name: contentremixer.rag.retrieve.empty.total
+    stability: development
+    brief: "Count of retrieval queries that returned no usable matches."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.name
+      - ref: contentremixer.rag.retrieve.empty_reason

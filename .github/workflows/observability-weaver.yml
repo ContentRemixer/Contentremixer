@@ -1,0 +1,67 @@
+# Observability Weaver registry gate — O11y-1 / ISI-7158.
+# Enforces that the persona/RAG semantic-convention registry is valid and that the
+# generated Go metric stubs are in sync with it (no hand edits / stale checkout).
+name: observability-weaver
+
+on:
+  push:
+    branches: [main, "design/**"]
+    paths:
+      - "docs/observability/weaver/**"
+      - "docs/observability/phase2-personas-rag.observability.yaml"
+      - "app/internal/telemetry/metricconv/**"
+      - ".github/workflows/observability-weaver.yml"
+  pull_request:
+    paths:
+      - "docs/observability/weaver/**"
+      - "docs/observability/phase2-personas-rag.observability.yaml"
+      - "app/internal/telemetry/metricconv/**"
+      - ".github/workflows/observability-weaver.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observability-weaver-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WEAVER_VERSION: "0.28.0"
+
+jobs:
+  weaver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: app/go.sum
+
+      - name: install weaver
+        run: |
+          set -euo pipefail
+          url="https://github.com/open-telemetry/weaver/releases/download/v${WEAVER_VERSION}/weaver-x86_64-unknown-linux-gnu.tar.xz"
+          curl -sSfL "$url" | tar -xJ
+          sudo mv weaver-x86_64-unknown-linux-gnu/weaver /usr/local/bin/weaver
+          weaver --version
+
+      - name: weaver registry check (must pass)
+        run: weaver registry check -r docs/observability/weaver/registry --future
+
+      - name: regenerate stubs and assert no drift
+        run: |
+          set -euo pipefail
+          WEAVER=weaver bash docs/observability/weaver/generate.sh
+          if ! git diff --quiet -- app/internal/telemetry/metricconv; then
+            echo "::error::Generated metric stubs are out of date. Run docs/observability/weaver/generate.sh and commit."
+            git --no-pager diff -- app/internal/telemetry/metricconv
+            exit 1
+          fi
+
+      - name: build + vet + test stubs
+        working-directory: app
+        run: |
+          go build ./internal/telemetry/...
+          go vet ./internal/telemetry/...
+          go test ./internal/telemetry/...

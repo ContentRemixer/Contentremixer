@@ -77,8 +77,12 @@ jobs:
             exit 1
           fi
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          args: --timeout=5m
-          version: v1.61.0
-          working-directory: booth
+        # Installed directly (not via the marketplace action) to match the repo
+        # convention in security.yml and to decouple from the action's
+        # golangci-lint-version matrix. Booth is on go 1.26 (its deps — x/net
+        # v0.62 etc. — require it), so it pins golangci-lint v2, which is the
+        # series built against go 1.26. (ci.yml's app module stays on go 1.23 +
+        # golangci-lint v1.61; the two modules lint independently.)
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=5m ./...

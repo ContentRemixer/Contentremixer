@@ -1,0 +1,25 @@
+# golangci-lint configuration (schema v2).
+#
+# This file exists because ISI-7128 bumped the operator to Go 1.26 to clear the
+# reachable crypto/x509 stdlib CVEs. golangci-lint refuses to run when the Go
+# version it was built with is lower than a module's `go` directive, so the
+# linter had to move from v1.61.0 (built with go1.23) to v2.15.0 (built with
+# go1.26). v2 requires an explicit config schema version.
+#
+# Intent: keep the SAME lint bar the repo already passed under v1 — this is a
+# CVE-remediation PR, not a lint-rules change. v2 folded gosimple, stylecheck
+# and quickfix into the `staticcheck` linter; restrict it to the SA
+# (staticcheck) + S1 (gosimple) groups that were on-by-default under v1 so no
+# new stylecheck/quickfix findings appear here.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  settings:
+    staticcheck:
+      checks:
+        - "SA*"
+        - "S1*"

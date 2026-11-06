@@ -1,0 +1,221 @@
+# Helm chart lint/test & OCI publish — ISI-7093 plan §2 jobs 10 + 11
+# (built by C5 / ISI-7124). Operates on the content-operator chart authored in
+# C4 (ISI-7116) at deploy/charts/content-operator.
+#
+#   PRs / main          : lint + kubeconform schema validation + `ct install`
+#                         on an ephemeral kind cluster. NO publish, NO creds.
+#   push to v* tag      : all of the above, then `helm push` the chart as an
+#                         OCI artifact to the DEDICATED chart registry
+#                         ghcr.io/contentremixer/charts/content-operator
+#                         (a SEPARATE GHCR package from the image, per board
+#                         decision — chart RBAC/retention/consumption managed
+#                         independently of the image). Chart version derived
+#                         from the tag; appVersion pinned to the matching
+#                         release image tag published by C3 (image-publish.yml).
+#
+# Scope: this workflow OWNS Helm chart CI + publish for ISI-7093. It is NOT the
+# `ci-required` aggregate (that is ci.yml, C10/ISI-7123) — so it is safe to
+# path-filter the lint/test leg to chart changes.
+name: chart-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "deploy/charts/**"
+      - ".github/workflows/chart-publish.yml"
+      - ".github/ct.yaml"
+  pull_request:
+    paths:
+      - "deploy/charts/**"
+      - ".github/workflows/chart-publish.yml"
+      - ".github/ct.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chart-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CHART_DIR: deploy/charts/content-operator
+  CHART_NAME: content-operator
+  # Dedicated chart registry — a SEPARATE package from the image
+  # (ghcr.io/contentremixer/content-operator). helm push appends
+  # /<chartname> to this base, giving the final package path
+  # ghcr.io/contentremixer/charts/content-operator.
+  CHART_REGISTRY: oci://ghcr.io/contentremixer/charts
+  HELM_VERSION: v3.16.3
+  KUBECONFORM_VERSION: v0.6.7
+  CERT_MANAGER_VERSION: v1.16.2
+  KIND_CLUSTER: content-operator-ct
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 10 — lint + schema validation + chart-testing install on kind.
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ct's changed-chart detection needs history
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # -- helm lint ------------------------------------------------------------
+      - name: helm lint
+        run: helm lint "${CHART_DIR}"
+
+      # -- helm template | kubeconform schema validation ------------------------
+      # Validate BOTH the default render and the fully-enabled render (exposure +
+      # litellm) so optional templates are schema-checked too. Custom resources
+      # (CRDs, cert-manager Issuer/Certificate, kgateway Gateway/HTTPRoute) have
+      # no built-in schema -> -ignore-missing-schemas skips them rather than
+      # failing; -skip CustomResourceDefinition avoids re-validating the bundled
+      # CRD manifests against the apiextensions schema (helm already renders them).
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: helm template | kubeconform
+        run: |
+          set -euo pipefail
+          for extra in "" "--set exposure.enabled=true --set litellm.enabled=true"; do
+            echo "::group::kubeconform (${extra:-defaults})"
+            # shellcheck disable=SC2086
+            helm template cr "${CHART_DIR}" --include-crds ${extra} \
+              | kubeconform -strict -summary \
+                  -kubernetes-version 1.29.0 \
+                  -skip CustomResourceDefinition \
+                  -ignore-missing-schemas
+            echo "::endgroup::"
+          done
+
+      # -- chart-testing install on kind ----------------------------------------
+      - uses: helm/chart-testing-action@v2
+
+      - name: ct lint
+        run: ct lint --config .github/ct.yaml --charts "${CHART_DIR}"
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: content-operator-ct
+          wait: 120s
+
+      # The operator image the chart references may not be published for this
+      # ref (PR sha). Build it locally and load it into kind; ci/ct-values.yaml
+      # pins operator.image to content-operator:ct-test with pullPolicy Never.
+      - name: Build + load operator image into kind
+        run: |
+          set -euo pipefail
+          docker build -t content-operator:ct-test app
+          kind load docker-image content-operator:ct-test --name "${KIND_CLUSTER}"
+
+      # cert-manager issues the admission serving cert; without it the operator
+      # Deployment's webhook-cert secret mount never materialises and the pod
+      # stays pending, failing `ct install --wait`.
+      - name: Install cert-manager
+        run: |
+          set -euo pipefail
+          kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+          for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+            kubectl -n cert-manager rollout status "deploy/${d}" --timeout=180s
+          done
+
+      - name: ct install
+        run: |
+          ct install --config .github/ct.yaml --charts "${CHART_DIR}" \
+            --helm-extra-args "--timeout 300s"
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A || true
+          kubectl -n contentremixer describe deploy/contentremixer-operator || true
+          kubectl -n contentremixer logs deploy/contentremixer-operator --tail=200 || true
+          kubectl get certificate -A -o wide || true
+
+  # --------------------------------------------------------------------------
+  # Job 11 — OCI publish to the dedicated chart registry (release tags only).
+  publish:
+    needs: lint-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # push the chart to its GHCR package
+      id-token: write   # cosign keyless OIDC (Fulcio) — sign the pushed chart
+    env:
+      COSIGN_VERSION: v2.4.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Chart version = tag without the leading `v` (strict SemVer for the OCI
+      # tag). appVersion = the tag verbatim (`vX.Y.Z`) so the released chart's
+      # default operator.image.tag matches the release image tag published by
+      # image-publish.yml (`${IMAGE}:${GITHUB_REF_NAME}`).
+      - name: Compute chart version
+        id: ver
+        run: |
+          set -euo pipefail
+          APP_VERSION="${GITHUB_REF_NAME}"           # v1.2.3
+          CHART_VERSION="${APP_VERSION#v}"            # 1.2.3
+          echo "app=${APP_VERSION}" >>"$GITHUB_OUTPUT"
+          echo "chart=${CHART_VERSION}" >>"$GITHUB_OUTPUT"
+
+      - name: helm package
+        id: pkg
+        run: |
+          set -euo pipefail
+          helm package "${CHART_DIR}" \
+            --version "${{ steps.ver.outputs.chart }}" \
+            --app-version "${{ steps.ver.outputs.app }}" \
+            --destination dist
+          echo "tgz=dist/${CHART_NAME}-${{ steps.ver.outputs.chart }}.tgz" >>"$GITHUB_OUTPUT"
+
+      - name: helm registry login (GHCR)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: helm push (OCI)
+        id: push
+        run: |
+          set -euo pipefail
+          # helm push prints "Digest: sha256:..." which cosign signs by digest.
+          helm push "${{ steps.pkg.outputs.tgz }}" "${CHART_REGISTRY}" 2>&1 | tee push.log
+          DIGEST="$(grep -oE 'sha256:[0-9a-f]{64}' push.log | head -1)"
+          echo "digest=${DIGEST}" >>"$GITHUB_OUTPUT"
+          {
+            echo "### chart-publish"
+            echo "- package: \`ghcr.io/contentremixer/charts/${CHART_NAME}:${{ steps.ver.outputs.chart }}\`"
+            echo "- appVersion: \`${{ steps.ver.outputs.app }}\`"
+            echo "- digest: \`${DIGEST}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # Sign the pushed chart by digest — keyless OIDC -> Fulcio cert -> Rekor,
+      # same posture as the signed image (image-publish.yml).
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Sign chart (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "ghcr.io/contentremixer/charts/${CHART_NAME}@${DIGEST}"
+          echo "signed ghcr.io/contentremixer/charts/${CHART_NAME}@${DIGEST}" >>"$GITHUB_STEP_SUMMARY"

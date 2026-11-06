@@ -13,6 +13,14 @@ subtask **C8** ([ISI-7122](https://.../ISI-7122)), plan §3/§5, parent
 > `ghcr.io/contentremixer/content-validate` image) via its
 > `content-validate-tool` workflow.
 
+> **Two repos, don't conflate them (ISI-7137):** the `@v1` composite-action ref
+> below (`ContentRemixer/contentremixer/.github/actions/content-validate@v1`)
+> always points at the operator/action **source** repo — it is the published
+> tool, never a delivery target, so it is **not** parameterized. The repo this
+> bundle is *installed into* is the configurable content repo, named once as the
+> `$TARGET_REPO` install parameter (see `deploy/README.md`); it is wherever you
+> run the copy-and-PR install below.
+
 Everything here calls the **central** composite action published from
 `ContentRemixer/contentremixer` — **zero duplication** of validation logic. The
 content repo carries this thin workflow + the PR templates + the per-type

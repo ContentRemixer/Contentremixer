@@ -122,7 +122,10 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          timeout: 5m
+          # golangci-lint-action@v6 dropped the `timeout` input — it was a no-op
+          # here, so lint ran at the 1m default and flaked on cold caches. Pass
+          # the timeout through to the binary via `args` instead.
+          args: --timeout=5m
           # Pinned to match app/Makefile (GOLANGCI_LINT_VERSION).
           version: v1.61.0
           working-directory: app

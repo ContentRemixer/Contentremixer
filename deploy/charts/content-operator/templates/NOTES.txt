@@ -23,3 +23,19 @@ exposure.address=<MetalLB IP>. See deploy/README.md "Real github.com delivery".
 Public exposure enabled via Gateway {{ .Values.exposure.gatewayName }} ({{ .Values.exposure.gatewayClassName }}).
   kubectl -n {{ include "content-operator.namespace" . }} get gateway {{ .Values.exposure.gatewayName }}
 {{- end }}
+
+{{- if .Values.referenceRepos }}
+
+Onboarded content repos ({{ len .Values.referenceRepos }}) — one ReferenceRepo CR each:
+{{- range .Values.referenceRepos }}
+  - {{ .repo }} -> ReferenceRepo/{{ include "content-operator.referenceRepoName" . }}
+{{- end }}
+Finish each repo's onboarding (create its GitHub webhook + Secrets):
+  ./hack/onboard-content-repo.sh <owner/name>     # see deploy/README.md "Onboard a content repo"
+{{- else }}
+
+No content repos onboarded yet (referenceRepos is empty). To onboard one:
+  1. add an entry to .Values.referenceRepos and `helm upgrade`
+  2. ./hack/onboard-content-repo.sh <owner/name>
+See deploy/README.md "Onboard a content repo (ISI-7139)".
+{{- end }}

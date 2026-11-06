@@ -1,0 +1,52 @@
+{{- /*
+One ReferenceRepo CR per .Values.referenceRepos entry (ISI-7139 Q2 — declarative
+Helm-values list, no hand-edited manifests). Onboarding a new content repo = add
+one entry here + run hack/onboard-content-repo.sh; `helm upgrade` reconciles the
+CR set.
+
+Credential scope (ISI-7139 Q3): tokenRef/webhookSecretRef default to PER-REPO
+Secret names derived from the CR name (<name>-github-pat / <name>-webhook-hmac),
+so a repo can carry its own PAT + HMAC. To SHARE one Secret across all repos,
+set tokenRef/webhookSecretRef explicitly to the same name on every entry.
+*/ -}}
+{{- range $i, $r := .Values.referenceRepos }}
+{{- if not $r.repo }}
+{{- fail (printf "referenceRepos[%d]: .repo is required and must be \"owner/name\"" $i) }}
+{{- end }}
+{{- if not (regexMatch "^[^/[:space:]]+/[^/[:space:]]+$" $r.repo) }}
+{{- fail (printf "referenceRepos[%d]: .repo %q must match \"owner/name\"" $i $r.repo) }}
+{{- end }}
+{{- $name := include "content-operator.referenceRepoName" $r }}
+{{- if not $r.labelRoutes }}
+{{- fail (printf "referenceRepos[%d] (%s): .labelRoutes is required (at least one {label, outputFormat})" $i $name) }}
+{{- end }}
+{{- $tokenRef := $r.tokenRef | default dict }}
+{{- $hmacRef := $r.webhookSecretRef | default dict }}
+---
+apiVersion: contentremixer.io/v1alpha1
+kind: ReferenceRepo
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "content-operator.namespace" $ }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    {{- include "content-operator.labels" $ | nindent 4 }}
+spec:
+  repo: {{ $r.repo | quote }}
+  tokenRef:
+    name: {{ $tokenRef.name | default (printf "%s-github-pat" $name) }}
+    key: {{ $tokenRef.key | default "token" }}
+  webhookSecretRef:
+    name: {{ $hmacRef.name | default (printf "%s-webhook-hmac" $name) }}
+    key: {{ $hmacRef.key | default "hmac" }}
+  {{- with $r.owner }}
+  owner:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $r.prTarget }}
+  prTarget:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labelRoutes:
+    {{- toYaml $r.labelRoutes | nindent 4 }}
+{{- end }}

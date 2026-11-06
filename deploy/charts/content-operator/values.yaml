@@ -114,6 +114,42 @@ litellm:
       cpu: "1"
       memory: 512Mi
 
+# Content repos onboarded to this operator (ISI-7139). ONE operator + ONE
+# Funnel edge serves N target repos (parent ISI-7126 Q1): each entry renders one
+# ReferenceRepo CR (templates/referencerepos.yaml); the operator routes each
+# GitHub delivery by repository.full_name. Onboarding a new content repo = add
+# one entry here + run `hack/onboard-content-repo.sh <owner/name>` to create the
+# repo webhook + per-repo Secrets (and optionally push the content-CI bundle) —
+# NO manifest hand-edits. See deploy/README.md "Onboard a content repo".
+#
+# Per entry:
+#   repo            (required) "owner/name" on GitHub.
+#   name            (optional) CR + Secret basename; a DNS-1123 label. Defaults
+#                   to the repo's name part lower-cased (e.g. "Acme/My-Blog" ->
+#                   "my-blog").
+#   labelRoutes     (required, >=1) {label, outputFormat[, inputFormat]} — see
+#                   the ReferenceRepo CRD. inputFormat defaults to "auto".
+#   prTarget        (optional) {baseBranch, branchPrefix, draft}.
+#   owner           (optional) {subject} — platform-owned when empty.
+#   tokenRef        (optional) {name, key}. Credential scope, ISI-7139 Q3:
+#   webhookSecretRef              DEFAULT is PER-REPO — tokenRef resolves to
+#                   Secret "<name>-github-pat" key "token", webhookSecretRef to
+#                   "<name>-webhook-hmac" key "hmac". To SHARE one PAT/HMAC across
+#                   every repo, set these explicitly to a common Secret (e.g.
+#                   {name: github-pat, key: token}) on each entry.
+referenceRepos: []
+#   - repo: ContentRemixer/contentmixer-data
+#     labelRoutes:
+#       - { label: "recycle:blog", outputFormat: blog }       # inputFormat: auto (default)
+#       - { label: "recycle:short", outputFormat: short }
+#       - { label: "recycle:tutorial", outputFormat: tutorial }
+#       - { label: "recycle:teleprompter", outputFormat: teleprompter }
+#     prTarget: { baseBranch: main, branchPrefix: recycle/, draft: true }
+#     # Per-repo creds (default): expects Secrets contentmixer-data-github-pat /
+#     # contentmixer-data-webhook-hmac. Uncomment to share one Secret instead:
+#     # tokenRef: { name: github-pat, key: token }
+#     # webhookSecretRef: { name: github-webhook, key: hmac }
+
 # Public webhook exposure (Gateway API). OFF by default so the chart renders
 # the deploy/base set; enable + set values to reproduce the k8squad-test
 # overlay (kgateway + MetalLB), or adapt for another edge.

@@ -1,0 +1,85 @@
+// Package rag holds the cross-stage data contract for the Phase-2 persona
+// RAG pipeline (design §3): scrape → chunk → embed → store → retrieve. The
+// stages live in sibling subpackages (internal/rag/scrape, internal/rag/chunk,
+// and — P2-C — internal/rag/embed, internal/rag/store, internal/rag/retrieve)
+// and are pure data hand-offs: a stage NEVER imports another stage. They share
+// only the plain-data types and the stage interfaces defined here, so the
+// DevRelPersona controller (§2.3) is the sole orchestrator wiring them together.
+//
+// This package is P2-B's (ISI-7145) half of that contract: it defines RawDoc
+// (scrape output), Chunk (chunk output / embed+store input), and the Scraper
+// and Chunker interfaces. The embed/store/retrieve types (Match, VectorStore)
+// are added by P2-C (ISI-7146) alongside the Embedding field, which P2-B leaves
+// nil.
+package rag
+
+import (
+	"context"
+	"time"
+
+	"github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+)
+
+// RawDoc is one fetched source document before chunking (design §3.1). A
+// single article/video resolves to one RawDoc; a channel/feed reference fans
+// out to many (one per video/post).
+type RawDoc struct {
+	// SourceURL is the resolved concrete URL of this document. A channel or
+	// feed reference expands to many RawDocs each with their own SourceURL.
+	SourceURL string
+	// SourceKind echoes the PersonaReference.Kind that produced this doc
+	// (youtube | article) so downstream stages and stored chunks can trace
+	// provenance without re-deriving it from the URL.
+	SourceKind string
+	// Title is a best-effort human title (video title / <title> / og:title).
+	Title string
+	// Text is the extracted plain text: the transcript body for youtube, the
+	// readable article body (nav/boilerplate stripped) for article.
+	Text string
+	// FetchedAt is when the fetch completed (metadata, design task line).
+	FetchedAt time.Time
+	// Meta carries kind-specific details (e.g. video id, publish date,
+	// language). Always non-nil on a successful scrape.
+	Meta map[string]any
+}
+
+// Chunk is one retrievable/embeddable unit (design §3.2). PersonaOwner and
+// PersonaName are the tenancy keys (§4/§8); Embedding is left nil by P2-B and
+// filled by the P2-C embed stage (§6).
+type Chunk struct {
+	// ID is deterministic — sha256(owner|persona|source_url|ordinal) hex — so
+	// re-indexing the same source yields stable IDs and the §2.3 replace-by-
+	// source upsert stays idempotent.
+	ID string
+	// PersonaOwner is owner.subject, the tenancy key.
+	PersonaOwner string
+	// PersonaName is the CR metadata.name.
+	PersonaName string
+	// SourceURL and SourceKind trace the chunk back to its RawDoc.
+	SourceURL  string
+	SourceKind string
+	// Ordinal is the 0-based position of this chunk within its source doc.
+	Ordinal int
+	// Text is the chunk body.
+	Text string
+	// Embedding is nil until the P2-C embed stage fills it.
+	Embedding []float32
+	// Metadata carries forward the RawDoc.Meta plus chunk-level fields (title,
+	// fetchedAt) so a stored chunk is self-describing for retrieval/citation.
+	Metadata map[string]any
+}
+
+// Scraper resolves one PersonaReference to zero-or-more RawDocs (design §3.1).
+// Network/parse failure returns an error the controller isolates per-reference
+// (§2.3 step 3): one dead link records a ReferenceFailed condition and does not
+// sink the persona.
+type Scraper interface {
+	Scrape(ctx context.Context, ref v1alpha1.PersonaReference) ([]RawDoc, error)
+}
+
+// Chunker splits one RawDoc into ordered chunks (design §3.2). It is
+// deterministic and side-effect-free: the same RawDoc + owner + persona always
+// yields the same chunks (and therefore the same IDs).
+type Chunker interface {
+	Chunk(doc RawDoc, owner, persona string) []Chunk
+}

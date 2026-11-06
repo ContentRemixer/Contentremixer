@@ -1,0 +1,33 @@
+# Weaver codegen target: dependency-free, type-safe Go metric stubs.
+# Generates a single file (metricconv.go) from the resolved registry.
+params:
+  package: metricconv
+  schema_url: https://contentremixer.io/schemas/0.1.0/contentremixer.yaml
+
+templates:
+  - pattern: metricconv.go.j2
+    filter: >
+      {
+        registry_url: .registry_url,
+        metrics: [ .groups[]
+          | select(.type == "metric")
+          | { name: .metric_name,
+              key: (.metric_name | sub("^contentremixer\\."; "")),
+              brief: .brief,
+              unit: .unit,
+              instrument: .instrument,
+              attrs: [ (.attributes // [])[].name ] }
+        ] | sort_by(.name),
+        attributes: ( [ .groups[]
+          | select(.type == "metric")
+          | (.attributes // [])[] ]
+          | unique_by(.name)
+          | sort_by(.name)
+          | map({ name: .name,
+                  key: (.name | sub("^contentremixer\\."; "") | gsub("[.]"; "_")),
+                  brief: .brief,
+                  is_enum: (.type | type == "object"),
+                  members: (if (.type | type == "object") then .type.members else [] end) })
+        )
+      }
+    application_mode: single

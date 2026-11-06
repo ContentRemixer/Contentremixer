@@ -1,0 +1,17 @@
+# Weaver semantic-convention registry manifest for ContentRemixer Phase-2
+# persona/RAG telemetry (O11y-1 / ISI-7158).
+#
+# Seeded from docs/observability/phase2-personas-rag.observability.yaml (ISI-7156, §4.7/§3).
+# This registry is the authoritative source for the `contentremixer.persona.*` and
+# `contentremixer.rag.*` metric names, units, attribute enums and cardinality classes.
+# `weaver registry check` must pass against it.
+file_format: definition_manifest/2.0
+name: contentremixer
+description: |
+  ContentRemixer Phase-2 persona & RAG observability semantic conventions.
+  Defines custom `contentremixer.persona.*` and `contentremixer.rag.*` metrics plus
+  their attributes/enums. Metrics that follow upstream OpenTelemetry conventions
+  (gen_ai.client.*, db.client.*) are emitted by instrumentation libraries and are NOT
+  redefined here; the two OTel attributes referenced by custom metrics are mirrored
+  locally so the registry resolves and checks offline.
+schema_url: https://contentremixer.io/schemas/0.1.0/contentremixer.yaml

@@ -1,0 +1,119 @@
+# Persona reconciler + writer-conditioning metrics (contentremixer.persona.*).
+groups:
+  - id: metric.contentremixer.persona.reconcile.duration
+    type: metric
+    metric_name: contentremixer.persona.reconcile.duration
+    stability: development
+    brief: "Wall-clock duration of a DevRelPersona reconcile."
+    instrument: histogram
+    unit: "s"
+    attributes:
+      - ref: contentremixer.result
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.reconcile.total
+    type: metric
+    metric_name: contentremixer.persona.reconcile.total
+    stability: development
+    brief: "Count of DevRelPersona reconciles by outcome."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.result
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.phase
+    type: metric
+    metric_name: contentremixer.persona.phase
+    stability: development
+    brief: "Current reconciliation phase of a persona (1 for the current phase, else 0)."
+    instrument: updowncounter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.phase
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.indexed_references
+    type: metric
+    metric_name: contentremixer.persona.indexed_references
+    stability: development
+    brief: "Number of references successfully indexed for a persona."
+    instrument: gauge
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.chunk_count
+    type: metric
+    metric_name: contentremixer.persona.chunk_count
+    stability: development
+    brief: "Number of corpus chunks currently stored for a persona."
+    instrument: gauge
+    unit: "1"
+    attributes:
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.reference.failed
+    type: metric
+    metric_name: contentremixer.persona.reference.failed.total
+    stability: development
+    brief: "Count of references that failed to index."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reference.kind
+      - ref: contentremixer.reference.fail_reason
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.reindex
+    type: metric
+    metric_name: contentremixer.persona.reindex.total
+    stability: development
+    brief: "Count of persona re-index runs by trigger."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.reindex.trigger
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.last_indexed.age
+    type: metric
+    metric_name: contentremixer.persona.last_indexed.age
+    stability: development
+    brief: "Age of a persona's most recent successful index."
+    instrument: gauge
+    unit: "s"
+    attributes:
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.condition.total
+    type: metric
+    metric_name: contentremixer.persona.condition.total
+    stability: development
+    brief: "Count of writer-conditioning applications by outcome."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.condition.outcome
+      - ref: contentremixer.persona.name
+
+  - id: metric.contentremixer.persona.condition.duration
+    type: metric
+    metric_name: contentremixer.persona.condition.duration
+    stability: development
+    brief: "Duration of applying persona conditioning to a writer run."
+    instrument: histogram
+    unit: "s"
+    attributes:
+      - ref: contentremixer.condition.outcome
+
+  - id: metric.contentremixer.persona.condition.degraded
+    type: metric
+    metric_name: contentremixer.persona.condition.degraded.total
+    stability: development
+    brief: "Count of conditioning runs that degraded to a fallback."
+    instrument: counter
+    unit: "1"
+    attributes:
+      - ref: contentremixer.condition.degraded_reason
+      - ref: contentremixer.persona.name

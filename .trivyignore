@@ -24,5 +24,68 @@
 #   CVE-2024-00000
 #
 # ---------------------------------------------------------------------------
-# No active exceptions. The gate is fully enforced: every HIGH/CRITICAL finding
-# blocks the build until fixed or explicitly accepted above.
+# Booth API (ISI-7149) residual golang.org/x/* advisories — ride the ISI-7128
+# toolchain remediation.
+#
+# These are transitive deps of k8s client-go v0.31.0 / controller-runtime
+# v0.19.0 in the new booth/ module. We FIRST upgraded every one we could
+# without a go-directive bump, which genuinely cleared several (incl. the one
+# advisory govulncheck flagged as reachable at the originally-pinned versions):
+#   - golang.org/x/oauth2 -> v0.27.0  (clears CVE-2025-22868, HIGH)
+#   - golang.org/x/net    -> v0.40.0  (clears CVE-2024-45338, CVE-2025-22870,
+#                                      CVE-2025-22872 — incl. the reachable
+#                                      IPv6-zone proxy-bypass)
+#   - golang.org/x/crypto -> v0.38.0  (clears CVE-2025-22869)
+#
+# The CVEs listed below are what REMAINS. Their fixes require x/net >=0.60
+# (go 1.26) and x/crypto/x/text >=0.52/0.41 (go 1.25). That go directive is
+# incompatible with the repo-pinned golangci-lint v1.61 (ci.yml / booth-ci.yml
+# quality job) — the exact toolchain coupling the operator defers to ISI-7128
+# (go1.26.10 + x/net v0.62.0). `govulncheck` shows the residual reachable ones
+# are all in this same go-1.23 stdlib + x/net-via-client-go surface that the
+# operator's own govulncheck/image-scan gates are ALREADY ratcheted against for
+# the identical reason. Booth rides that same remediation: drop this block when
+# ISI-7128 lands (tracked by the ISI-7142 ratchet re-arm), bumping both modules
+# + golangci-lint together.
+# Added: 2026-11-06  Review: 2026-12-06
+# Owner: Claude Code (ISI-7149); pending board acceptance on PR #18
+#
+# golang.org/x/crypto @ v0.38.0 (fixes need >=0.43/0.45/0.52/0.55/0.56 -> go 1.25)
+CVE-2025-47913
+CVE-2025-47914
+CVE-2025-58181
+CVE-2026-39827
+CVE-2026-39828
+CVE-2026-39829
+CVE-2026-39830
+CVE-2026-39831
+CVE-2026-39832
+CVE-2026-39833
+CVE-2026-39834
+CVE-2026-39835
+CVE-2026-42508
+CVE-2026-46595
+CVE-2026-46597
+CVE-2026-46598
+CVE-2026-56854
+CVE-2026-56855
+CVE-2026-78662
+# golang.org/x/net @ v0.40.0 (fixes need >=0.45/0.53/0.55/0.56/0.60 -> go 1.25/1.26)
+CVE-2025-47911
+CVE-2025-58190
+CVE-2026-25680
+CVE-2026-25681
+CVE-2026-27136
+CVE-2026-33814
+CVE-2026-39821
+CVE-2026-42502
+CVE-2026-42506
+CVE-2026-46600
+CVE-2026-78659
+CVE-2026-78660
+CVE-2026-78663
+CVE-2026-78669
+CVE-2026-97032
+# golang.org/x/text @ v0.25.0 (fixes need >=0.39/0.41 -> go 1.25)
+CVE-2026-56851
+CVE-2026-56852

@@ -14,13 +14,17 @@
 # The action pulls ghcr.io/contentremixer/content-validate and runs the exact
 # `contentremixer content validate` rules. Pin the action + image to a released
 # major (@v1) so a ReferenceRepo gets reproducible checks.
+#
+# Branch protection (ISI-7123, subtask C10): pin the `ci-required` job below as
+# the single required status check on `main`. It is deliberately NOT path-
+# filtered — a path-filtered required check never triggers on unrelated PRs and
+# leaves them stuck "pending", so this workflow runs on every PR and aggregates
+# into one stable gate even as the content jobs evolve. A PR touching neither
+# content/ nor recycled/ is a clean pass (the action no-ops → success).
 name: content-ci
 
 on:
   pull_request:
-    paths:
-      - "content/**"
-      - "recycled/**"
 
 permissions:
   contents: read
@@ -63,3 +67,26 @@ jobs:
           image: ghcr.io/contentremixer/content-validate:v1
           pr-body-file: ${{ steps.prbody.outputs.file }}
           fail-on: error
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate — the single stable required status check for ReferenceRepo
+  # branch protection (ISI-7123, subtask C10). Pin THIS check ("ci-required") as
+  # the required check on `main`; the content jobs above can evolve without
+  # changing what branch protection requires. Green only if every content check
+  # passed; `if: always()` so a skipped/failed dependency is caught, not masked.
+  ci-required:
+    if: always()
+    needs: [validate-content]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all required content-CI jobs succeeded
+        run: |
+          results="${{ needs.validate-content.result }}"
+          echo "job results: $results"
+          for r in $results; do
+            if [ "$r" != "success" ]; then
+              echo "::error::a required content-CI job did not succeed ($r)"
+              exit 1
+            fi
+          done
+          echo "all required content-CI jobs passed"

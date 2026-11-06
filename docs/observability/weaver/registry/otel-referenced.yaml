@@ -1,0 +1,28 @@
+# Local mirrors of upstream OpenTelemetry attributes that custom contentremixer
+# metrics reference. These are NOT owned by this registry — instrumentation emits the
+# canonical OTel attributes. They are declared here only so the registry resolves and
+# `weaver registry check` passes offline without cloning the OTel semconv registry.
+#
+# The pure-OTel metrics listed in the observability spec (gen_ai.client.operation.duration,
+# gen_ai.client.token.usage, db.client.operation.duration, db.client.connection.*) are
+# emitted directly by OTel instrumentation and are intentionally NOT redefined here.
+groups:
+  - id: registry.contentremixer.otel_referenced
+    type: attribute_group
+    stability: development
+    brief: >
+      Upstream OpenTelemetry attributes referenced (not owned) by custom contentremixer metrics.
+    attributes:
+      - id: gen_ai.request.model
+        type: string
+        stability: development
+        brief: "The name of the GenAI/embedding model requested (mirrors OTel gen_ai semconv)."
+        note: "Owned by OpenTelemetry gen_ai semantic conventions; mirrored for resolution only."
+        examples: ["text-embedding-3-small", "nomic-embed-text"]
+
+      - id: db.operation.name
+        type: string
+        stability: development
+        brief: "The name of the database operation being executed (mirrors OTel db semconv)."
+        note: "Owned by OpenTelemetry database semantic conventions; mirrored for resolution only."
+        examples: ["SELECT", "INSERT", "query", "upsert"]

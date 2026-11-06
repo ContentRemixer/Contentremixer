@@ -1,0 +1,71 @@
+# Booth CI — the Go module under booth/ (monorepo, board decision #7).
+#
+# The Booth is a separate Go module from the operator (app/), so it gets its own
+# build/test/coverage/quality pipeline rather than being bolted onto ci.yml.
+# Path-filtered to booth/** so operator-only PRs don't pay for it; the operator's
+# ci.yml stays authoritative for app/.
+#
+# Introduced by P3-2 (ISI-7150, the AuthN provider). P3-1 (ISI-7149, the Booth
+# API) lands in the same module and is covered by these same jobs automatically.
+name: booth-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ['booth/**', '.github/workflows/booth-ci.yml']
+  pull_request:
+    paths: ['booth/**', '.github/workflows/booth-ci.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: booth-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: booth
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: booth/go.mod
+          cache-dependency-path: booth/go.sum
+      - name: Build
+        run: go build ./...
+      - name: Test with coverage
+        run: go test ./... -covermode=atomic -coverprofile=cover.out
+      - name: Enforce 80% coverage
+        run: |
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {sub(/%/,"",$3); print $3}')
+          echo "total coverage: ${pct}%"
+          awk -v p="$pct" 'BEGIN { if (p+0 < 80) { print "::error::coverage " p "% < 80% gate"; exit 1 } }'
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: booth/go.mod
+          cache-dependency-path: booth/go.sum
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt needed on:"; echo "$out"; exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go mod tidy drift
+        run: |
+          go mod tidy
+          if ! git diff --exit-code -- go.mod go.sum; then
+            echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' in booth/ and commit."
+            exit 1
+          fi

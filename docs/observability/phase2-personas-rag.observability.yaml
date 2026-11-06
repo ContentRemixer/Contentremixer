@@ -1,0 +1,108 @@
+# Machine-readable Phase-2 observability spec (companion to phase2-personas-rag-observability.md).
+# Consumed by: O11y-1 (Weaver registry seed), Testing Architect (SLO KPIs), Dynatrace SLO build (O11y-4).
+apiVersion: observability.contentremixer.io/v1alpha1
+kind: ObservabilitySpec
+metadata:
+  name: phase2-personas-rag
+  issue: ISI-7156
+  derivesFrom: [ISI-7144, ISI-7076]
+  status: design
+
+cardinalityPolicy:
+  classes: [bounded, bounded-at-p2, unbounded]
+  rules:
+    - attr: persona_name
+      class: bounded-at-p2          # metric label only while DevRel count is small; series-budget capped
+    - attr: owner_subject
+      class: bounded-at-p2          # pseudonymous OIDC sub; hashed where cross-tenant-visible; never in log body
+    - attr: source_url
+      class: unbounded              # span/log/exemplar ONLY — rejected from metric pipelines
+    - attr: db.query.text
+      class: unbounded              # span-only, parameterized
+    - attr: chunk.id
+      class: unbounded              # span/log/exemplar only
+
+metrics:
+  reconciler:
+    - {name: contentremixer.persona.reconcile.duration, type: histogram, unit: s, attrs: [result, persona]}
+    - {name: contentremixer.persona.reconcile.total, type: counter, unit: "1", attrs: [result, persona]}
+    - {name: contentremixer.persona.phase, type: updowncounter, unit: "1", attrs: [phase, persona], note: "1=current phase else 0"}
+    - {name: contentremixer.persona.indexed_references, type: gauge, unit: "1", attrs: [persona]}
+    - {name: contentremixer.persona.chunk_count, type: gauge, unit: "1", attrs: [persona]}
+    - {name: contentremixer.persona.reference.failed.total, type: counter, unit: "1", attrs: [kind, reason, persona]}
+    - {name: contentremixer.persona.reindex.total, type: counter, unit: "1", attrs: [trigger, persona]}
+    - {name: contentremixer.persona.last_indexed.age, type: gauge, unit: s, attrs: [persona]}
+  scrape:
+    - {name: contentremixer.rag.scrape.duration, type: histogram, unit: s, attrs: [kind, result]}
+    - {name: contentremixer.rag.scrape.docs, type: histogram, unit: "1", attrs: [kind]}
+    - {name: contentremixer.rag.scrape.dropped.total, type: counter, unit: "1", attrs: [kind, reason]}
+    - {name: contentremixer.rag.scrape.errors.total, type: counter, unit: "1", attrs: [kind, reason]}
+  chunk:
+    - {name: contentremixer.rag.chunk.count, type: histogram, unit: "1", attrs: [kind]}
+    - {name: contentremixer.rag.chunk.size_tokens, type: histogram, unit: "1", attrs: []}
+  embed:
+    - {name: gen_ai.client.operation.duration, type: histogram, unit: s, attrs: [gen_ai.operation.name, gen_ai.request.model, error.type], convention: otel-genai}
+    - {name: gen_ai.client.token.usage, type: histogram, unit: "1", attrs: [gen_ai.request.model, gen_ai.token.type], convention: otel-genai}
+    - {name: contentremixer.rag.embed.batch.duration, type: histogram, unit: s, attrs: [result]}
+    - {name: contentremixer.rag.embed.dimension_mismatch.total, type: counter, unit: "1", attrs: [gen_ai.request.model, expected_dim]}
+    - {name: contentremixer.rag.embed.gateway.errors.total, type: counter, unit: "1", attrs: [status_class, gen_ai.request.model]}
+  store_retrieve:
+    - {name: db.client.operation.duration, type: histogram, unit: s, attrs: [db.operation.name, db.system.name], convention: otel-db}
+    - {name: db.client.connection.count, type: gauge, unit: "1", attrs: [state], convention: otel-db}
+    - {name: db.client.connection.pending_requests, type: gauge, unit: "1", attrs: [], convention: otel-db}
+    - {name: db.client.connection.max, type: gauge, unit: "1", attrs: [], convention: otel-db}
+    - {name: contentremixer.rag.store.up, type: gauge, unit: "1", attrs: [], note: "operator SELECT 1 health ping; authoritative pgvector reachability"}
+    - {name: contentremixer.rag.store.errors.total, type: counter, unit: "1", attrs: [db.operation.name, reason]}
+    - {name: contentremixer.rag.retrieve.matches, type: histogram, unit: "1", attrs: [persona]}
+    - {name: contentremixer.rag.retrieve.top_score, type: histogram, unit: "1", attrs: [persona]}
+    - {name: contentremixer.rag.retrieve.empty.total, type: counter, unit: "1", attrs: [persona, reason]}
+  conditioning:
+    - {name: contentremixer.persona.condition.total, type: counter, unit: "1", attrs: [outcome, persona]}
+    - {name: contentremixer.persona.condition.duration, type: histogram, unit: s, attrs: [outcome]}
+    - {name: contentremixer.persona.condition.degraded.total, type: counter, unit: "1", attrs: [reason, persona]}
+
+enums:
+  result: [success, degraded, error]
+  phase: [Pending, Scraping, Indexing, Ready, Degraded]
+  kind: [youtube, article, blog, rss, transcript]
+  reference_fail_reason: [network, parse, no_captions, empty, cap_exceeded]
+  trigger: [spec_change, periodic_resync]
+  condition_outcome: [full, self_description_only, degraded, no_persona]
+  condition_degraded_reason: [store_unavailable, embed_failed, empty_retrieval, persona_not_ready]
+  status_class: [4xx, 429, 5xx, timeout]
+
+alerts:
+  - {id: A1, name: persona-indexing-degraded, severity: error, surfaces: indexing-failures}
+  - {id: A2, name: persona-corpus-stale, severity: warn, surfaces: reindex-cadence}
+  - {id: A3, name: degraded-conditioning, severity: warn, surfaces: fallback-to-style-only}
+  - {id: A4, name: pgvector-unavailable, severity: critical, surfaces: postgres-availability}
+  - {id: A5, name: embedding-gateway-failing, severity: error, surfaces: litellm-embed}
+  - {id: A6, name: embedding-dimension-mismatch, severity: critical, surfaces: dim-contract}
+  - {id: A7, name: retrieval-latency-high, severity: warn, surfaces: query-latency}
+
+slos:
+  - id: persona-indexing-success
+    objective: 0.95
+    sli: "sum(persona.reconcile.total{result=success}) / sum(persona.reconcile.total{result!=error_transient})"
+    window: 7d
+  - id: conditioning-availability
+    objective: 0.99
+    sli: "1 - ( sum(persona.condition.degraded.total) / sum(persona.condition.total{outcome!=no_persona}) )"
+    window: 7d
+    note: "self_description_only excluded from error budget — sparse-corpus fallback is correct, not an incident"
+  - id: retrieval-latency
+    objective: 0.99
+    sli: "histogram_fraction(db.client.operation.duration{op=query}, lt=0.2)"
+    window: 1d
+  - id: pgvector-availability
+    objective: 0.999
+    sli: "avg(rag.store.up)"
+    window: 30d
+
+handoff:
+  stories:
+    - {id: O11y-1, owner: developer-amelia, blockedOn: [], work: "Weaver registry + generated Go metric stubs"}
+    - {id: O11y-2, owner: developer-amelia, blockedOn: [ISI-7143, ISI-7145, ISI-7146], work: "reconciler + RAG-stage metrics/logs/spans"}
+    - {id: O11y-3, owner: developer-amelia, blockedOn: [ISI-7147], work: "writer-conditioning instrumentation + recycle-run span linkage"}
+    - {id: O11y-4, owner: proxops+o11y, blockedOn: [ISI-7148], work: "collector overlay + postgres_exporter + Dynatrace dashboard/notebook/SLOs"}
+  testingArchitect: "SLO KPIs above are the test-consumable contract; validate-traces/validate-telemetry-data run once O11y-2..4 land on k8Squad test"

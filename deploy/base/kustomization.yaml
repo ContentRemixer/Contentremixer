@@ -17,6 +17,7 @@ resources:
   - operator/namespace.yaml
   - crds/contentremixer.io_modelprofiles.yaml
   - crds/contentremixer.io_referencerepos.yaml
+  - crds/contentremixer.io_devrelpersonas.yaml
   - operator/serviceaccount.yaml
   - operator/rbac.yaml
   - operator/certificates.yaml

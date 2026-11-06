@@ -12,9 +12,14 @@ The checker/Mastering scrubber (subtask G, ISI-7082) is the component that
 redacts leaked secrets from generated content; its unit tests MUST embed
 intentionally secret-shaped strings (fake ghp_* PATs, fake API keys, curl
 auth headers) to prove the scrubber catches and redacts them. These are
-test fixtures, not credentials. Scoped to that one file so a real leak
-anywhere else still fails the gate.
+test fixtures, not credentials.
+
+The Booth AuthN tests (P3-2, ISI-7150) likewise embed a fixed 32-byte
+session-signing key so HMAC token round-trips are deterministic — a test
+constant, not a credential. Scoped to the test files so a real leak in
+production code anywhere still fails the gate.
 """
 paths = [
   '''app/internal/pipeline/checker/checker_test\.go$''',
+  '''booth/.*_test\.go$''',
 ]

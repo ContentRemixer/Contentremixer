@@ -5,9 +5,18 @@ A ready-to-install drop-in that wires **Content CI** into the ContentRemixer
 subtask **C8** ([ISI-7122](https://.../ISI-7122)), plan §3/§5, parent
 [ISI-7093](https://.../ISI-7093).
 
+> **Where this runs (board decision, ISI-7122):** the `ContentRemixer/contentremixer`
+> repo hosts **only the ContentMixer code**, not DevRel content — so Content CI
+> does **not** run there. It is *installed on the separate content repo* (the
+> future DevRel content hub) from this bundle. The code repo's job is just to
+> build, self-test, and publish the reusable tool (the composite action + the
+> `ghcr.io/contentremixer/content-validate` image) via its
+> `content-validate-tool` workflow.
+
 Everything here calls the **central** composite action published from
 `ContentRemixer/contentremixer` — **zero duplication** of validation logic. The
-ReferenceRepo only carries this thin workflow + the PR templates.
+content repo carries this thin workflow + the PR templates + the per-type
+contract templates (shipped below).
 
 ## What it does
 
@@ -34,17 +43,24 @@ Both content locations are gated:
 
 ## Install
 
-Copy this bundle's `.github/` into the ReferenceRepo root and open a PR:
+Copy this bundle's `.github/` **and** `content/` (the per-type contract
+templates the validator enforces) into the content repo root and open a PR:
 
 ```sh
-# from a checkout of the ReferenceRepo:
+# from a checkout of the content repo:
 cp -r <this-repo>/deploy/reference-repo-bundle/.github/ .github/
+cp -r <this-repo>/deploy/reference-repo-bundle/content/ content/   # type contracts
 git checkout -b chore/install-content-ci
-git add .github/workflows/content-ci.yml .github/PULL_REQUEST_TEMPLATE/
+git add .github/workflows/content-ci.yml .github/PULL_REQUEST_TEMPLATE/ content/
 git commit -m "ci: install ContentRemixer Content CI (C8 / ISI-7122)"
 git push -u origin chore/install-content-ci
 gh pr create --fill
 ```
+
+The `content/<type>/meta.template.yaml` files declare each type's required
+assets + fields; the validator reads them from the content repo at runtime.
+Keep them if the content repo already defines its own — this bundle ships the
+canonical set so a fresh content repo validates out of the box.
 
 That is the whole install — the workflow just:
 
@@ -58,33 +74,37 @@ Pin the action **and** the image to the same released major (`@v1` /
 `:v1`) for a reproducible gate. Publishing a `vX` tag of
 `ContentRemixer/contentremixer` ships a matching
 `ghcr.io/contentremixer/content-validate:vX` image (see the source repo's
-`content-ci.yml` image job). Until the first `v1` tag is cut, change both pins
-to `@main` / `:latest`.
+`content-validate-tool` workflow's image job). Until the first `v1` tag is cut,
+change both pins to `@main` / `:latest`.
 
-## ⚠️ Prerequisites / open decision (plan §5 open-Q #1)
+## ⚠️ Prerequisites (owner-gated install)
 
-This bundle is **install-ready**, but two owner-gated items must land before the
-workflow is live in the ReferenceRepo:
+The board confirmed (ISI-7122) that the **content repo is a separate repo** from
+the code repo (`ContentRemixer/contentremixer` is code-only). This bundle is
+**install-ready**; the live install waits on:
 
-1. **Canonical ReferenceRepo named.** Which GitHub repo is the ReferenceRepo
-   (the content-hub the recycle PRs target). **Owner:** board.
-2. **Push/PR access.** A GitHub App install or PAT that lets an agent (or a
-   human) add `.github/` to that repo and open the install PR. Tracked
-   alongside the edge/token work in
-   [ISI-7112](https://.../ISI-7112). **Owner:** board to grant; then CTO-side
-   install.
+1. **The DevRel content repo exists + is named.** The separate repo that hosts
+   `content/` + `recycled/` and receives recycle PRs. **Owner:** board / CTO to
+   create + name it.
+2. **Push/PR access to it.** A GitHub App install or PAT that lets an agent (or
+   a human) add `.github/` + `content/` and open the install PR. Tracked
+   alongside the edge/token work in [ISI-7112](https://.../ISI-7112).
+   **Owner:** board to grant; then CTO-side install.
 3. **First `v1` tag cut** on `ContentRemixer/contentremixer` so `@v1` / `:v1`
-   resolve (the source `content-ci.yml` publishes the image on tag). Until then
-   use `@main` / `:latest` as noted above.
+   resolve. Until then use `@main` / `:latest` as noted above.
 
-Once (1) + (2) are confirmed, installing is the copy-and-PR above — no further
-code work on this bundle.
+Once (1) + (2) land, installing is the copy-and-PR above — no further code work
+on this bundle. The install itself is tracked as a follow-up issue.
 
 ## Files
 
-- `.github/workflows/content-ci.yml` — the drop-in Content CI workflow.
+- `.github/workflows/content-ci.yml` — the drop-in Content CI workflow (runs in
+  the content repo, not the code repo).
 - `.github/PULL_REQUEST_TEMPLATE/{blog,social,newsletter,default}.md` — the C9
   ([ISI-7119](https://.../ISI-7119)) type-aware content PR templates, kept in
   lock-step with the `pr-template` rule. Authors pick one via the GitHub
   `?template=blog.md` (etc.) query param; ContentRemixer-opened PRs pre-fill the
   matching type automatically.
+- `content/<type>/meta.template.yaml` — the canonical per-type contract
+  templates (blog, videos, social, podcasts, livestreams, newsletter) the
+  validator enforces (`required-assets`, `asset-structure`, `pr-template`).

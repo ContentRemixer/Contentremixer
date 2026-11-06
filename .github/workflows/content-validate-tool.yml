@@ -1,42 +1,42 @@
-# Content CI — ISI-7118 (subtask C7), ISI-7093 plan §3 "Content CI pipeline".
+# Content CI TOOL — build, self-test, publish (ISI-7118 C7 / ISI-7122 C8).
 #
-# Runs the `content validate` checks (required assets, structure, quality, SEO,
-# PR template) on changed content folders, via the composite action this repo
-# publishes (.github/actions/content-validate). This is the reference wiring
-# C8 (ISI-7120) installs into the ReferenceRepo — the ReferenceRepo workflow
-# will `uses:` the published action + image instead of building locally.
+# This repo hosts the ContentRemixer *code*, not DevRel content — so we do NOT
+# run content validation against this repo (board decision, ISI-7122). Instead
+# this workflow builds, self-tests, and publishes the reusable Content CI tool:
+#   - the `contentremixer content validate` validator image, and
+#   - (implicitly) the .github/actions/content-validate composite action.
+# The actual content gate is *installed on the separate content/ReferenceRepo*
+# from deploy/reference-repo-bundle/ — see that bundle's README.
 #
-# Separate from ci.yml (C1 Code CI) by design: ci.yml explicitly scopes the
-# ReferenceRepo content CI out to C7+.
-name: content-ci
+# No `content/**` / `recycled/**` triggers here: those paths only matter in the
+# content repo. We trigger on changes to the validator's own code + packaging.
+name: content-validate-tool
 
 on:
   push:
     branches: [main]
     paths:
-      - "content/**"
       - "app/internal/contentvalidate/**"
       - "app/cmd/contentremixer/**"
       - "app/internal/pipeline/pr/**"
       - "app/Dockerfile.content-validate"
       - ".github/actions/content-validate/**"
-      - ".github/workflows/content-ci.yml"
+      - ".github/workflows/content-validate-tool.yml"
   pull_request:
     paths:
-      - "content/**"
       - "app/internal/contentvalidate/**"
       - "app/cmd/contentremixer/**"
       - "app/internal/pipeline/pr/**"
       - "app/Dockerfile.content-validate"
       - ".github/actions/content-validate/**"
-      - ".github/workflows/content-ci.yml"
+      - ".github/workflows/content-validate-tool.yml"
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: content-ci-${{ github.ref }}
+  group: content-validate-tool-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -44,25 +44,11 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Validate this repo's own changed content folders through the action.
-  validate-content:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # the action diffs against the base ref
-      - name: Build validator image
-        run: docker build -f app/Dockerfile.content-validate -t content-validate:ci app
-      - name: content validate (changed folders)
-        uses: ./.github/actions/content-validate
-        with:
-          image: content-validate:ci
-
-  # ---------------------------------------------------------------------------
   # Self-test: prove the action PASSES a well-formed fixture and FAILS a broken
   # one (missing title + missing required asset). Fixtures are generated at run
   # time under the workspace (no secret-shaped bytes ever committed, so the
-  # whole-repo gitleaks gate stays green).
+  # whole-repo gitleaks gate stays green). This is how we validate the TOOL
+  # without treating this code repo as a content repo.
   selftest:
     runs-on: ubuntu-latest
     steps:
@@ -124,11 +110,11 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Publish the validator image to GHCR so consumers (the composite action's
-  # default image, and the ReferenceRepo install C8 wires up) can pull it.
-  # amd64 only (homelab nodes are x86_64); PRs build-only. Gated on the checks
-  # above passing.
+  # default image, and the content-repo install from deploy/reference-repo-bundle/)
+  # can pull it. amd64 only (homelab nodes are x86_64); PRs build-only. Gated on
+  # the self-test passing.
   image:
-    needs: [validate-content, selftest]
+    needs: [selftest]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

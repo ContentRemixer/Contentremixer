@@ -1,0 +1,43 @@
+title: ""
+author: jeff
+url: ""
+published_date: ""
+tags: []
+files:
+  post: index.md
+
+# PR-template field contract (ISI-7119 / plan §4 "Content PR template").
+# Content CI (C7/C8) validates the submitted content PR template against these
+# keys. Keep in lock-step with .github/PULL_REQUEST_TEMPLATE/blog.md and
+# app/internal/pipeline/pr/template.go (typeFields["blog"]).
+pr_template:
+  type: blog
+  common:
+    - content_type
+    - source
+    - target_format
+    - slug
+    - summary
+    - linked_issue
+  fields:
+    - key: title
+      label: Title
+      required: true
+    - key: meta_description
+      label: Meta description
+      required: true
+    - key: canonical_url
+      label: Canonical URL
+      required: true
+    - key: tags
+      label: Tags
+      required: true
+    - key: primary_keyword
+      label: Primary keyword
+      required: true
+    - key: h2_outline
+      label: H2 outline confirmed
+      required: true
+    - key: sources
+      label: Sources section present
+      required: true

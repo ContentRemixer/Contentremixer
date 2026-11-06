@@ -113,7 +113,19 @@ and the repo webhook configured. Each step is tagged **[owner]** (needs an
 account/credential/network no agent here holds) or **[agent]** (a manifest/API
 call an agent can run once it has a k8Squad-test kubeconfig).
 
-**Done when:** opening a `recycle:*` issue on `ContentRemixer/Contentremixer`
+> **`$TARGET_REPO` (ISI-7137):** the one install-time parameter naming the
+> content repo the operator watches — `owner/name` on GitHub. Set it once and
+> substitute it everywhere below:
+> ```sh
+> TARGET_REPO="owner/name"   # the DevRel content repo (ISI-7126 Q1 default)
+> ```
+> It is the only place a content repo is named — `spec.repo: $TARGET_REPO` in
+> the `ReferenceRepo` CR (step 4), the `github-pat` scope (write on
+> `$TARGET_REPO`), and the webhook `POST /repos/$TARGET_REPO/hooks` (step 5) all
+> read from it. (This is distinct from `ContentRemixer/contentremixer`, which is
+> the operator/action **source** repo, not a delivery target.)
+
+**Done when:** opening a `recycle:*` issue on `$TARGET_REPO`
 shows a `200` in GitHub → Settings → Webhooks → *Recent Deliveries* and the
 operator posts the ack comment. This is the infra prerequisite for the E2E gate
 ([ISI-7085](https://.../ISI-7085)).
@@ -133,7 +145,7 @@ only the `recycle:*` E2E on [ISI-7085](https://.../ISI-7085):
    for the tailnet** (ACL `nodeAttrs` → `funnel`) and **HTTPS + MagicDNS on**.
    The auth key/OAuth client cannot be minted without tailnet-admin access.
 2. **Operator `github-pat`** — a PAT with **`contents`, `pull_requests`, and
-   `issues` write** on `ContentRemixer/Contentremixer`, for the operator to ack
+   `issues` write** on `$TARGET_REPO`, for the operator to ack
    issues and open PRs.
 3. **One of** (who runs the apply + webhook wiring):
    - **(a)** a **k8Squad-test kubeconfig for ProxOps** *and* a **GitHub token
@@ -234,7 +246,7 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option C (or A).
        --from-literal=hmac="$WEBHOOK_SECRET"
      ```
    - **[owner→agent]** `github-pat` — a PAT with `contents`, `pull_requests`, and
-     `issues` write on `ContentRemixer/Contentremixer`, for the operator to ack
+     `issues` write on `$TARGET_REPO`, for the operator to ack
      issues and open PRs. An agent can mint/apply this **iff** it is given a token
      with that scope; the default ProxOps `GITHUB_TOKEN` has repo-admin **but not
      the Webhooks permission** (confirmed `403` on `/repos/.../hooks`), so it
@@ -243,12 +255,13 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option C (or A).
      kubectl -n contentremixer create secret generic github-pat \
        --from-literal=token="$GITHUB_PAT"
      ```
-4. **[agent]** Apply the `ReferenceRepo` CR (shape in
-   `deploy/secrets/referencerepo.example.yaml`; already points at
-   `ContentRemixer/Contentremixer` with the `tokenRef`/`webhookSecretRef`/
-   labelRoutes above):
+4. **[agent]** Apply the `ReferenceRepo` CR — the per-repo template in
+   `deploy/secrets/referencerepo.example.yaml` carries the
+   `tokenRef`/`webhookSecretRef`/labelRoutes above; substitute `$TARGET_REPO`
+   into its `spec.repo` (and name the CR after the repo) before applying:
    ```sh
-   kubectl apply -f deploy/secrets/referencerepo.example.yaml
+   sed "s#\$TARGET_REPO#$TARGET_REPO#" deploy/secrets/referencerepo.example.yaml \
+     | kubectl apply -f -
    ```
 5. **[owner OR agent-with-Webhooks-token]** Configure the repo webhook — GitHub →
    repo Settings → Webhooks → Add webhook:
@@ -260,7 +273,7 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option C (or A).
    ```sh
    curl -X POST -H "Authorization: Bearer $HOOK_TOKEN" \
      -H "Accept: application/vnd.github+json" \
-     https://api.github.com/repos/ContentRemixer/Contentremixer/hooks \
+     https://api.github.com/repos/$TARGET_REPO/hooks \
      -d '{"name":"web","active":true,"events":["issues"],
           "config":{"url":"https://recycler.<domain>/github/webhook",
                     "content_type":"json","secret":"'"$WEBHOOK_SECRET"'"}}'

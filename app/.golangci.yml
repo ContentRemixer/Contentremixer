@@ -1,0 +1,10 @@
+# golangci-lint config for the ContentRemixer operator (app/).
+#
+# Only `run.timeout` is set here — linters stay at golangci-lint's defaults, so
+# this introduces no new findings. The sole purpose is to lift the tool's 1m
+# default timeout, which a COLD cache run exceeds on CI (the `quality` job in
+# .github/workflows/ci.yml timed out at ~69s, exit 4, on a cache miss). Both the
+# CI `golangci-lint-action` (working-directory: app) and local `make lint` pick
+# this up, so the fix is durable rather than relying on a warm cache.
+run:
+  timeout: 5m

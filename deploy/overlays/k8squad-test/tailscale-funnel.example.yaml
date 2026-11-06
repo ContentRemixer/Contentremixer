@@ -1,0 +1,57 @@
+# Public edge for real github.com webhook delivery — Tailscale Funnel (ISI-7126,
+# the board/CEO-chosen Option C for ISI-7112).
+#
+# WHY FUNNEL (vs the Cloudflare Tunnel in tunnel.example.yaml): no domain to own
+# (the public host is `https://<node>.<tailnet>.ts.net`), no router/WAN change,
+# no home-IP exposure, works through CGNAT, and the homelab already runs
+# Tailscale. Funnel terminates TLS at the tailnet edge with a **Let's-Encrypt,
+# GitHub-trusted cert** — so this path also satisfies ISI-7112 item 2 (no
+# on-cluster ACME issuer needed). The origin hop stays inside the cluster: the
+# Tailscale operator proxy -> operator-webhook:8443 (plain HTTP, the receiver
+# does not do TLS; see exposure.yaml).
+#
+# CONSTRAINT: Funnel only serves public ports **443 / 8443 / 10000**. This
+# Ingress lands github.com deliveries at
+# `https://<node>.<tailnet>.ts.net/github/webhook` on **443** and the operator
+# proxy forwards to `operator-webhook.contentremixer.svc:8443`. The receiver
+# serves `/github/webhook`; the Ingress forwards every path to the backend, so
+# the path reaches the receiver unchanged.
+#
+# PREREQ: the **Tailscale Kubernetes operator** must be installed in the cluster
+# (it owns `ingressClassName: tailscale` and mints the per-Ingress proxy pod).
+# Install out-of-band with the tailnet OAuth client the owner provides (see
+# deploy/README.md "Real github.com delivery", Option C). Funnel must be enabled
+# for the tailnet in the ACL policy (`nodeAttrs` -> `funnel`), and HTTPS +
+# MagicDNS must be on — all owner/tailnet-admin actions.
+#
+# SHAPE ONLY — this is an *.example.yaml like deploy/secrets/*. It is NOT in
+# kustomization.yaml and is never applied as-is. `tailscale.com/hostname` sets
+# the public subdomain: `recycler.<tailnet>.ts.net`.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: operator-webhook-funnel
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: operator-webhook-funnel
+    app.kubernetes.io/part-of: contentremixer
+  annotations:
+    # Expose this Ingress on the PUBLIC internet via Funnel (not just the
+    # tailnet). Without this annotation the operator serves it tailnet-only.
+    tailscale.com/funnel: "true"
+    # MagicDNS name of the funnel node -> public host recycler.<tailnet>.ts.net.
+    tailscale.com/hostname: "recycler"
+spec:
+  ingressClassName: tailscale
+  defaultBackend:
+    service:
+      name: operator-webhook
+      port:
+        number: 8443
+  # The operator reads this host for the Let's-Encrypt cert SAN / MagicDNS name.
+  # Tailscale completes it to recycler.<tailnet>.ts.net; leave the tailnet
+  # suffix off here — the operator fills it in.
+  tls:
+    - hosts:
+        - recycler

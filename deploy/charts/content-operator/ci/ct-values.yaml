@@ -1,0 +1,32 @@
+# chart-testing (`ct install`) value overrides — ISI-7124 (C5 of ISI-7093).
+#
+# chart-testing installs the chart once per `ci/*-values.yaml` on the kind
+# cluster spun up by the chart-publish workflow. This file makes the install
+# self-contained on a bare kind node:
+#
+#   * operator.image  -> the image the workflow `docker build`s and
+#     `kind load`s locally; pullPolicy Never so kind never reaches GHCR
+#     (the released image may not exist for the PR's sha).
+#   * exposure.enabled=false -> kgateway + MetalLB are NOT present on the
+#     ct kind cluster; the Gateway/HTTPRoute would never reconcile.
+#   * litellm.enabled=false -> the LiteLLM gateway needs a master key +
+#     per-model API-key secrets (created out-of-band, design §8) to become
+#     Ready; it is out of scope for a chart-install smoke test.
+#
+# cert-manager stays enabled (chart default): the workflow installs
+# cert-manager before `ct install`, so the admission serving Certificate is
+# issued and the operator Deployment's webhook-cert mount is satisfied.
+#
+# NOTE: this directory is listed in .helmignore, so it is never packaged into
+# the published OCI artifact — it exists only for CI install testing.
+operator:
+  image:
+    repository: content-operator
+    tag: ct-test
+    pullPolicy: Never
+
+exposure:
+  enabled: false
+
+litellm:
+  enabled: false

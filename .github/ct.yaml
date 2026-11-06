@@ -1,0 +1,14 @@
+# chart-testing (ct) config — ISI-7124 (C5 of ISI-7093).
+# Consumed by `ct lint` / `ct install` in .github/workflows/chart-publish.yml.
+chart-dirs:
+  - deploy/charts
+target-branch: main
+
+# The operator chart is the only chart; lint it even when ct's git-diff
+# detection finds no change (the workflow passes --charts explicitly too).
+validate-maintainers: false
+
+# Chart version is derived from the release git tag at publish time
+# (helm package --version <tag>); the in-repo Chart.yaml version is a static
+# placeholder, so a bump-per-PR requirement would be pure friction here.
+check-version-increment: false

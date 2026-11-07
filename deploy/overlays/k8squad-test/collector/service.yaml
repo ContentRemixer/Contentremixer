@@ -1,0 +1,27 @@
+# Cluster-internal Service fronting the Collector's OTLP receivers. The operator
+# dials otel-collector.contentremixer.svc.cluster.local:4317 (grpc) via its
+# OTEL_EXPORTER_OTLP_ENDPOINT (set by the operator env JSON6902 patch in the
+# overlay kustomization). No Ingress — the
+# only clients are in-cluster workloads; telemetry egress to Dynatrace happens
+# from the Collector itself, not through this Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+spec:
+  selector:
+    app.kubernetes.io/name: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP

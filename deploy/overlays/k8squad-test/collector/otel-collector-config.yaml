@@ -1,0 +1,152 @@
+# OTel Collector pipeline for persona/RAG telemetry on k8Squad test
+# (O11y-4, ISI-7161 — concretises strategy §8/§9,
+# docs/observability/phase2-personas-rag-observability.md).
+#
+# This file is the SINGLE SOURCE OF TRUTH for the pipeline: kustomize's
+# configMapGenerator mounts it into the Collector, and hack/validate-collector-config.sh
+# runs it through `otelcol-contrib validate` in CI (collector-validate.yml) — which
+# fails if ANY component below is absent from the contrib distro. That IS the
+# "validate-ocb-manifest" check the issue asks for: no custom OCB build is needed
+# because every component here ships in opentelemetry-collector-contrib (§8).
+#
+# Two ordering rules are inviolable (§8): memory_limiter is FIRST and batch is
+# LAST in every pipeline. transform/cardinality is metrics-only (it must not
+# strip source_url from traces, where it is wanted); redaction/pii is on
+# traces+logs only (never metrics); tail_sampling is traces-only (§7).
+
+extensions:
+  # Liveness/readiness for the Collector pod (probes in deployment.yaml).
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  # OTLP from the operator (app/cmd/main.go setupOTLP → OTEL_EXPORTER_OTLP_ENDPOINT).
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # §9 vantage 2 — the database's own view. Scrapes the postgres_exporter
+  # Deployment (postgres-exporter/) which reads the pgvector DSN and exposes
+  # pg_up, pg_stat_database_*, connection counts and slow-query stats.
+  prometheus/pgvector:
+    config:
+      scrape_configs:
+        - job_name: pgvector-postgres-exporter
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["postgres-exporter.contentremixer.svc.cluster.local:9187"]
+
+  # §9 vantage 3 — the infra view. StatefulSet replicas-ready, pod restarts,
+  # PVC bound state. Single cluster-wide instance (RBAC in rbac.yaml).
+  k8s_cluster:
+    auth_type: serviceAccount
+    collection_interval: 30s
+    node_conditions_to_report: [Ready, MemoryPressure, DiskPressure]
+    allocatable_types_to_report: [cpu, memory]
+
+processors:
+  # MUST be FIRST — back-pressure before OOM (§8).
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # k8s ONLY (we are in-cluster) — NEVER resourcedetection here (§8).
+  k8sattributes:
+    auth_type: serviceAccount
+    passthrough: false
+    extract:
+      metadata:
+        - k8s.namespace.name
+        - k8s.pod.name
+        - k8s.deployment.name
+        - k8s.node.name
+    pod_association:
+      - sources:
+          - from: connection
+
+  # §3 cardinality guard — strip unbounded attrs from the METRIC pipeline only.
+  # (On traces these are wanted: source_url is the whole point of the scrape span.)
+  transform/cardinality:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_key(attributes, "source_url")
+          - delete_key(attributes, "db.query.text")
+          - delete_key(attributes, "chunk.id")
+
+  # §5.3 PII defence-in-depth on free-text surfaces (traces + logs, never metrics).
+  # Redacts anything matching an email / phone shape from attribute values.
+  redaction/pii:
+    allow_all_keys: true
+    blocked_values:
+      - "[\\w.%+-]+@[\\w.-]+\\.[A-Za-z]{2,}"
+      - "\\+?\\d[\\d ()-]{7,}\\d"
+
+  # §7 tail-based sampling — traces pipeline only. Failure modes are NEVER
+  # sampled away: errors, degraded conditioning, dimension mismatch and the
+  # latency tail are all kept at 100%; the happy path is probabilistic.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: degraded-bool
+        type: boolean_attribute
+        boolean_attribute:
+          key: degraded
+          value: true
+      - name: outcome-degraded
+        type: string_attribute
+        string_attribute:
+          key: outcome
+          values: ["degraded"]
+      - name: dimension-mismatch
+        type: string_attribute
+        string_attribute:
+          key: rag.embed.dimension_mismatch
+          values: [".+"]
+          enabled_regex_matching: true
+      - name: slow-query
+        type: latency
+        latency:
+          threshold_ms: 250
+      - name: probabilistic-baseline
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  # MUST be LAST — amortise export (§8).
+  batch:
+    timeout: 5s
+
+exporters:
+  # OTLP → Dynatrace. Endpoint + Api-Token come from the dynatrace-otlp Secret
+  # (dynatrace-otlp.example.yaml), injected as env on the Collector container.
+  otlphttp/dynatrace:
+    endpoint: ${env:DT_OTLP_ENDPOINT}
+    headers:
+      Authorization: "Api-Token ${env:DT_API_TOKEN}"
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, k8sattributes, redaction/pii, tail_sampling, batch]
+      exporters: [otlphttp/dynatrace]
+    metrics:
+      receivers: [otlp, prometheus/pgvector, k8s_cluster]
+      processors: [memory_limiter, k8sattributes, transform/cardinality, batch]
+      exporters: [otlphttp/dynatrace]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, k8sattributes, redaction/pii, batch]
+      exporters: [otlphttp/dynatrace]

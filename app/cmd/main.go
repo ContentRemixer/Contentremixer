@@ -6,13 +6,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -78,6 +87,74 @@ func (a recycleRunner) RunRoute(ctx context.Context, req githubapp.RouteRequest)
 	return err
 }
 
+// setupOTLP wires the process-wide OpenTelemetry SDK providers to an OTLP/gRPC
+// exporter so the persona/RAG instrumentation (app/internal/telemetry, O11y-2/3)
+// — which records through the global providers and is a no-op until a real
+// provider is installed — starts emitting to the in-cluster Collector
+// (O11y-4 / deploy, ISI-7161).
+//
+// It is strictly opt-in: with OTEL_EXPORTER_OTLP_ENDPOINT unset (kind-e2e,
+// envtest, local runs) it installs nothing and telemetry stays a cheap no-op,
+// so this changes no existing behaviour. When set (k8Squad-test overlay) the
+// exporters read all connection settings — endpoint, http/https scheme →
+// (in)secure, headers, timeout — from the standard OTEL_EXPORTER_OTLP_* env,
+// and resource attributes from OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES.
+//
+// The gRPC dials are non-blocking: an unreachable Collector never stalls
+// startup, it just retries in the background, and batched spans/metrics are
+// flushed by the returned shutdown func on clean exit.
+func setupOTLP(ctx context.Context) (func(context.Context) error, error) {
+	noop := func(context.Context) error { return nil }
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" &&
+		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" &&
+		os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" {
+		setupLog.Info("OTLP export disabled (no OTEL_EXPORTER_OTLP_ENDPOINT); telemetry is a no-op")
+		return noop, nil
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithFromEnv(),      // OTEL_SERVICE_NAME + OTEL_RESOURCE_ATTRIBUTES
+		resource.WithTelemetrySDK(), // telemetry.sdk.* identity
+		resource.WithProcess(),      // pid/executable for the operator process
+		resource.WithContainer(),    // container.id when running in k8s
+	)
+	if err != nil {
+		// Partial resources (e.g. container.id unavailable) are non-fatal; use
+		// what we resolved rather than failing the operator over telemetry.
+		setupLog.Error(err, "partial OTLP resource detection; continuing")
+	}
+
+	traceExp, err := otlptracegrpc.New(ctx)
+	if err != nil {
+		return noop, err
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithBatcher(traceExp),
+	)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{}, propagation.Baggage{},
+	))
+
+	metricExp, err := otlpmetricgrpc.New(ctx)
+	if err != nil {
+		_ = tp.Shutdown(ctx)
+		return noop, err
+	}
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp)),
+	)
+	otel.SetMeterProvider(mp)
+
+	setupLog.Info("OTLP export enabled", "endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	return func(c context.Context) error {
+		// Flush metrics first, then traces; both are best-effort on shutdown.
+		return errors.Join(mp.Shutdown(c), tp.Shutdown(c))
+	}, nil
+}
+
 func main() {
 	var metricsAddr string
 	var probeAddr string
@@ -108,6 +185,15 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Wire OTLP export (O11y-4) before anything records telemetry. Opt-in via
+	// OTEL_EXPORTER_OTLP_ENDPOINT; a no-op otherwise, so non-cluster runs are
+	// unaffected. Non-blocking dials: an unreachable Collector never stalls boot.
+	otelShutdown, err := setupOTLP(context.Background())
+	if err != nil {
+		setupLog.Error(err, "unable to set up OTLP export")
+		os.Exit(1)
+	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -227,8 +313,17 @@ func main() {
 	}
 
 	setupLog.Info("starting manager", "version", version)
-	if err := mgr.Start(runCtx); err != nil {
-		setupLog.Error(err, "problem running manager")
+	runErr := mgr.Start(runCtx)
+	// Flush batched spans/metrics before exit. Use a fresh context: runCtx is
+	// already cancelled by the signal that stopped the manager, so reusing it
+	// would abort the export. Best-effort — log, never mask the run error.
+	flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := otelShutdown(flushCtx); err != nil {
+		setupLog.Error(err, "error flushing OTLP telemetry on shutdown")
+	}
+	if runErr != nil {
+		setupLog.Error(runErr, "problem running manager")
 		os.Exit(1)
 	}
 }

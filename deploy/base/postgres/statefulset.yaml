@@ -1,0 +1,112 @@
+# Postgres + pgvector — the platform's single relational+vector store
+# (design §4/§7, P2-deploy ISI-7148). pgvector/pgvector:pg16 is the stock
+# Postgres 16 image with the `vector` extension preinstalled, so the operator's
+# idempotent `CREATE EXTENSION IF NOT EXISTS vector` migration (§4.2, applied on
+# boot — NOT by an init Job) just works.
+#
+# P2 scope: single replica, no HA (§7/§11). The corpus (~10³–10⁴ chunks) is
+# fully re-derivable by re-indexing from each DevRelPersona's spec.references,
+# so PVC loss is recoverable-but-slow; a pg_dump CronJob is a documented
+# nice-to-have, not required for the test tier.
+#
+# Credentials come from the `pgvector-credentials` Secret, created out-of-band
+# (see ../../secrets/pgvector-credentials.example.yaml + ../../README.md). NO
+# secret value is in this manifest or anywhere in the repo (design §8/§9).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pgvector
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: pgvector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: vector-store
+spec:
+  serviceName: pgvector # bound to the headless Service in service.yaml
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pgvector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pgvector
+        app.kubernetes.io/part-of: contentremixer
+        app.kubernetes.io/component: vector-store
+    spec:
+      # The stock postgres image runs as uid/gid 999 (postgres). fsGroup makes
+      # the PVC writable by that group; runAsNonRoot keeps us off the Phase-1
+      # hardening baseline's bad list.
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+      containers:
+        - name: postgres
+          # Postgres 16 + pgvector extension preinstalled. Bump deliberately —
+          # a major Postgres bump is a data migration, not a rollout.
+          image: pgvector/pgvector:pg16
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # PGDATA lives in a subdirectory of the mount so the volume root
+            # (which may carry a lost+found) never collides with initdb.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: POSTGRES_DB
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -h 127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: pgvector-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+  volumeClaimTemplates:
+    - metadata:
+        name: pgvector-data
+        labels:
+          app.kubernetes.io/name: pgvector
+          app.kubernetes.io/part-of: contentremixer
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # storageClassName intentionally unset — use the cluster default
+        # (k8Squad test). Pin it in the overlay if the default is not what you
+        # want; changing it later requires recreating the StatefulSet's PVC.
+        resources:
+          requests:
+            storage: 5Gi

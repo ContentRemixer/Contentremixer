@@ -59,7 +59,43 @@ kubectl -n contentremixer create secret generic github-webhook \
 # Per-model keys — one per ModelProfile.spec.apiKeyRef (subtask C):
 kubectl -n contentremixer create secret generic openai-apikey \
   --from-literal=key="$OPENAI_API_KEY"
+
+# pgvector store credentials (P2-deploy, ISI-7148 — design §7/§9). Used BOTH by
+# the Postgres StatefulSet (POSTGRES_USER/PASSWORD/DB) and by the operator
+# (DSN, via SecretKeyRef, once the RAG pipeline is wired in — see below). The
+# DSN password MUST equal POSTGRES_PASSWORD. See secrets/pgvector-credentials.example.yaml.
+PGPASS="$(openssl rand -base64 24)"
+kubectl -n contentremixer create secret generic pgvector-credentials \
+  --from-literal=POSTGRES_USER=contentremixer \
+  --from-literal=POSTGRES_PASSWORD="$PGPASS" \
+  --from-literal=POSTGRES_DB=contentremixer \
+  --from-literal=DSN="postgres://contentremixer:${PGPASS}@pgvector.contentremixer.svc:5432/contentremixer?sslmode=disable"
 ```
+
+## Postgres + pgvector store (P2-deploy, ISI-7148)
+
+The base now installs the platform's single relational+vector store (design
+§4/§7): a `pgvector` **StatefulSet** (`pgvector/pgvector:pg16` — Postgres 16
+with the `vector` extension preinstalled), a **headless Service** (`pgvector`,
+cluster-internal `:5432`, never public), and a `PersistentVolumeClaim`
+(`ReadWriteOnce`, 5Gi, default StorageClass) for `/var/lib/postgresql/data`.
+P2 is **single-replica, no HA** — the corpus (~10³–10⁴ chunks) is re-derivable
+by re-indexing each DevRelPersona's `spec.references`, so PVC loss is
+recoverable-but-slow (a `pg_dump` CronJob is a documented nice-to-have, §11).
+
+The schema (the `persona_chunks` table + HNSW index) is applied **by the
+operator on boot** via an idempotent `CREATE … IF NOT EXISTS` migration
+(design §4.2) — there is no init Job. The pgvector image ships the `vector`
+extension so the operator's `CREATE EXTENSION IF NOT EXISTS vector` just works.
+
+> **Operator ↔ store wiring (forward contract, not yet in the operator binary).**
+> `app/cmd/main.go` does not yet read a DSN or construct `store.Open`, so the
+> `pgvector-credentials` `DSN` key is consumed only once the RAG pipeline is
+> wired into the DevRelPersona reconciler. That app change is tracked
+> separately (see the P2-deploy issue's follow-up); the Secret + StatefulSet
+> here are ready for it with **no further deploy change** — the operator just
+> adds a `--postgres-dsn` flag / `PGVECTOR_DSN` env `SecretKeyRef` into the
+> existing `pgvector-credentials` Secret.
 
 ## Exposure on k8Squad test — kgateway + MetalLB (not Ingress)
 

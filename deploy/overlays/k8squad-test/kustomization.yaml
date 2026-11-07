@@ -13,6 +13,10 @@ resources:
   - ../../base
   - exposure.yaml
 
+# Pin the pgvector PVC to local-path on this cluster (see pgvector-storage.yaml).
+patches:
+  - path: pgvector-storage.yaml
+
 images:
   - name: ghcr.io/contentremixer/operator
     # Pinned to an immutable CI tag, NOT :latest, so rollouts are deterministic.

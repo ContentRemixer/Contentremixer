@@ -13,7 +13,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/writer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/retrieve"
 	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
@@ -104,13 +103,16 @@ func condSpanFor(persona string) sdktrace.ReadOnlySpan {
 	return nil
 }
 
-func runWith(persona string, prov *stubProvider, r *retrieve.Retriever) (writer.PersonaOverlay, error) {
+// runWith drives one Condition through the conditioner for its telemetry only;
+// the overlay/error are asserted indirectly via the recorded §4.6 metrics and
+// §6.2 spans, so both returns are intentionally discarded here.
+func runWith(persona string, prov *stubProvider, r *retrieve.Retriever) {
 	rc := runCtx()
 	rc.PersonaName = persona
 	rc.Repo = "ContentRemixer/site"
 	rc.IssueNumber = 7
 	c := &Conditioner{Provider: prov, Retriever: r}
-	return c.Condition(context.Background(), rc, sample())
+	_, _ = c.Condition(context.Background(), rc, sample())
 }
 
 // TestConditioningTelemetry_OutcomeLadder drives every branch of §5.4 and asserts

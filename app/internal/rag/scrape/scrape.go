@@ -261,7 +261,7 @@ func (f *fetcher) get(ctx context.Context, url string) ([]byte, *http.Response, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("scrape: fetch %q: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, resp, fmt.Errorf("scrape: fetch %q: unexpected status %d", url, resp.StatusCode)
 	}

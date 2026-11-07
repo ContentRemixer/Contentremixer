@@ -62,42 +62,42 @@ func (f *fakeGitHub) handler(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/git/ref/heads/main"):
-		fmt.Fprintf(w, `{"object":{"sha":%q}}`, baseSHA)
+		_, _ = fmt.Fprintf(w, `{"object":{"sha":%q}}`, baseSHA)
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/ref/heads/"):
-		fmt.Fprintf(w, `{"object":{"sha":"reuse00000000000000000000000000000000000002"}}`)
+		_, _ = fmt.Fprintf(w, `{"object":{"sha":"reuse00000000000000000000000000000000000002"}}`)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
 		if f.branchExists {
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			fmt.Fprint(w, `{"message":"Reference already exists"}`)
+			_, _ = fmt.Fprint(w, `{"message":"Reference already exists"}`)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"ref":"refs/heads/x"}`)
+		_, _ = fmt.Fprint(w, `{"ref":"refs/heads/x"}`)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/blobs"):
 		f.blobCount++
-		fmt.Fprintf(w, `{"sha":"blob%d"}`, f.blobCount)
+		_, _ = fmt.Fprintf(w, `{"sha":"blob%d"}`, f.blobCount)
 	case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
-		fmt.Fprint(w, `{"tree":{"sha":"basetree"}}`)
+		_, _ = fmt.Fprint(w, `{"tree":{"sha":"basetree"}}`)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/trees"):
-		fmt.Fprint(w, `{"sha":"newtree"}`)
+		_, _ = fmt.Fprint(w, `{"sha":"newtree"}`)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
 		f.commitCount++
-		fmt.Fprintf(w, `{"sha":"commit%d"}`, f.commitCount)
+		_, _ = fmt.Fprintf(w, `{"sha":"commit%d"}`, f.commitCount)
 	case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/git/refs/heads/"):
-		fmt.Fprint(w, `{"object":{"sha":"updated"}}`)
+		_, _ = fmt.Fprint(w, `{"object":{"sha":"updated"}}`)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/pulls"):
 		if f.prExists {
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			fmt.Fprint(w, `{"message":"A pull request already exists for ..."}`)
+			_, _ = fmt.Fprint(w, `{"message":"A pull request already exists for ..."}`)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"number":7,"html_url":"https://github.com/ContentRemixer/Contentremixer/pull/7"}`)
+		_, _ = fmt.Fprint(w, `{"number":7,"html_url":"https://github.com/ContentRemixer/Contentremixer/pull/7"}`)
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls"):
-		fmt.Fprintf(w, `[{"number":%d,"html_url":%q}]`, f.existingPRNo, f.existingPRURL)
+		_, _ = fmt.Fprintf(w, `[{"number":%d,"html_url":%q}]`, f.existingPRNo, f.existingPRURL)
 	default:
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintf(w, `{"message":"fake: unexpected %s %s"}`, r.Method, r.URL.Path)
+		_, _ = fmt.Fprintf(w, `{"message":"fake: unexpected %s %s"}`, r.Method, r.URL.Path)
 	}
 }
 

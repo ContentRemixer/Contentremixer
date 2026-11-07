@@ -62,7 +62,7 @@ func (c *Client) Embeddings(ctx context.Context, model string, inputs ...string)
 	if err != nil {
 		return nil, "", fmt.Errorf("litellm: calling gateway: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {

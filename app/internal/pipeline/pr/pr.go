@@ -249,11 +249,11 @@ func slugify(in string, max int) string {
 func ClearanceBlock(rc pipeline.RunContext, s pipeline.Sample, m pipeline.Mix) string {
 	var b strings.Builder
 	b.WriteString("## Sample clearance\n")
-	fmt.Fprintf(&b, "- **Source path:** %s\n", s.SourcePath)
-	fmt.Fprintf(&b, "- **Source commit:** %s\n", s.SourceCommit)
-	fmt.Fprintf(&b, "- **Model:** %s\n", m.ModelUsed)
-	fmt.Fprintf(&b, "- **Input → Output:** %s → %s\n", s.DetectedInput, rc.OutputFormat)
-	fmt.Fprintf(&b, "- **Recycle issue:** #%d\n", rc.IssueNumber)
+	_, _ = fmt.Fprintf(&b, "- **Source path:** %s\n", s.SourcePath)
+	_, _ = fmt.Fprintf(&b, "- **Source commit:** %s\n", s.SourceCommit)
+	_, _ = fmt.Fprintf(&b, "- **Model:** %s\n", m.ModelUsed)
+	_, _ = fmt.Fprintf(&b, "- **Input → Output:** %s → %s\n", s.DetectedInput, rc.OutputFormat)
+	_, _ = fmt.Fprintf(&b, "- **Recycle issue:** #%d\n", rc.IssueNumber)
 	return b.String()
 }
 

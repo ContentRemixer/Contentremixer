@@ -273,5 +273,5 @@ func validSignature(header string, body, secret []byte) bool {
 
 func writeStatus(w http.ResponseWriter, code int, format string, args ...any) {
 	w.WriteHeader(code)
-	fmt.Fprintf(w, format, args...)
+	_, _ = fmt.Fprintf(w, format, args...)
 }

@@ -65,6 +65,10 @@ var (
 	bucketsChunksPerDoc       = []float64{1, 2, 5, 10, 20, 50, 100}
 	bucketsChunkSizeTokens    = []float64{64, 128, 256, 384, 512, 640, 768, 1024}
 	bucketsRetrieveMatches    = []float64{0, 1, 2, 3, 5, 8, 13, 21}
+	// Conditioning overhead on the writer path must stay small — RAG is
+	// additive, never a gate (§4.6/§5). Fine low-end buckets surface any
+	// regression into the content pipeline's critical path.
+	bucketsConditionDurationS = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2}
 )
 
 // Reasons the strategy enumerates (§4.5) that metricconv carries as free
@@ -126,6 +130,11 @@ type Metrics struct {
 	retrieveMatches  metric.Int64Histogram
 	retrieveTopScore metric.Float64Histogram
 	retrieveEmpty    metric.Int64Counter
+
+	// §4.6 writer conditioning (P2-D / O11y-3)
+	conditionTotal    metric.Int64Counter
+	conditionDuration metric.Float64Histogram
+	conditionDegraded metric.Int64Counter
 }
 
 // New constructs the full instrument set against mp and a tracer from tp. Nil
@@ -222,6 +231,11 @@ func New(mp metric.MeterProvider, tp trace.TracerProvider) (*Metrics, error) {
 	m.retrieveMatches = ihist(metricconv.MetricRagRetrieveMatches, "1", def(metricconv.MetricRagRetrieveMatches), bucketsRetrieveMatches)
 	m.retrieveTopScore = hist(metricconv.MetricRagRetrieveTopScore, "1", def(metricconv.MetricRagRetrieveTopScore), bucketsTopScore)
 	m.retrieveEmpty = cnt(metricconv.MetricRagRetrieveEmptyTotal, "1", def(metricconv.MetricRagRetrieveEmptyTotal))
+
+	// §4.6 writer conditioning
+	m.conditionTotal = cnt(metricconv.MetricPersonaConditionTotal, "1", def(metricconv.MetricPersonaConditionTotal))
+	m.conditionDuration = hist(metricconv.MetricPersonaConditionDuration, "s", def(metricconv.MetricPersonaConditionDuration), bucketsConditionDurationS)
+	m.conditionDegraded = cnt(metricconv.MetricPersonaConditionDegradedTotal, "1", def(metricconv.MetricPersonaConditionDegradedTotal))
 
 	return m, errors.Join(errs...)
 }
@@ -537,6 +551,39 @@ func (m *Metrics) RecordRetrievalEmpty(ctx context.Context, persona string, reas
 	))
 }
 
+// ----- §4.6 writer-conditioning recording -----------------------------------
+
+// RecordCondition records one writer-conditioning application: its position on
+// the §5.4 fallback ladder (condition.total{outcome,persona}) and the time it
+// added to the writer path (condition.duration{outcome}). persona is the
+// attributed DevRelPersona, empty on the no_persona (Phase-1 style-only) path.
+// The counter is the single best "is conditioning healthy" signal (§4.6); the
+// SLI (§10) reads it as degraded.total / total{outcome!=no_persona}.
+func (m *Metrics) RecordCondition(ctx context.Context, persona string, outcome metricconv.ConditionOutcome, d time.Duration) {
+	if m == nil {
+		return
+	}
+	outcomeAttr := attribute.String(metricconv.AttrConditionOutcome, string(outcome))
+	m.conditionTotal.Add(ctx, 1, metric.WithAttributes(personaAttr(persona), outcomeAttr))
+	m.conditionDuration.Record(ctx, d.Seconds(), metric.WithAttributes(outcomeAttr))
+}
+
+// RecordConditionDegraded records the root cause of a degraded conditioning run
+// (condition.degraded.total{reason,persona}) — the by-cause breakdown of the
+// `degraded` outcome that drives the §10.A3 alert. Record it ONLY for the
+// degraded outcome: the sparse-corpus fallback (self_description_only) is
+// correct behaviour (§5.4), not a degrade, and is deliberately excluded from the
+// conditioning-availability error budget (§10).
+func (m *Metrics) RecordConditionDegraded(ctx context.Context, persona string, reason metricconv.ConditionDegradedReason) {
+	if m == nil {
+		return
+	}
+	m.conditionDegraded.Add(ctx, 1, metric.WithAttributes(
+		personaAttr(persona),
+		attribute.String(metricconv.AttrConditionDegradedReason, string(reason)),
+	))
+}
+
 // ----- §6.1 index-time spans ------------------------------------------------
 
 // Tracer is the persona/RAG tracer for callers that need to start spans the
@@ -598,6 +645,64 @@ func (m *Metrics) StartStoreQuery(ctx context.Context) (context.Context, trace.S
 		attribute.String(metricconv.AttrDbOperationName, "query"),
 		attribute.String(attrDbSystemName, dbSystemPostgreSQL),
 		attribute.String("db.collection.name", "persona_chunks"),
+	))
+}
+
+// ----- §6.2 query-time (writer-conditioning) spans --------------------------
+
+// StartCondition opens the §6.2 persona.condition span — the query-time
+// conditioning span that links into the Phase-1 recycle-run writer step. It is a
+// child of whatever span the recycle run already put on ctx (the writer step):
+// no new propagation, it reuses the context.Context chain threaded through
+// Writer.Write → PersonaConditioner.Condition. It carries the persona name and
+// the HASHED owner (§5.1, never the raw subject); the resolved outcome + the
+// degraded flag are set at the end via AnnotateCondition. The rag.retrieve.embed
+// and rag.store.query spans the conditioner's retrieval starts under the
+// returned ctx nest beneath it, completing the §6.2 tree.
+func (m *Metrics) StartCondition(ctx context.Context, persona, ownerSubject string) (context.Context, trace.Span) {
+	return m.Tracer().Start(ctx, "persona.condition", trace.WithAttributes(
+		attribute.String(metricconv.AttrPersonaName, persona),
+		attribute.String("contentremixer.owner.hash", OwnerHash(ownerSubject)),
+	))
+}
+
+// StartRetrieveEmbed opens the §6.2 rag.retrieve.embed span: the GenAI
+// embeddings call that turns the retrieval seed into a query vector, a child of
+// persona.condition. seedChars is the seed length (a span attribute, never a
+// metric label, §3); the seed text itself is never attached (§5.3).
+func (m *Metrics) StartRetrieveEmbed(ctx context.Context, model string, seedChars int) (context.Context, trace.Span) {
+	return m.Tracer().Start(ctx, "rag.retrieve.embed", trace.WithAttributes(
+		attribute.String(attrGenAiOperationName, genAiOperationEmbeddings),
+		attribute.String(metricconv.AttrGenAiRequestModel, model),
+		attribute.Int("contentremixer.rag.retrieve.seed_chars", seedChars),
+	))
+}
+
+// AnnotateCondition records the resolved fallback-ladder result on a
+// persona.condition span (§6.2 {outcome, degraded}). degraded mirrors
+// outcome==degraded onto a boolean so the §7 tail-sampling policy — "keep 100%
+// when degraded==true OR outcome==degraded" — can match on a single attribute.
+func AnnotateCondition(span trace.Span, outcome metricconv.ConditionOutcome, degraded bool) {
+	if span == nil {
+		return
+	}
+	span.SetAttributes(
+		attribute.String(metricconv.AttrConditionOutcome, string(outcome)),
+		attribute.Bool("contentremixer.condition.degraded", degraded),
+	)
+}
+
+// ConditionDegradedEvent adds the §5 persona.condition.degraded WARN event to a
+// persona.condition span: the trace-pillar carrier of the fallback-to-style-only
+// signal, tagged with its root cause and the recycle run id. Exemplar/chunk text
+// is never attached (§5.3) — only the bounded reason and the run id.
+func ConditionDegradedEvent(span trace.Span, reason metricconv.ConditionDegradedReason, runID string) {
+	if span == nil {
+		return
+	}
+	span.AddEvent("persona.condition.degraded", trace.WithAttributes(
+		attribute.String(metricconv.AttrConditionDegradedReason, string(reason)),
+		attribute.String("contentremixer.run.id", runID),
 	))
 }
 

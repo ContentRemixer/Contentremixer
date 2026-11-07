@@ -64,11 +64,10 @@ jobs:
   # Job 5a — govulncheck: scan for vulnerabilities reachable from the operator's
   # call graph (stdlib + module deps) → SARIF.
   #
-  # RATCHET: this is intentionally NON-BLOCKING for now. The initial scan found
-  # reachable advisories in the operator's pinned toolchain/deps; clearing them
-  # is operator-dependency work tracked separately (bump Go toolchain + the
-  # flagged module). Flip `continue-on-error` off to make it a hard gate once
-  # that remediation lands.
+  # HARD GATE: the remediation that cleared the operator's reachable advisories
+  # (ISI-7128 — Go toolchain bump to 1.26.10 + x/net/x/oauth2) has landed, so
+  # `govulncheck ./...` now exits 0 (0 reachable vulns). This step is blocking:
+  # any future regression that reintroduces a reachable advisory fails the job.
   govulncheck:
     runs-on: ubuntu-latest
     permissions:
@@ -86,10 +85,8 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck (text, visible in the log)
         id: vuln
-        continue-on-error: true # RATCHET — see job comment
         working-directory: app
-        run: |
-          govulncheck ./... || echo "::warning::govulncheck found reachable vulnerabilities (non-blocking ratchet; operator-dependency remediation tracked separately)"
+        run: govulncheck ./...
       - name: govulncheck → SARIF
         continue-on-error: true
         working-directory: app

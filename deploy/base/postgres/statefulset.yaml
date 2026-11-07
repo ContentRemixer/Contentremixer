@@ -42,10 +42,18 @@ spec:
         runAsGroup: 999
         fsGroup: 999
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           # Postgres 16 + pgvector extension preinstalled. Bump deliberately —
           # a major Postgres bump is a data migration, not a rollout.
+          #
+          # trivy:ignore:AVD-KSV-0125 — KSV-0125 (untrusted registry) accepted:
+          # `pgvector/pgvector` is the canonical upstream pgvector image and has
+          # no official ghcr mirror. Tag-pinned, cluster-internal (headless
+          # Service, no Ingress), non-public. Prod hardening = mirror into
+          # ghcr.io/contentremixer (tracked as ISI-7173).
           image: pgvector/pgvector:pg16
           ports:
             - name: postgres
@@ -85,6 +93,13 @@ spec:
           volumeMounts:
             - name: pgvector-data
               mountPath: /var/lib/postgresql/data
+            # readOnlyRootFilesystem is on (below), so Postgres's non-data write
+            # paths get writable emptyDirs: the unix-socket dir and /tmp. The
+            # actual database lives on the PVC above (PGDATA), untouched by RO.
+            - name: run-postgresql
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 100m
@@ -94,8 +109,14 @@ spec:
               memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: run-postgresql
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: pgvector-data

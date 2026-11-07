@@ -1,0 +1,35 @@
+# Collector config validation gate — O11y-4 / ISI-7161.
+# Runs the opentelemetry-collector-contrib `validate` subcommand against the
+# persona/RAG Collector config the k8Squad-test overlay ships. This is the
+# "validate-ocb-manifest" check from strategy §8: it fails if any configured
+# component is missing from the contrib distro, proving no custom OCB build is
+# needed. It also catches config-schema regressions before they reach a cluster.
+name: collector-validate
+
+on:
+  push:
+    branches: [main, "design/**"]
+    paths:
+      - "deploy/overlays/k8squad-test/collector/**"
+      - ".github/scripts/validate-collector-config.sh"
+      - ".github/workflows/collector-validate.yml"
+  pull_request:
+    paths:
+      - "deploy/overlays/k8squad-test/collector/**"
+      - ".github/scripts/validate-collector-config.sh"
+      - ".github/workflows/collector-validate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collector-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: validate collector config (component presence)
+        run: .github/scripts/validate-collector-config.sh

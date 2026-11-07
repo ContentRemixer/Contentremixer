@@ -12,6 +12,33 @@ kind: Kustomization
 resources:
   - ../../base
   - exposure.yaml
+  # O11y-4 (ISI-7161): the telemetry collection plane for persona/RAG — the OTel
+  # Collector (strategy §8) and the postgres_exporter pgvector vantage (§9). Both
+  # live in the overlay, not base, because telemetry EGRESS (Dynatrace OTLP) is
+  # cluster-specific; kind-e2e/envtest run without them.
+  - collector/serviceaccount.yaml
+  - collector/rbac.yaml
+  - collector/deployment.yaml
+  - collector/service.yaml
+  - collector/networkpolicy.yaml
+  - postgres-exporter/deployment.yaml
+  - postgres-exporter/service.yaml
+  - postgres-exporter/networkpolicy.yaml
+
+# The Collector config is mounted from a generated ConfigMap built from the SAME
+# file CI validates (hack/validate-collector-config.sh), so config and validation
+# can never drift. The name-suffix hash is disabled so the generated name is a
+# stable `otel-collector-config` that the Deployment's static volume ref always
+# matches (the embedded kustomize applier does not rewrite pod volume configMap
+# refs to a hashed name). Trade-off: editing the config does NOT auto-roll the
+# pod — run `kubectl -n contentremixer rollout restart deploy/otel-collector`
+# after changing it (documented in deploy/README.md).
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: otel-collector-config
+    files:
+      - otel-collector-config.yaml=collector/otel-collector-config.yaml
 
 # Pin the pgvector PVC to local-path (per-node local disk), NOT the
 # cluster-default nfs-csi: a single-replica Postgres fsyncing to shared NFS is
@@ -27,6 +54,32 @@ patches:
       - op: add
         path: /spec/volumeClaimTemplates/0/spec/storageClassName
         value: local-path
+  # O11y-4: point the operator at the Collector so persona/RAG telemetry flows.
+  # JSON6902 (not a strategic-merge Deployment fragment): a merge fragment is
+  # scanned by Trivy as a standalone workload and false-flags "no securityContext"
+  # (the real hardening lives in the base). An op-list adds the env without
+  # looking like a workload. No-op on the currently-pinned operator image until
+  # it is rebuilt with app/cmd/main.go setupOTLP (next operator-ci publish); the
+  # env is simply ignored until then. containers/0 is the sole `manager` container.
+  - target:
+      kind: Deployment
+      name: contentremixer-operator
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: "http://otel-collector.contentremixer.svc.cluster.local:4317"
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: "grpc"
+          - name: OTEL_SERVICE_NAME
+            value: "contentremixer-operator"
+          - name: OTEL_RESOURCE_ATTRIBUTES
+            value: "service.namespace=contentremixer,deployment.environment=k8squad-test"
 
 images:
   - name: ghcr.io/contentremixer/operator

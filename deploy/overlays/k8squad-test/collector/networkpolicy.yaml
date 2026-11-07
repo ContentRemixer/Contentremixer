@@ -1,0 +1,43 @@
+# Lock down the Collector's ingress (security pass, ISI-7161). Without this, the
+# unauthenticated OTLP receivers (:4317/:4318) are reachable by ANY pod in the
+# cluster → telemetry poisoning / Dynatrace-cost DoS. This NetworkPolicy makes
+# OTLP reachable ONLY from the operator pods; the health port stays open so the
+# kubelet (node-sourced) liveness/readiness probes keep working.
+#
+# Defence-in-depth: enforced only if the cluster CNI implements NetworkPolicy.
+# k8Squad test's current CNI may not, but this is the correct artifact and
+# becomes active with no change if a policy-enforcing CNI is adopted. Egress is
+# intentionally NOT restricted here (the Collector must reach Dynatrace + the
+# in-cluster postgres-exporter + the API server for k8sattributes/k8s_cluster);
+# egress hardening is a documented follow-up.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector-ingress
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    # OTLP ingest — only from the operator (the sole legitimate producer).
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: contentremixer-operator
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    # Health check — no `from` (kubelet probes are node-sourced); the endpoint
+    # exposes no sensitive data.
+    - ports:
+        - protocol: TCP
+          port: 13133

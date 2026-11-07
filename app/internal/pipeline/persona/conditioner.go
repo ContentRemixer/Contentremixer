@@ -17,13 +17,17 @@ package persona
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/writer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/retrieve"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
 
 // DefaultSeedLimit bounds the retrieval seed (Sample body + Notes) to keep the
@@ -86,19 +90,47 @@ var _ writer.PersonaConditioner = (*Conditioner)(nil)
 //   - Ready + ≥1 match → self-description + exemplars (the full overlay).
 func (c *Conditioner) Condition(ctx context.Context, rc pipeline.RunContext, s pipeline.Sample) (writer.PersonaOverlay, error) {
 	if c == nil || c.Provider == nil || c.Retriever == nil {
+		// Misconfiguration, not a runtime degrade — there is no persona context
+		// to attribute telemetry to; the writer still degrades to style-only.
 		return writer.PersonaOverlay{Degraded: true}, fmt.Errorf("persona: conditioner not fully wired (provider, retriever)")
 	}
 	owner := strings.TrimSpace(rc.Owner.Subject)
 	name := strings.TrimSpace(rc.PersonaName)
+	tel := telemetry.Default()
+	start := time.Now()
 	if owner == "" || name == "" {
-		// No persona attribution — Phase-1 style-only, not an error.
+		// No persona attribution — Phase-1 style-only, not an error (§4.6
+		// no_persona). No span: nothing conditioned, only the ladder counter.
+		tel.RecordCondition(ctx, name, metricconv.ConditionOutcomeNoPersona, time.Since(start))
 		return writer.PersonaOverlay{}, nil
+	}
+
+	// §6.2 persona.condition span — child of the recycle-run writer step via the
+	// ctx already threaded in; the retrieval's embed/store spans nest under it.
+	ctx, span := tel.StartCondition(ctx, name, owner)
+	// outcome is resolved on the way out; it defaults to degraded so an
+	// unexpected early path is never mis-reported as healthy.
+	outcome := metricconv.ConditionOutcomeDegraded
+	defer func() {
+		telemetry.AnnotateCondition(span, outcome, outcome == metricconv.ConditionOutcomeDegraded)
+		tel.RecordCondition(ctx, name, outcome, time.Since(start))
+		telemetry.EndSpan(span, nil)
+	}()
+	// degrade marks the §5.4 fallback-to-style-only outcome by root cause: it
+	// sets outcome=degraded, increments condition.degraded.total{reason}, and
+	// adds the §5 persona.condition.degraded WARN event onto the span.
+	degrade := func(reason metricconv.ConditionDegradedReason) {
+		outcome = metricconv.ConditionOutcomeDegraded
+		tel.RecordConditionDegraded(ctx, name, reason)
+		telemetry.ConditionDegradedEvent(span, reason, runID(rc))
 	}
 
 	profile, err := c.Provider.Lookup(ctx, owner, name)
 	if err != nil {
-		// Surface the error so the writer logs the degrade; the overlay is still
-		// style-only so generation proceeds.
+		// Could not resolve/confirm the persona — treat as not-ready (the index
+		// may be stale/absent). Surface the error so the writer logs the degrade;
+		// the overlay is still style-only so generation proceeds.
+		degrade(metricconv.ConditionDegradedReasonPersonaNotReady)
 		return writer.PersonaOverlay{Degraded: true}, fmt.Errorf("persona: resolving %q for owner %q: %w", name, owner, err)
 	}
 
@@ -106,6 +138,7 @@ func (c *Conditioner) Condition(ctx context.Context, rc pipeline.RunContext, s p
 	if !profile.Ready {
 		// Index not queryable yet: deterministic anchor only (§5.4).
 		overlay.Degraded = true
+		degrade(metricconv.ConditionDegradedReasonPersonaNotReady)
 		return overlay, nil
 	}
 
@@ -122,18 +155,41 @@ func (c *Conditioner) Condition(ctx context.Context, rc pipeline.RunContext, s p
 	})
 	if err != nil {
 		// Store/embedding unavailable: self-description only, never fail (§5.4).
+		// The retrieve sentinel attributes the cause to the right reason.
 		overlay.Degraded = true
-		return overlay, nil
-	}
-	if len(matches) == 0 {
-		// Sparse corpus (or seed matched nothing above MinScore): self-
-		// description only; Degraded marks the fallback (§5.4).
-		overlay.Degraded = true
+		if errors.Is(err, retrieve.ErrEmbed) {
+			degrade(metricconv.ConditionDegradedReasonEmbedFailed)
+		} else {
+			degrade(metricconv.ConditionDegradedReasonStoreUnavailable)
+		}
 		return overlay, nil
 	}
 
 	overlay.Exemplars = toExemplars(matches)
+	if len(overlay.Exemplars) == 0 {
+		// Sparse corpus (seed matched nothing above MinScore, or all matches had
+		// empty text): self-description only. This is CORRECT behaviour (§5.4),
+		// NOT a degrade — outcome self_description_only, no degraded.total, and
+		// excluded from the conditioning-availability error budget (§10). Degraded
+		// still marks the style-only prompt fallback for the writer (unchanged).
+		overlay.Degraded = true
+		outcome = metricconv.ConditionOutcomeSelfDescriptionOnly
+		return overlay, nil
+	}
+
+	// Full conditioning: self-description + ≥1 exemplar (§4.6 full).
+	outcome = metricconv.ConditionOutcomeFull
 	return overlay, nil
+}
+
+// runID is the recycle-run identifier stamped on the §5
+// persona.condition.degraded event (repo + recycle issue number). It is a
+// span/log field only (unbounded, never a metric label — §3).
+func runID(rc pipeline.RunContext) string {
+	if strings.TrimSpace(rc.Repo) != "" {
+		return fmt.Sprintf("%s#%d", rc.Repo, rc.IssueNumber)
+	}
+	return fmt.Sprintf("#%d", rc.IssueNumber)
 }
 
 // seedLimit resolves the configured seed cap.

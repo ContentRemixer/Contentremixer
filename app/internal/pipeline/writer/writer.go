@@ -203,8 +203,8 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 // systemPrompt binds the style guide into the model's instructions.
 func systemPrompt(format, style string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
-	fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
+	_, _ = fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
+	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
 	b.WriteString("Rules:\n- Output ONLY the finished draft as Markdown, with no preamble or explanation.\n- The first line must be the H1 title heading: \"# <title>\".\n- Reuse the substance of the source; do not invent facts, numbers, or quotes.\n- No marketing voice.\n")
 	return b.String()
 }
@@ -213,23 +213,23 @@ func systemPrompt(format, style string) string {
 // run Notes (angle/audience guidance from the issue form).
 func userPrompt(rc pipeline.RunContext, s pipeline.Sample) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Input format: %s\n", s.DetectedInput)
-	fmt.Fprintf(&b, "Output format: %s\n", rc.OutputFormat)
-	fmt.Fprintf(&b, "Recycle issue #%d\n", rc.IssueNumber)
+	_, _ = fmt.Fprintf(&b, "Input format: %s\n", s.DetectedInput)
+	_, _ = fmt.Fprintf(&b, "Output format: %s\n", rc.OutputFormat)
+	_, _ = fmt.Fprintf(&b, "Recycle issue #%d\n", rc.IssueNumber)
 	if t := metaString(s.Meta, "title"); t != "" {
-		fmt.Fprintf(&b, "Source title: %s\n", t)
+		_, _ = fmt.Fprintf(&b, "Source title: %s\n", t)
 	}
 	if a := metaString(s.Meta, "author"); a != "" {
-		fmt.Fprintf(&b, "Source author: %s\n", a)
+		_, _ = fmt.Fprintf(&b, "Source author: %s\n", a)
 	}
 	if tags := metaTags(s.Meta); len(tags) > 0 {
-		fmt.Fprintf(&b, "Source tags: %s\n", strings.Join(tags, ", "))
+		_, _ = fmt.Fprintf(&b, "Source tags: %s\n", strings.Join(tags, ", "))
 	}
 	if notes := strings.TrimSpace(rc.Notes); notes != "" {
-		fmt.Fprintf(&b, "\nAngle / audience notes from the issue:\n%s\n", notes)
+		_, _ = fmt.Fprintf(&b, "\nAngle / audience notes from the issue:\n%s\n", notes)
 	}
-	fmt.Fprintf(&b, "\nSource body:\n\n%s\n", s.Body)
-	fmt.Fprintf(&b, "\nWrite the %s draft now.\n", rc.OutputFormat)
+	_, _ = fmt.Fprintf(&b, "\nSource body:\n\n%s\n", s.Body)
+	_, _ = fmt.Fprintf(&b, "\nWrite the %s draft now.\n", rc.OutputFormat)
 	return b.String()
 }
 

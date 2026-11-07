@@ -92,7 +92,7 @@ func (r *Runner) reportBlocked(ctx context.Context, rc pipeline.RunContext, toke
 	b.WriteString("🎛️ **ContentRemixer** run blocked by Mastering — **no PR was opened** (fail-closed).\n\n")
 	b.WriteString("Violations found in the generated draft:\n")
 	for _, v := range check.Violations {
-		fmt.Fprintf(&b, "- `%s` (**%s**, %s): %s\n", v.Rule, v.Severity, v.Where, v.Match)
+		_, _ = fmt.Fprintf(&b, "- `%s` (**%s**, %s): %s\n", v.Rule, v.Severity, v.Where, v.Match)
 	}
 	b.WriteString("\nFix the source or the generation guidance, then remove and re-apply the `recycle:*` label to retry.\n")
 	r.comment(ctx, rc, token, b.String())
@@ -101,9 +101,9 @@ func (r *Runner) reportBlocked(ctx context.Context, rc pipeline.RunContext, toke
 // openedComment reports the assembled PR back on the recycle issue.
 func openedComment(rc pipeline.RunContext, s pipeline.Sample, res AssembleResult) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "🎛️ **ContentRemixer** opened #%d: %s\n\n", res.PRNumber, res.PRURL)
-	fmt.Fprintf(&b, "- Branch `%s` · folder `recycled/%s/`\n", res.Branch, res.Slug)
-	fmt.Fprintf(&b, "- Source `%s` @ `%s`\n", s.SourcePath, shortSHA(s.SourceCommit))
+	_, _ = fmt.Fprintf(&b, "🎛️ **ContentRemixer** opened #%d: %s\n\n", res.PRNumber, res.PRURL)
+	_, _ = fmt.Fprintf(&b, "- Branch `%s` · folder `recycled/%s/`\n", res.Branch, res.Slug)
+	_, _ = fmt.Fprintf(&b, "- Source `%s` @ `%s`\n", s.SourcePath, shortSHA(s.SourceCommit))
 	b.WriteString("- Sample clearance is in the PR body and in `recycled/" + res.Slug + "/meta.yaml`.\n")
 	return b.String()
 }

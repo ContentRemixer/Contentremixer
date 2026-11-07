@@ -56,7 +56,7 @@ func (c *GitHubClient) PostComment(ctx context.Context, repoFullName string, iss
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("github: post comment %s#%d returned %s: %s", repoFullName, issueNumber, resp.Status, bytes.TrimSpace(snippet))

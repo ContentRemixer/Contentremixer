@@ -13,6 +13,7 @@
 package chunk
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -20,6 +21,8 @@ import (
 	"strings"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
 
 // Tunable chunk budget (design §3.2 "~512 tokens with ~64-token overlap").
@@ -80,6 +83,10 @@ func (c *Chunker) overlap() int {
 func (c *Chunker) Chunk(doc rag.RawDoc, owner, persona string) []rag.Chunk {
 	sentences := splitSentences(doc.Text)
 	if len(sentences) == 0 {
+		// §4.3: a doc yielding 0 chunks is itself a signal — record it. The
+		// Chunker contract carries no context (deterministic, side-effect-free),
+		// so metrics use Background and the rag.chunk span is orchestrator-owned.
+		telemetry.Default().RecordChunking(context.Background(), metricconv.ReferenceKind(doc.SourceKind), 0, nil)
 		return nil
 	}
 	toks := make([]int, len(sentences))
@@ -119,6 +126,12 @@ func (c *Chunker) Chunk(doc rag.RawDoc, owner, persona string) []rag.Chunk {
 		}
 		start = nextStart
 	}
+	// §4.3 chunk.count (chunks/doc) + chunk.size_tokens distribution.
+	sizes := make([]int, len(chunks))
+	for i := range chunks {
+		sizes[i] = estimateTokens(chunks[i].Text)
+	}
+	telemetry.Default().RecordChunking(context.Background(), metricconv.ReferenceKind(doc.SourceKind), len(chunks), sizes)
 	return chunks
 }
 

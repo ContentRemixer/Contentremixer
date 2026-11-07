@@ -14,15 +14,19 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
 )
 
 // DefaultDim is the embedding/column dimension the schema is built for
@@ -106,6 +110,59 @@ func (s *Store) Close() {
 	}
 }
 
+// recordOp records §4.5 store telemetry for one pgvector operation:
+// db.client.operation.duration always, store.errors on failure (classified),
+// and the operator-vantage store.up gauge — flipped to 0 only on a
+// reachability failure (conn/timeout), since a constraint error does not mean
+// the store is down. A dedicated SELECT 1 health ping on a ticker (§9) is
+// operator-runtime wiring (O11y-4); this derives store.up from live ops.
+func (s *Store) recordOp(ctx context.Context, op string, started time.Time, err error) {
+	tel := telemetry.Default()
+	tel.RecordStoreOp(ctx, op, time.Since(started))
+	if err == nil {
+		tel.SetStoreUp(ctx, true)
+		return
+	}
+	reason := classifyStoreErr(err)
+	tel.RecordStoreError(ctx, op, reason)
+	if reason == telemetry.StoreErrorConn || reason == telemetry.StoreErrorTimeout {
+		tel.SetStoreUp(ctx, false)
+	}
+}
+
+// classifyStoreErr buckets a pgvector failure into the §4.5 reason enum
+// {conn,timeout,constraint,other}. Prefers typed pgx errors (PgError SQLSTATE,
+// ConnectError) and falls back to message shape.
+func classifyStoreErr(err error) telemetry.StoreErrorReason {
+	if err == nil {
+		return telemetry.StoreErrorOther
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return telemetry.StoreErrorTimeout
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if strings.HasPrefix(pgErr.Code, "23") { // SQLSTATE class 23: integrity constraint violation.
+			return telemetry.StoreErrorConstraint
+		}
+		return telemetry.StoreErrorOther
+	}
+	var connErr *pgconn.ConnectError
+	if errors.As(err, &connErr) {
+		return telemetry.StoreErrorConn
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "timeout") || strings.Contains(msg, "deadline"):
+		return telemetry.StoreErrorTimeout
+	case strings.Contains(msg, "connect") || strings.Contains(msg, "connection") ||
+		strings.Contains(msg, "dial") || strings.Contains(msg, "refused"):
+		return telemetry.StoreErrorConn
+	default:
+		return telemetry.StoreErrorOther
+	}
+}
+
 // Migrate applies the forward-only, idempotent schema (§4.2): the vector
 // extension, the persona_chunks table at this store's dimension, the tenancy
 // indexes, and the HNSW cosine ANN index. Safe to call on every operator
@@ -123,7 +180,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 // Upsert implements rag.VectorStore: replace-by-source within a single
 // transaction. Validation (non-empty owner, dimension) runs up front over all
 // chunks so a bad batch is rejected before any row is touched (fail closed).
-func (s *Store) Upsert(ctx context.Context, chunks []rag.Chunk) error {
+func (s *Store) Upsert(ctx context.Context, chunks []rag.Chunk) (err error) {
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -158,6 +215,12 @@ func (s *Store) Upsert(ctx context.Context, chunks []rag.Chunk) error {
 			sources = append(sources, k)
 		}
 	}
+
+	// §6.1 rag.store.upsert span + §4.5 metrics; opened after the fail-closed
+	// validation so a contract violation is not counted as a store failure.
+	ctx, span := telemetry.Default().StartStoreUpsert(ctx, len(chunks))
+	started := time.Now()
+	defer func() { s.recordOp(ctx, "upsert", started, err); telemetry.EndSpan(span, err) }()
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -214,7 +277,7 @@ func (s *Store) Upsert(ctx context.Context, chunks []rag.Chunk) error {
 // Query implements rag.VectorStore: the frozen owner-scoped SELECT (§4.1). The
 // owner_subject predicate is always present; an empty OwnerSubject fails closed
 // before any SQL is built.
-func (s *Store) Query(ctx context.Context, q rag.Query) ([]rag.Match, error) {
+func (s *Store) Query(ctx context.Context, q rag.Query) (matches []rag.Match, err error) {
 	if strings.TrimSpace(q.OwnerSubject) == "" {
 		return nil, fmt.Errorf("store: Query with empty OwnerSubject (refusing cross-tenant scan)")
 	}
@@ -232,6 +295,12 @@ func (s *Store) Query(ctx context.Context, q rag.Query) ([]rag.Match, error) {
 		topK = 1
 	}
 
+	// rag.store.query DB span + §4.5 db.client.operation.duration{op=query}; the
+	// hot ANN path. Owner/query literals are never span/metric attributes (§3).
+	ctx, span := telemetry.Default().StartStoreQuery(ctx)
+	started := time.Now()
+	defer func() { s.recordOp(ctx, "query", started, err); telemetry.EndSpan(span, err) }()
+
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_subject, persona_name, source_url, source_kind, ordinal, text, metadata,
 		        1 - (embedding <=> $3) AS score
@@ -248,7 +317,6 @@ func (s *Store) Query(ctx context.Context, q rag.Query) ([]rag.Match, error) {
 	}
 	defer rows.Close()
 
-	var matches []rag.Match
 	for rows.Next() {
 		var (
 			m        rag.Match
@@ -273,7 +341,7 @@ func (s *Store) Query(ctx context.Context, q rag.Query) ([]rag.Match, error) {
 
 // DeletePersona implements rag.VectorStore: purge all chunks for one persona
 // (finalizer path). Empty ownerSubject fails closed.
-func (s *Store) DeletePersona(ctx context.Context, ownerSubject, personaName string) error {
+func (s *Store) DeletePersona(ctx context.Context, ownerSubject, personaName string) (err error) {
 	if strings.TrimSpace(ownerSubject) == "" {
 		return fmt.Errorf("store: DeletePersona with empty ownerSubject (refusing cross-tenant delete)")
 	}
@@ -283,7 +351,9 @@ func (s *Store) DeletePersona(ctx context.Context, ownerSubject, personaName str
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("store: DeletePersona on nil pool")
 	}
-	if _, err := s.pool.Exec(ctx,
+	started := time.Now()
+	defer func() { s.recordOp(ctx, "delete", started, err) }()
+	if _, err = s.pool.Exec(ctx,
 		`DELETE FROM persona_chunks WHERE owner_subject = $1 AND persona_name = $2`,
 		ownerSubject, personaName,
 	); err != nil {
@@ -294,7 +364,7 @@ func (s *Store) DeletePersona(ctx context.Context, ownerSubject, personaName str
 
 // CountPersona implements rag.VectorStore: stored chunk count for
 // status.chunkCount. Empty ownerSubject fails closed.
-func (s *Store) CountPersona(ctx context.Context, ownerSubject, personaName string) (int, error) {
+func (s *Store) CountPersona(ctx context.Context, ownerSubject, personaName string) (n int, err error) {
 	if strings.TrimSpace(ownerSubject) == "" {
 		return 0, fmt.Errorf("store: CountPersona with empty ownerSubject (refusing cross-tenant scan)")
 	}
@@ -304,8 +374,9 @@ func (s *Store) CountPersona(ctx context.Context, ownerSubject, personaName stri
 	if s == nil || s.pool == nil {
 		return 0, fmt.Errorf("store: CountPersona on nil pool")
 	}
-	var n int
-	if err := s.pool.QueryRow(ctx,
+	started := time.Now()
+	defer func() { s.recordOp(ctx, "count", started, err) }()
+	if err = s.pool.QueryRow(ctx,
 		`SELECT count(*) FROM persona_chunks WHERE owner_subject = $1 AND persona_name = $2`,
 		ownerSubject, personaName,
 	).Scan(&n); err != nil {

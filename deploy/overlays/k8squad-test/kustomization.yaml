@@ -83,7 +83,13 @@ patches:
 
 images:
   - name: ghcr.io/contentremixer/operator
+    # Redirect to the dedicated image-only package. ISI-7121 moved publishing
+    # from the legacy `operator` package to `content-operator`; the legacy pin
+    # (sha-7fdf9483ab28) also predates the ISI-7161 `setupOTLP` wiring above, so
+    # the operator env patch is a no-op on it. This pin activates OTLP export.
+    newName: ghcr.io/contentremixer/content-operator
     # Pinned to an immutable CI tag, NOT :latest, so rollouts are deterministic.
-    # operator-ci published this from commit 7fdf948 (run 42063258626, green).
-    # Bump to a newer sha-<12> only when app/ changes rebuild the binary.
-    newTag: sha-7fdf9483ab28
+    # image-publish.yml published this from the PR #29 main-merge (commit
+    # 6d83a5771309, ISI-7161) — the first build carrying `setupOTLP`. Bump to a
+    # newer sha-<12> only when app/ changes rebuild the binary.
+    newTag: sha-6d83a5771309

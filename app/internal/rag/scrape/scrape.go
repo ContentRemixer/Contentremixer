@@ -26,6 +26,8 @@ import (
 
 	"github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
 
 // Doer is the minimal HTTP seam the scrapers depend on. *http.Client satisfies
@@ -143,9 +145,26 @@ const (
 // the per-scrape timeout, dispatches by Kind, stamps FetchedAt/SourceKind, and
 // enforces the fan-out cap. Unknown kinds and malformed references fail closed
 // with a descriptive error the controller isolates per-reference.
-func (s *Scraper) Scrape(ctx context.Context, ref v1alpha1.PersonaReference) ([]rag.RawDoc, error) {
+func (s *Scraper) Scrape(ctx context.Context, ref v1alpha1.PersonaReference) (out []rag.RawDoc, err error) {
 	kind := strings.TrimSpace(ref.Kind)
 	url := strings.TrimSpace(ref.URL)
+
+	// §6.1 rag.scrape span (source.url is a span attr, never a metric label) +
+	// §4.2 duration/docs/errors. A single deferred recorder covers every return
+	// path so a failure and its reason are always counted.
+	tel := telemetry.Default()
+	ctx, span := tel.StartScrape(ctx, kind, url)
+	started := time.Now()
+	defer func() {
+		result := metricconv.ResultSuccess
+		if err != nil {
+			result = metricconv.ResultError
+			tel.RecordScrapeError(ctx, metricconv.ReferenceKind(kind), classifyScrapeErr(err))
+		}
+		tel.RecordScrape(ctx, metricconv.ReferenceKind(kind), time.Since(started), result, len(out))
+		telemetry.EndSpan(span, err)
+	}()
+
 	if url == "" {
 		return nil, fmt.Errorf("scrape: reference has empty url (kind %q)", kind)
 	}
@@ -164,7 +183,7 @@ func (s *Scraper) Scrape(ctx context.Context, ref v1alpha1.PersonaReference) ([]
 	}
 
 	now := nowFunc()
-	out := make([]rag.RawDoc, 0, len(docs))
+	out = make([]rag.RawDoc, 0, len(docs))
 	for i := range docs {
 		d := docs[i]
 		if strings.TrimSpace(d.Text) == "" {
@@ -190,9 +209,37 @@ func (s *Scraper) Scrape(ctx context.Context, ref v1alpha1.PersonaReference) ([]
 	if s.maxDocs > 0 && len(out) > s.maxDocs {
 		dropped := len(out) - s.maxDocs
 		logDropped(ctx, kind, url, s.maxDocs, dropped)
+		// §4.2 scrape.dropped — honour the fan-out cap with no silent truncation.
+		tel.RecordScrapeDropped(ctx, metricconv.ReferenceKind(kind), metricconv.ReferenceFailReasonCapExceeded, dropped)
 		out = out[:s.maxDocs]
 	}
 	return out, nil
+}
+
+// classifyScrapeErr buckets a scrape failure into the §4.2/§4.1 reason enum for
+// the scrape.errors / reference.failed labels. Classification is best-effort by
+// message shape — the reason is a low-cardinality diagnostic label, not load-
+// bearing control flow — and defaults to network (the dominant transport case).
+func classifyScrapeErr(err error) metricconv.ReferenceFailReason {
+	if err == nil {
+		return metricconv.ReferenceFailReasonNetwork
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "no caption") || strings.Contains(msg, "caption track was empty"):
+		return metricconv.ReferenceFailReasonNoCaptions
+	case strings.Contains(msg, "no usable text") || strings.Contains(msg, "yielded no"):
+		return metricconv.ReferenceFailReasonEmpty
+	case strings.Contains(msg, "unsupported reference kind") ||
+		strings.Contains(msg, "could not locate") ||
+		strings.Contains(msg, "decode") ||
+		strings.Contains(msg, "robots") ||
+		strings.Contains(msg, "parse") ||
+		strings.Contains(msg, "empty url"):
+		return metricconv.ReferenceFailReasonParse
+	default:
+		return metricconv.ReferenceFailReasonNetwork
+	}
 }
 
 // fetcher performs a single bounded HTTP GET with the configured User-Agent.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/embed"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
 )
 
 // Retriever embeds a seed and runs an owner-scoped nearest-neighbour query. The
@@ -69,11 +70,27 @@ func (r *Retriever) Retrieve(ctx context.Context, p Params) ([]rag.Match, error)
 		return nil, fmt.Errorf("retrieve: embedder returned no seed vector")
 	}
 
-	return r.store.Query(ctx, rag.Query{
+	matches, err := r.store.Query(ctx, rag.Query{
 		OwnerSubject: p.OwnerSubject,
 		PersonaName:  p.PersonaName,
 		Embedding:    vecs[0],
 		TopK:         p.TopK,
 		MinScore:     p.MinScore,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// §4.5 retrieval-effectiveness signals. Matches are ordered by descending
+	// similarity, so matches[0].Score is the top score. An empty result is the
+	// degradation trigger (§5.4); we cannot distinguish no_rows from
+	// below_minscore from the result set alone, so the reason is no_rows.
+	tel := telemetry.Default()
+	if len(matches) == 0 {
+		tel.RecordRetrieval(ctx, p.PersonaName, 0, 0)
+		tel.RecordRetrievalEmpty(ctx, p.PersonaName, telemetry.RetrieveEmptyNoRows)
+		return matches, nil
+	}
+	tel.RecordRetrieval(ctx, p.PersonaName, len(matches), matches[0].Score)
+	return matches, nil
 }

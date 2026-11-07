@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +15,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
 
 // DevRelPersonaReconciler reconciles a DevRelPersona object (P2-A).
@@ -43,6 +46,19 @@ func (r *DevRelPersonaReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Get(ctx, req.NamespacedName, &persona); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	// §6.1 index-time trace root span + §4.1/§5 telemetry envelope. The span is
+	// opened once the object exists so a NotFound (deletion) is not traced as a
+	// reconcile. Owner is only ever exposed hashed (§5.1/PII policy).
+	tel := telemetry.Default()
+	ctx, span := tel.StartReconcile(ctx, persona.Name, persona.Spec.Owner.Subject)
+	started := time.Now()
+	ownerHash := telemetry.OwnerHash(persona.Spec.Owner.Subject)
+	traceID := span.SpanContext().TraceID().String()
+	oldPhase := persona.Status.Phase
+	log.V(1).Info("persona.reconcile.start",
+		"event", "persona.reconcile.start", "persona", persona.Name, "owner_hash", ownerHash,
+		"generation", persona.Generation, "phase", oldPhase, "trace_id", traceID)
 
 	status := persona.Status.DeepCopy()
 
@@ -100,15 +116,44 @@ func (r *DevRelPersonaReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		status.ObservedReferenceHash = hash
 	}
 
+	var retErr error
 	if !personaStatusEqual(persona.Status, *status) {
 		persona.Status = *status
-		if err := r.Status().Update(ctx, &persona); err != nil {
-			return ctrl.Result{}, err
-		}
+		retErr = r.Status().Update(ctx, &persona)
 	}
 
-	log.V(1).Info("reconciled DevRelPersona", "accepted", accepted, "phase", status.Phase, "refChanged", changed)
-	return ctrl.Result{}, nil
+	// §4.1 metrics + §5 reconcile.end log. result maps the reconcile outcome:
+	// a write error is error; a persona left in the Error phase is a (correct,
+	// best-effort) degraded outcome; otherwise success.
+	newPhase := status.Phase
+	result := metricconv.ResultSuccess
+	switch {
+	case retErr != nil:
+		result = metricconv.ResultError
+	case newPhase == contentremixerv1alpha1.PersonaPhaseError:
+		result = metricconv.ResultDegraded
+	}
+	dur := time.Since(started)
+	tel.RecordReconcile(ctx, persona.Name, dur, result)
+	tel.SetPhase(ctx, persona.Name, oldPhase, newPhase)
+	// Corpus gauges are read-only projections of P2-C-owned status. The CRD
+	// carries ExemplarCount (embedded units ≈ chunks) and LastEmbeddedAt;
+	// indexed_references has no faithful status source yet (drift note).
+	tel.ObserveChunkCount(ctx, persona.Name, persona.Status.ExemplarCount)
+	if persona.Status.LastEmbeddedAt != nil {
+		tel.ObserveLastIndexedAge(ctx, persona.Name, persona.Status.LastEmbeddedAt.Time, time.Now())
+	}
+	// A spec.references change is the edge-trigger for a re-index (§4.1).
+	if accepted && changed && len(persona.Spec.References) > 0 {
+		tel.RecordReindex(ctx, persona.Name, metricconv.ReindexTriggerSpecChange)
+	}
+
+	log.V(1).Info("persona.reconcile.end",
+		"event", "persona.reconcile.end", "persona", persona.Name, "owner_hash", ownerHash,
+		"generation", persona.Generation, "phase", newPhase, "result", string(result),
+		"duration_ms", dur.Milliseconds(), "accepted", accepted, "refChanged", changed, "trace_id", traceID)
+	telemetry.EndSpan(span, retErr)
+	return ctrl.Result{}, retErr
 }
 
 // SetupWithManager wires the reconciler.

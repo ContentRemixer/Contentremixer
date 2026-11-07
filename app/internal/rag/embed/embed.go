@@ -13,8 +13,11 @@ package embed
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
 
 const (
@@ -64,7 +67,7 @@ func (s *Stage) Dim() int { return s.dim }
 // calls and asserts len(vector) == Dim on every result (§6). An empty input
 // yields an empty result and no gateway call. The returned chunks preserve
 // input order.
-func (s *Stage) Embed(ctx context.Context, chunks []rag.Chunk) ([]rag.Chunk, error) {
+func (s *Stage) Embed(ctx context.Context, chunks []rag.Chunk) (out []rag.Chunk, err error) {
 	if s == nil || s.emb == nil {
 		return nil, fmt.Errorf("embed: stage has no Embedder")
 	}
@@ -72,7 +75,15 @@ func (s *Stage) Embed(ctx context.Context, chunks []rag.Chunk) ([]rag.Chunk, err
 		return nil, nil
 	}
 
-	out := make([]rag.Chunk, len(chunks))
+	// §6.1 rag.embed span + §4.4 batch-duration / dimension-mismatch. The GenAI
+	// semconv call duration + gateway-error class are recorded one layer down in
+	// the LiteLLM embedder, which knows the gateway status.
+	tel := telemetry.Default()
+	model := embedderModel(s.emb)
+	ctx, span := tel.StartEmbed(ctx, model, len(chunks))
+	defer func() { telemetry.EndSpan(span, err) }()
+
+	out = make([]rag.Chunk, len(chunks))
 	copy(out, chunks)
 
 	for start := 0; start < len(out); start += maxBatch {
@@ -87,19 +98,38 @@ func (s *Stage) Embed(ctx context.Context, chunks []rag.Chunk) ([]rag.Chunk, err
 			texts[i] = batch[i].Text
 		}
 
-		vecs, err := s.emb.Embed(ctx, texts)
-		if err != nil {
-			return nil, fmt.Errorf("embed: embedding chunks [%d,%d): %w", start, end, err)
+		batchStart := time.Now()
+		vecs, berr := s.emb.Embed(ctx, texts)
+		batchDur := time.Since(batchStart)
+		if berr != nil {
+			tel.RecordEmbedBatch(ctx, batchDur, metricconv.ResultError)
+			return nil, fmt.Errorf("embed: embedding chunks [%d,%d): %w", start, end, berr)
 		}
+		tel.RecordEmbedBatch(ctx, batchDur, metricconv.ResultSuccess)
 		if len(vecs) != len(batch) {
 			return nil, fmt.Errorf("embed: embedder returned %d vectors for %d chunks", len(vecs), len(batch))
 		}
 		for i := range batch {
 			if len(vecs[i]) != s.dim {
+				// §4.4 hard contract: a vector of the wrong dimension poisons all
+				// retrieval — make it loud (metric + ERROR span) and fail the index.
+				tel.RecordEmbedDimensionMismatch(ctx, model, s.dim)
 				return nil, fmt.Errorf("embed: chunk %q vector dimension %d != expected %d (embedding model misconfigured?)", batch[i].ID, len(vecs[i]), s.dim)
 			}
 			batch[i].Embedding = vecs[i]
 		}
 	}
 	return out, nil
+}
+
+// embedderModel reports the embedding model alias when the Embedder exposes one
+// (the LiteLLM embedder does via Model()), for labelling the §4.4 metrics and
+// the rag.embed span. A stub embedder without Model() yields the default Alias.
+func embedderModel(e Embedder) string {
+	if m, ok := e.(interface{ Model() string }); ok {
+		if s := m.Model(); s != "" {
+			return s
+		}
+	}
+	return Alias
 }

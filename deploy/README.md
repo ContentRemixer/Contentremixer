@@ -124,8 +124,9 @@ observability strategy §8/§9 (`docs/observability/phase2-personas-rag-observab
 - **postgres_exporter** (`postgres-exporter/`) — the §9 database-vantage, scraped
   by the Collector's `prometheus/pgvector` receiver. It connects with the SAME
   `pgvector-credentials` `DSN` the operator uses (one source of truth).
-- The **operator** is pointed at the Collector by `patches/operator-otlp-env.yaml`
-  (sets `OTEL_EXPORTER_OTLP_ENDPOINT` → `otel-collector.contentremixer.svc:4317`).
+- The **operator** is pointed at the Collector by a JSON6902 env patch in the
+  overlay `kustomization.yaml` (sets `OTEL_EXPORTER_OTLP_ENDPOINT` →
+  `otel-collector.contentremixer.svc:4317`).
   This is what flips `app/cmd/main.go`'s OTLP export from no-op to live. It is a
   no-op on an operator image built before that code landed (the env is ignored),
   so it is safe to apply ahead of the next `operator-ci` image bump.

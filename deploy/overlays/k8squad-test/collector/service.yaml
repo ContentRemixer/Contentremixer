@@ -1,6 +1,7 @@
 # Cluster-internal Service fronting the Collector's OTLP receivers. The operator
 # dials otel-collector.contentremixer.svc.cluster.local:4317 (grpc) via its
-# OTEL_EXPORTER_OTLP_ENDPOINT (patches/operator-otlp-env.yaml). No Ingress — the
+# OTEL_EXPORTER_OTLP_ENDPOINT (set by the operator env JSON6902 patch in the
+# overlay kustomization). No Ingress — the
 # only clients are in-cluster workloads; telemetry egress to Dynatrace happens
 # from the Collector itself, not through this Service.
 apiVersion: v1

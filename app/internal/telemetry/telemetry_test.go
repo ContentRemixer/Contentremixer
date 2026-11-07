@@ -299,6 +299,126 @@ func TestSpans_IndexTimeTreeAndPII(t *testing.T) {
 	}
 }
 
+// TestConditioning_MetricsSpanAndEvent asserts the §4.6 conditioning metrics,
+// the §6.2 persona.condition span + its rag.retrieve.embed child, the outcome/
+// degraded annotation, and the §5 persona.condition.degraded WARN event.
+func TestConditioning_MetricsSpanAndEvent(t *testing.T) {
+	h := newHarness(t)
+	m := h.m
+	ctx := context.Background()
+
+	// A full run and a degraded (store-unavailable) run.
+	m.RecordCondition(ctx, "demo", metricconv.ConditionOutcomeFull, 40*time.Millisecond)
+	m.RecordCondition(ctx, "demo", metricconv.ConditionOutcomeDegraded, 5*time.Millisecond)
+	m.RecordConditionDegraded(ctx, "demo", metricconv.ConditionDegradedReasonStoreUnavailable)
+	// A no_persona (Phase-1 style-only) run — carries an empty persona label.
+	m.RecordCondition(ctx, "", metricconv.ConditionOutcomeNoPersona, time.Millisecond)
+
+	all := h.collect(t)
+
+	// condition.total: counter with one series per outcome; carries outcome+persona.
+	total := mustMetric(t, all, metricconv.MetricPersonaConditionTotal)
+	byOutcome := map[string]int64{}
+	for _, dp := range total.Data.(metricdata.Sum[int64]).DataPoints {
+		byOutcome[attrStr(dp.Attributes, metricconv.AttrConditionOutcome)] = dp.Value
+	}
+	for _, want := range []string{"full", "degraded", "no_persona"} {
+		if byOutcome[want] != 1 {
+			t.Errorf("condition.total{outcome=%s} = %d, want 1", want, byOutcome[want])
+		}
+	}
+
+	// condition.duration: histogram keyed by outcome, unit s, small buckets.
+	dur := mustMetric(t, all, metricconv.MetricPersonaConditionDuration)
+	if dur.Unit != "s" {
+		t.Errorf("condition.duration unit = %q, want s", dur.Unit)
+	}
+	dh := dur.Data.(metricdata.Histogram[float64])
+	if b := dh.DataPoints[0].Bounds; len(b) == 0 || b[0] != 0.005 {
+		t.Errorf("condition.duration bounds = %v, want small §4.6 boundaries", b)
+	}
+
+	// degraded.total: carries reason+persona.
+	deg := mustMetric(t, all, metricconv.MetricPersonaConditionDegradedTotal)
+	ddp := deg.Data.(metricdata.Sum[int64]).DataPoints[0]
+	if got := attrStr(ddp.Attributes, metricconv.AttrConditionDegradedReason); got != "store_unavailable" {
+		t.Errorf("degraded.total reason = %q, want store_unavailable", got)
+	}
+	if got := attrStr(ddp.Attributes, metricconv.AttrPersonaName); got != "demo" {
+		t.Errorf("degraded.total persona = %q, want demo", got)
+	}
+
+	// §6.2 span: persona.condition carries hashed owner (never raw), the
+	// annotated outcome+degraded, a nested rag.retrieve.embed child, and the
+	// §5 degraded WARN event.
+	const rawSubject = "oidc|secret-owner"
+	sctx, span := m.StartCondition(ctx, "demo", rawSubject)
+	_, child := m.StartRetrieveEmbed(sctx, "embed", 1234)
+	telemetry.EndSpan(child, nil)
+	telemetry.ConditionDegradedEvent(span, metricconv.ConditionDegradedReasonEmbedFailed, "ContentRemixer/site#42")
+	telemetry.AnnotateCondition(span, metricconv.ConditionOutcomeDegraded, true)
+	telemetry.EndSpan(span, nil)
+
+	ended := map[string]sdktrace.ReadOnlySpan{}
+	var condSpan sdktrace.ReadOnlySpan
+	for _, s := range h.spr.Ended() {
+		ended[s.Name()] = s
+		if s.Name() == "persona.condition" {
+			condSpan = s
+		}
+	}
+	if _, ok := ended["rag.retrieve.embed"]; !ok {
+		t.Error("missing rag.retrieve.embed child span")
+	}
+	if condSpan == nil {
+		t.Fatal("missing persona.condition span")
+	}
+	// child nests under persona.condition (same trace, parented by it).
+	if ch := ended["rag.retrieve.embed"]; ch.Parent().SpanID() != condSpan.SpanContext().SpanID() {
+		t.Error("rag.retrieve.embed is not a child of persona.condition")
+	}
+	var outcomeSeen, degradedSeen, rawSeen bool
+	for _, kv := range condSpan.Attributes() {
+		switch kv.Key {
+		case attribute.Key(metricconv.AttrConditionOutcome):
+			outcomeSeen = kv.Value.AsString() == "degraded"
+		case "contentremixer.condition.degraded":
+			degradedSeen = kv.Value.AsBool()
+		}
+		if kv.Value.Emit() == rawSubject {
+			rawSeen = true
+		}
+	}
+	if !outcomeSeen || !degradedSeen {
+		t.Errorf("persona.condition missing outcome/degraded annotation (outcome=%v degraded=%v)", outcomeSeen, degradedSeen)
+	}
+	if rawSeen {
+		t.Error("PII LEAK: raw owner subject present on persona.condition span")
+	}
+	// §5 degraded WARN event with reason + run id.
+	var evSeen bool
+	for _, ev := range condSpan.Events() {
+		if ev.Name == "persona.condition.degraded" {
+			evSeen = true
+			var reason, runID string
+			for _, a := range ev.Attributes {
+				switch a.Key {
+				case attribute.Key(metricconv.AttrConditionDegradedReason):
+					reason = a.Value.AsString()
+				case "contentremixer.run.id":
+					runID = a.Value.AsString()
+				}
+			}
+			if reason != "embed_failed" || runID != "ContentRemixer/site#42" {
+				t.Errorf("degraded event attrs reason=%q run.id=%q", reason, runID)
+			}
+		}
+	}
+	if !evSeen {
+		t.Error("missing persona.condition.degraded event on span")
+	}
+}
+
 // TestDefault_NoopIsSafe asserts Default() returns a usable recorder bound to
 // the (no-op) global providers and that recording through it never panics —
 // the zero-config path every stage uses before an exporter is installed.
@@ -310,13 +430,21 @@ func TestDefault_NoopIsSafe(t *testing.T) {
 	ctx := context.Background()
 	d.RecordReconcile(ctx, "demo", time.Millisecond, metricconv.ResultSuccess)
 	d.SetStoreUp(ctx, false)
+	d.RecordCondition(ctx, "demo", metricconv.ConditionOutcomeFull, time.Millisecond)
+	d.RecordConditionDegraded(ctx, "demo", metricconv.ConditionDegradedReasonEmptyRetrieval)
 	_, span := d.StartReconcile(ctx, "demo", "oidc|x")
 	telemetry.EndSpan(span, nil)
+	_, cspan := d.StartCondition(ctx, "demo", "oidc|x")
+	telemetry.AnnotateCondition(cspan, metricconv.ConditionOutcomeFull, false)
+	telemetry.ConditionDegradedEvent(cspan, metricconv.ConditionDegradedReasonEmbedFailed, "#1")
+	telemetry.EndSpan(cspan, nil)
 
 	// A nil *Metrics must also be inert, not panic.
 	var nilM *telemetry.Metrics
 	nilM.RecordReconcile(ctx, "demo", 0, metricconv.ResultError)
 	nilM.SetPhase(ctx, "demo", "Pending", "Ready")
+	nilM.RecordCondition(ctx, "demo", metricconv.ConditionOutcomeNoPersona, 0)
+	nilM.RecordConditionDegraded(ctx, "demo", metricconv.ConditionDegradedReasonStoreUnavailable)
 	if tr := nilM.Tracer(); tr == nil {
 		t.Error("nil Metrics.Tracer() returned nil")
 	}
@@ -350,6 +478,8 @@ func TestNilMetrics_AllInert(t *testing.T) {
 	m.RecordStoreError(ctx, "query", telemetry.StoreErrorOther)
 	m.RecordRetrieval(ctx, "p", 1, 0.5)
 	m.RecordRetrievalEmpty(ctx, "p", telemetry.RetrieveEmptyBelowMinSco)
+	m.RecordCondition(ctx, "p", metricconv.ConditionOutcomeDegraded, time.Second)
+	m.RecordConditionDegraded(ctx, "p", metricconv.ConditionDegradedReasonPersonaNotReady)
 
 	// Start* on nil must still return a usable (no-op) span.
 	_, s1 := m.StartReconcile(ctx, "p", "sub")
@@ -358,12 +488,22 @@ func TestNilMetrics_AllInert(t *testing.T) {
 	_, s4 := m.StartEmbed(ctx, "e", 1)
 	_, s5 := m.StartStoreUpsert(ctx, 1)
 	_, s6 := m.StartStoreQuery(ctx)
+	_, s7 := m.StartCondition(ctx, "p", "sub")
+	_, s8 := m.StartRetrieveEmbed(ctx, "e", 10)
+	telemetry.AnnotateCondition(s7, metricconv.ConditionOutcomeDegraded, true)
+	telemetry.ConditionDegradedEvent(s7, metricconv.ConditionDegradedReasonEmbedFailed, "#1")
 	telemetry.EndSpan(s1, nil)
 	telemetry.EndSpan(s2, nil)
 	telemetry.EndSpan(s3, nil)
 	telemetry.EndSpan(s4, nil)
 	telemetry.EndSpan(s5, nil)
 	telemetry.EndSpan(s6, nil)
+	telemetry.EndSpan(s7, nil)
+	telemetry.EndSpan(s8, nil)
+
+	// nil-span annotate/event helpers must be inert too.
+	telemetry.AnnotateCondition(nil, metricconv.ConditionOutcomeFull, false)
+	telemetry.ConditionDegradedEvent(nil, metricconv.ConditionDegradedReasonEmptyRetrieval, "#0")
 }
 
 func TestOwnerHash(t *testing.T) {

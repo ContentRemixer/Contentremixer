@@ -11,12 +11,25 @@ package retrieve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/embed"
 	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
+)
+
+// Sentinel error classes so callers (the P2-D persona conditioner) can attribute
+// a degraded conditioning run to its root cause (§4.6 condition.degraded.total
+// reason: embed_failed vs store_unavailable) with errors.Is, without
+// string-matching the wrapped message. Retrieve wraps the underlying error with
+// one of these; the concrete cause is preserved for logs.
+var (
+	// ErrEmbed wraps a failure to embed the retrieval seed (GenAI gateway).
+	ErrEmbed = errors.New("retrieve: embedding seed failed")
+	// ErrStore wraps a failure of the owner-scoped pgvector query.
+	ErrStore = errors.New("retrieve: vector store query failed")
 )
 
 // Retriever embeds a seed and runs an owner-scoped nearest-neighbour query. The
@@ -62,30 +75,37 @@ func (r *Retriever) Retrieve(ctx context.Context, p Params) ([]rag.Match, error)
 		return nil, nil
 	}
 
-	vecs, err := r.emb.Embed(ctx, []string{p.Seed})
+	// §6.2 rag.retrieve.embed span — a child of persona.condition via the ctx
+	// the conditioner threaded in (no new propagation).
+	tel := telemetry.Default()
+	embCtx, embSpan := tel.StartRetrieveEmbed(ctx, embed.Alias, len(p.Seed))
+	vecs, err := r.emb.Embed(embCtx, []string{p.Seed})
+	telemetry.EndSpan(embSpan, err)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve: embedding seed: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrEmbed, err)
 	}
 	if len(vecs) != 1 || len(vecs[0]) == 0 {
-		return nil, fmt.Errorf("retrieve: embedder returned no seed vector")
+		return nil, fmt.Errorf("%w: embedder returned no seed vector", ErrEmbed)
 	}
 
-	matches, err := r.store.Query(ctx, rag.Query{
+	// §6.2 rag.store.query span — the hot ANN path, sibling of the embed span.
+	qCtx, qSpan := tel.StartStoreQuery(ctx)
+	matches, err := r.store.Query(qCtx, rag.Query{
 		OwnerSubject: p.OwnerSubject,
 		PersonaName:  p.PersonaName,
 		Embedding:    vecs[0],
 		TopK:         p.TopK,
 		MinScore:     p.MinScore,
 	})
+	telemetry.EndSpan(qSpan, err)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrStore, err)
 	}
 
 	// §4.5 retrieval-effectiveness signals. Matches are ordered by descending
 	// similarity, so matches[0].Score is the top score. An empty result is the
 	// degradation trigger (§5.4); we cannot distinguish no_rows from
 	// below_minscore from the result set alone, so the reason is no_rows.
-	tel := telemetry.Default()
 	if len(matches) == 0 {
 		tel.RecordRetrieval(ctx, p.PersonaName, 0, 0)
 		tel.RecordRetrievalEmpty(ctx, p.PersonaName, telemetry.RetrieveEmptyNoRows)

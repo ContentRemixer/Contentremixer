@@ -42,6 +42,12 @@ type RunContext struct {
 	// Owner is propagated for tenancy tagging (design §6); platform-owned
 	// (empty subject) in Phase 1.
 	Owner contentremixerv1alpha1.OwnerRef
+	// PersonaName is the DevRelPersona CR scoping this run's voice conditioning
+	// (design §5.2). Empty => platform-owned, no persona (the Phase-1 path:
+	// the writer generates style-only, byte-for-byte unchanged). When set, it
+	// pairs with Owner.Subject as the (owner, persona) retrieval tenancy key
+	// (§4) the writer's PersonaConditioner scopes exemplar retrieval to.
+	PersonaName string
 }
 
 // Sample is the structured source brief the analyzer emits for the writer

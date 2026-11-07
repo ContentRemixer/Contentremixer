@@ -1,0 +1,141 @@
+# pgvector registry mirror — ISI-7173 (prod hardening for P2-deploy / ISI-7148).
+#
+# The platform's relational+vector store runs the canonical upstream pgvector
+# image `docker.io/pgvector/pgvector:pg16`, which has no official ghcr mirror.
+# Trivy KSV-0125 (untrusted registry) flags the docker.io/<user>/* namespace
+# (ghcr.io is trusted here — the operator + litellm images pull from it with no
+# ignore). This workflow mirrors the image, BY DIGEST, into the platform's own
+# trusted registry `ghcr.io/contentremixer/pgvector`, so the DB image rides the
+# same supply chain as `ghcr.io/contentremixer/operator`.
+#
+# SINGLE SOURCE OF TRUTH: the digest is NOT configured here — it is read from
+# `deploy/base/postgres/statefulset.yaml` (`image: ...@sha256:<digest>`). A
+# content-addressed digest is identical across registries, so the upstream
+# source and the ghcr mirror share it; `crane copy` preserves it end-to-end.
+# Bumping pgvector therefore means editing the digest in that manifest in a
+# reviewed PR (deliberate), after which the next run re-mirrors the new digest.
+#
+# Triggers:
+#   workflow_dispatch : manual re-mirror / bootstrap.
+#   schedule (weekly) : re-assert the pinned digest (keeps the mirror warm /
+#                       survives registry retention) and surface upstream drift.
+#   push to main      : when the pinned digest in the manifest (or this file)
+#                       changes, re-mirror so the deployed ref is pullable.
+#
+# NOTE on package visibility: a newly created ghcr package is private. For the
+# cluster to pull it without an imagePullSecret, set the `pgvector` package to
+# the same visibility as the operator package once this has run (one-time, via
+# the org's package settings). See ISI-7173 for the cutover runbook.
+name: pgvector-mirror
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:17 UTC — off the top of the hour to dodge the scheduler stampede.
+    - cron: "17 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/base/postgres/statefulset.yaml"
+      - ".github/workflows/pgvector-mirror.yml"
+
+permissions:
+  contents: read
+  packages: write # push to ghcr.io/contentremixer/pgvector
+
+concurrency:
+  group: pgvector-mirror
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: docker.io/pgvector/pgvector
+  DST: ghcr.io/contentremixer/pgvector
+  DST_TAG: pg16
+  MANIFEST: deploy/base/postgres/statefulset.yaml
+  # Pin crane so the mirror is reproducible across runner image bumps.
+  CRANE_VERSION: v0.20.2
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install crane from the pinned official go-containerregistry release.
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          os=Linux arch=x86_64
+          url="https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_${os}_${arch}.tar.gz"
+          curl -sSfL "$url" -o /tmp/gcr.tgz
+          tar -xzf /tmp/gcr.tgz -C /usr/local/bin crane
+          crane version
+
+      # The deployed ref is the contract. Extract the digest the manifest pins
+      # and fail closed if it is missing or not a bare image digest — we refuse
+      # to mirror a tag-only (mutable) ref.
+      - name: Resolve pinned digest from manifest
+        id: pin
+        run: |
+          set -euo pipefail
+          ref="$(grep -oE "${DST}(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}" "$MANIFEST" | head -1 || true)"
+          if [ -z "$ref" ]; then
+            echo "::error::no '${DST}...@sha256:<digest>' ref found in ${MANIFEST}; refusing to mirror a mutable tag."
+            exit 1
+          fi
+          digest="${ref##*@}"
+          echo "digest=${digest}" >>"$GITHUB_OUTPUT"
+          echo "Pinned digest from ${MANIFEST}: ${digest}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Confirm the pinned digest still exists upstream before we touch ghcr.
+      - name: Verify upstream digest is reachable
+        env:
+          DIGEST: ${{ steps.pin.outputs.digest }}
+        run: crane manifest "${UPSTREAM}@${DIGEST}" >/dev/null
+
+      # Content-addressed copy of the full multi-arch index (incl. provenance /
+      # SBOM attestation manifests). crane copy preserves the top-level digest.
+      - name: Mirror → ghcr (by digest)
+        env:
+          DIGEST: ${{ steps.pin.outputs.digest }}
+        run: crane copy "${UPSTREAM}@${DIGEST}" "${DST}:${DST_TAG}"
+
+      # The mirror MUST be byte-identical to the pinned digest, else the
+      # deployed `@sha256:` ref would fail to pull.
+      - name: Verify mirror digest matches the pin
+        env:
+          DIGEST: ${{ steps.pin.outputs.digest }}
+        run: |
+          set -euo pipefail
+          got="$(crane digest "${DST}:${DST_TAG}")"
+          if [ "$got" != "$DIGEST" ]; then
+            echo "::error::mirror digest ${got} != pinned ${DIGEST}"
+            exit 1
+          fi
+          echo "mirror OK: ${DST}:${DST_TAG} @ ${got}"
+
+      # Informational only: if upstream :pg16 has moved past the pinned digest,
+      # a human should bump the manifest deliberately (NOT auto-followed here).
+      - name: Drift check (non-blocking)
+        env:
+          DIGEST: ${{ steps.pin.outputs.digest }}
+        run: |
+          set -euo pipefail
+          live="$(crane digest "${UPSTREAM}:${DST_TAG}" 2>/dev/null || echo unknown)"
+          {
+            echo "### pgvector-mirror"
+            echo "- source: \`${UPSTREAM}@${DIGEST}\`"
+            echo "- mirror: \`${DST}:${DST_TAG}@${DIGEST}\`"
+            if [ "$live" != "$DIGEST" ] && [ "$live" != "unknown" ]; then
+              echo "- ⚠️ upstream \`${UPSTREAM}:${DST_TAG}\` is now \`${live}\` — bump the manifest digest in a PR to adopt it."
+            else
+              echo "- upstream \`${UPSTREAM}:${DST_TAG}\` still at the pinned digest."
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"

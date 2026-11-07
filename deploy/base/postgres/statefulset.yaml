@@ -49,12 +49,16 @@ spec:
           # Postgres 16 + pgvector extension preinstalled. Bump deliberately —
           # a major Postgres bump is a data migration, not a rollout.
           #
-          # trivy:ignore:AVD-KSV-0125 — KSV-0125 (untrusted registry) accepted:
-          # `pgvector/pgvector` is the canonical upstream pgvector image and has
-          # no official ghcr mirror. Tag-pinned, cluster-internal (headless
-          # Service, no Ingress), non-public. Prod hardening = mirror into
-          # ghcr.io/contentremixer (tracked as ISI-7173).
-          image: pgvector/pgvector:pg16
+          # Mirrored from the canonical upstream `docker.io/pgvector/pgvector:pg16`
+          # into the platform's own trusted registry (ISI-7173), so the DB image
+          # rides the same supply chain as ghcr.io/contentremixer/operator and
+          # Trivy KSV-0125 (untrusted registry) no longer fires — no ignore needed.
+          # The mirror is kept in sync by .github/workflows/pgvector-mirror.yml,
+          # which reads THIS digest and copies the matching upstream index to ghcr
+          # (content-addressed, so the digest is identical across registries).
+          # Pinned by digest: bumping pgvector = edit this digest in a reviewed PR,
+          # which re-triggers the mirror. `:pg16` is a human-readable hint only.
+          image: ghcr.io/contentremixer/pgvector:pg16@sha256:0dd3149a06e4579a0d70d8fef9945636cd514005e7237deb27f9b67886f8dc4f
           ports:
             - name: postgres
               containerPort: 5432

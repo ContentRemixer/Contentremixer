@@ -78,7 +78,7 @@ func (c *Client) ChatCompletion(ctx context.Context, model string, messages ...C
 	if err != nil {
 		return "", "", fmt.Errorf("litellm: calling gateway: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {

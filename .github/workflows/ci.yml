@@ -139,14 +139,15 @@ jobs:
             exit 1
           fi
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          # golangci-lint-action@v6 dropped the `timeout` input — it was a no-op
-          # here, so lint ran at the 1m default and flaked on cold caches. Pass
-          # the timeout through to the binary via `args` instead.
-          args: --timeout=5m
-          # Pinned to match app/Makefile (GOLANGCI_LINT_VERSION).
-          version: v1.61.0
+          # Pinned to match app/Makefile (GOLANGCI_LINT_VERSION). golangci-lint
+          # v2 is required now that the operator targets Go 1.26: golangci-lint
+          # refuses to run when the Go version it was built with is lower than
+          # the module's `go` directive (v1.61.0 was built with go1.23). v2
+          # needs golangci-lint-action@v8+. Timeout + linter set live in
+          # app/.golangci.yml (v2 config).
+          version: v2.15.0
           working-directory: app
 
   # ---------------------------------------------------------------------------

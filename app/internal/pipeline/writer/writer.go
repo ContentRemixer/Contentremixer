@@ -294,13 +294,13 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 // overrides a correct-format draft.
 func systemPrompt(format, style, skillName, skill string, overlay PersonaOverlay) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
-	fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
+	_, _ = fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
+	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
 	if skill != "" {
-		fmt.Fprintf(&b, "Apply this writing skill pack on top of the style guide — on any conflict the style guide wins:\n\n--- %s ---\n%s\n--- end of skill pack ---\n", skillName, skill)
+		_, _ = fmt.Fprintf(&b, "Apply this writing skill pack on top of the style guide — on any conflict the style guide wins:\n\n--- %s ---\n%s\n--- end of skill pack ---\n", skillName, skill)
 	}
 	if sd := strings.TrimSpace(overlay.SelfDescription); sd != "" {
-		fmt.Fprintf(&b, "\nWrite as this specific DevRel persona. Their voice:\n\n--- persona self-description ---\n%s\n--- end of persona self-description ---\n", sd)
+		_, _ = fmt.Fprintf(&b, "\nWrite as this specific DevRel persona. Their voice:\n\n--- persona self-description ---\n%s\n--- end of persona self-description ---\n", sd)
 		b.WriteString("The style guide outranks the persona voice: never break the required format to match the voice.\n")
 	}
 	b.WriteString("Rules:\n- Output ONLY the finished draft as Markdown, with no preamble or explanation.\n- The first line must be the H1 title heading: \"# <title>\".\n- Reuse the substance of the source; do not invent facts, numbers, or quotes.\n- No marketing voice.\n")
@@ -314,33 +314,33 @@ func systemPrompt(format, style, skillName, skill string, overlay PersonaOverlay
 // from the system prompt still bind, so exemplars must not leak as content.
 func userPrompt(rc pipeline.RunContext, s pipeline.Sample, overlay PersonaOverlay) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Input format: %s\n", s.DetectedInput)
-	fmt.Fprintf(&b, "Output format: %s\n", rc.OutputFormat)
-	fmt.Fprintf(&b, "Recycle issue #%d\n", rc.IssueNumber)
+	_, _ = fmt.Fprintf(&b, "Input format: %s\n", s.DetectedInput)
+	_, _ = fmt.Fprintf(&b, "Output format: %s\n", rc.OutputFormat)
+	_, _ = fmt.Fprintf(&b, "Recycle issue #%d\n", rc.IssueNumber)
 	if t := metaString(s.Meta, "title"); t != "" {
-		fmt.Fprintf(&b, "Source title: %s\n", t)
+		_, _ = fmt.Fprintf(&b, "Source title: %s\n", t)
 	}
 	if a := metaString(s.Meta, "author"); a != "" {
-		fmt.Fprintf(&b, "Source author: %s\n", a)
+		_, _ = fmt.Fprintf(&b, "Source author: %s\n", a)
 	}
 	if tags := metaTags(s.Meta); len(tags) > 0 {
-		fmt.Fprintf(&b, "Source tags: %s\n", strings.Join(tags, ", "))
+		_, _ = fmt.Fprintf(&b, "Source tags: %s\n", strings.Join(tags, ", "))
 	}
 	if notes := strings.TrimSpace(rc.Notes); notes != "" {
-		fmt.Fprintf(&b, "\nAngle / audience notes from the issue:\n%s\n", notes)
+		_, _ = fmt.Fprintf(&b, "\nAngle / audience notes from the issue:\n%s\n", notes)
 	}
 	if ex := overlay.Exemplars; len(ex) > 0 {
 		b.WriteString("\n--- voice exemplars (do not copy facts, match tone/register) ---\n")
 		b.WriteString("These are prior writings by the persona. Mirror their tone, rhythm, and register ONLY — do not reuse their facts, numbers, or claims; the source body above is the sole source of substance.\n")
 		for i, e := range ex {
 			if t := strings.TrimSpace(e.Text); t != "" {
-				fmt.Fprintf(&b, "\nExemplar %d:\n%s\n", i+1, t)
+				_, _ = fmt.Fprintf(&b, "\nExemplar %d:\n%s\n", i+1, t)
 			}
 		}
 		b.WriteString("--- end of voice exemplars ---\n")
 	}
-	fmt.Fprintf(&b, "\nSource body:\n\n%s\n", s.Body)
-	fmt.Fprintf(&b, "\nWrite the %s draft now.\n", rc.OutputFormat)
+	_, _ = fmt.Fprintf(&b, "\nSource body:\n\n%s\n", s.Body)
+	_, _ = fmt.Fprintf(&b, "\nWrite the %s draft now.\n", rc.OutputFormat)
 	return b.String()
 }
 

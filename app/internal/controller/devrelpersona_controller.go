@@ -171,7 +171,7 @@ func referenceHash(refs []contentremixerv1alpha1.PersonaReference) string {
 	h := sha256.New()
 	for _, ref := range refs {
 		// Length-prefix each field so {"ab","c"} and {"a","bc"} never collide.
-		fmt.Fprintf(h, "%d:%s|%d:%s|", len(ref.Kind), ref.Kind, len(ref.URL), ref.URL)
+		_, _ = fmt.Fprintf(h, "%d:%s|%d:%s|", len(ref.Kind), ref.Kind, len(ref.URL), ref.URL)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

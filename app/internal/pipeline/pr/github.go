@@ -200,7 +200,7 @@ func (c *GitHubClient) call(ctx context.Context, method, pathURL, token string, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		return existsErrorFor(method, pathURL)
 	}

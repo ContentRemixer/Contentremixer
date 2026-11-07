@@ -67,7 +67,7 @@ func attrStr(set attribute.Set, key string) string {
 	if !ok {
 		return ""
 	}
-	return v.Emit()
+	return v.String()
 }
 
 func TestMetrics_CoversFullContract(t *testing.T) {
@@ -283,7 +283,7 @@ func TestSpans_IndexTimeTreeAndPII(t *testing.T) {
 	rec := names["DevRelPersona.Reconcile"]
 	var ownerHashSeen, rawSeen bool
 	for _, kv := range rec.Attributes() {
-		val := kv.Value.Emit()
+		val := kv.Value.String()
 		if kv.Key == "contentremixer.owner.hash" {
 			ownerHashSeen = val == telemetry.OwnerHash(rawSubject)
 		}
@@ -385,7 +385,7 @@ func TestConditioning_MetricsSpanAndEvent(t *testing.T) {
 		case "contentremixer.condition.degraded":
 			degradedSeen = kv.Value.AsBool()
 		}
-		if kv.Value.Emit() == rawSubject {
+		if kv.Value.String() == rawSubject {
 			rawSeen = true
 		}
 	}

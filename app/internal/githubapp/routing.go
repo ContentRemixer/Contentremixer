@@ -78,7 +78,7 @@ func ackComment(matched []Route, unmapped []string) string {
 	if len(matched) > 0 {
 		b.WriteString("\n**Resolved routes** (from the `ReferenceRepo` `spec.labelRoutes`):\n")
 		for _, r := range matched {
-			fmt.Fprintf(&b, "- `%s` → input `%s` → output `%s`\n", r.Label, r.InputFormat, r.OutputFormat)
+			_, _ = fmt.Fprintf(&b, "- `%s` → input `%s` → output `%s`\n", r.Label, r.InputFormat, r.OutputFormat)
 		}
 	} else {
 		b.WriteString("\nNo recycle label maps to a route in the `ReferenceRepo` `spec.labelRoutes`, so **nothing will run**.\n")
@@ -87,7 +87,7 @@ func ackComment(matched []Route, unmapped []string) string {
 	if len(unmapped) > 0 {
 		b.WriteString("\n**Ignored** (no matching route — add one to `spec.labelRoutes` to enable):\n")
 		for _, label := range unmapped {
-			fmt.Fprintf(&b, "- `%s`\n", label)
+			_, _ = fmt.Fprintf(&b, "- `%s`\n", label)
 		}
 	}
 	return b.String()

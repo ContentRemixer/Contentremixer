@@ -64,6 +64,12 @@ type DevRelPersonaSpec struct {
 	// +optional
 	// +listType=atomic
 	References []PersonaReference `json:"references,omitempty"`
+
+	// Retrieval tunes top-k owner-scoped exemplar retrieval at write time
+	// (design §5). Optional; defaults apply when unset. Read by the P2-D writer
+	// conditioner (ISI-7147), never by the ingestion reconciler.
+	// +optional
+	Retrieval RetrievalSpec `json:"retrieval,omitempty"`
 }
 
 // PersonaReference is a single style exemplar source.

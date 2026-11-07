@@ -21,6 +21,29 @@ type OwnerRef struct {
 	Subject string `json:"subject,omitempty"`
 }
 
+// RetrievalSpec tunes owner-scoped top-k voice-exemplar retrieval for a
+// DevRelPersona at write time (design §2.0, §5). It is read by the P2-D writer
+// conditioner (ISI-7147); all fields are optional with safe defaults so an
+// existing persona keeps working unchanged. Conditioning is best-effort — too
+// few matches degrades gracefully to style-only generation, it never fails the
+// run (§5.4).
+type RetrievalSpec struct {
+	// TopK is the maximum number of voice exemplars injected into the writer
+	// prompt. Defaults to 5 when zero.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=20
+	// +kubebuilder:default=5
+	// +optional
+	TopK int `json:"topK,omitempty"`
+
+	// MinScore drops exemplars below this cosine similarity (0..1), as a decimal
+	// string so the CRD does not depend on float OpenAPI semantics. Empty or "0"
+	// keeps all top-k; a malformed value is treated as 0 by the conditioner
+	// (best-effort, never fails the run).
+	// +optional
+	MinScore string `json:"minScore,omitempty"`
+}
+
 // KnownInputFormats is the Phase-1 closed set of analyzer input formats.
 var KnownInputFormats = []string{"teleprompter", "livestream", "blog", "podcast", "auto"}
 

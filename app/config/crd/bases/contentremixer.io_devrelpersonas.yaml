@@ -100,6 +100,28 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              retrieval:
+                description: |-
+                  Retrieval tunes top-k owner-scoped exemplar retrieval at write time
+                  (design §5). Optional; defaults apply when unset. Read by the P2-D writer
+                  conditioner (ISI-7147), never by the ingestion reconciler.
+                properties:
+                  minScore:
+                    description: |-
+                      MinScore drops exemplars below this cosine similarity (0..1), as a decimal
+                      string so the CRD does not depend on float OpenAPI semantics. Empty or "0"
+                      keeps all top-k; a malformed value is treated as 0 by the conditioner
+                      (best-effort, never fails the run).
+                    type: string
+                  topK:
+                    default: 5
+                    description: |-
+                      TopK is the maximum number of voice exemplars injected into the writer
+                      prompt. Defaults to 5 when zero.
+                    maximum: 20
+                    minimum: 1
+                    type: integer
+                type: object
               selfDescription:
                 description: |-
                   SelfDescription is a free-text description of the persona's voice/style.

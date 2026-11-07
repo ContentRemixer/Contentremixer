@@ -64,7 +64,9 @@ kubectl -n contentremixer create secret generic openai-apikey \
 # the Postgres StatefulSet (POSTGRES_USER/PASSWORD/DB) and by the operator
 # (DSN, via SecretKeyRef, once the RAG pipeline is wired in — see below). The
 # DSN password MUST equal POSTGRES_PASSWORD. See secrets/pgvector-credentials.example.yaml.
-PGPASS="$(openssl rand -base64 24)"
+# Use a URL-safe password (hex): it is embedded in the DSN URI, and base64
+# (+ / =) breaks libpq/pgx URI parsing (the port mis-parses).
+PGPASS="$(openssl rand -hex 24)"
 kubectl -n contentremixer create secret generic pgvector-credentials \
   --from-literal=POSTGRES_USER=contentremixer \
   --from-literal=POSTGRES_PASSWORD="$PGPASS" \

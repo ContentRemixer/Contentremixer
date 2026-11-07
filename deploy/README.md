@@ -72,6 +72,26 @@ kubectl -n contentremixer create secret generic pgvector-credentials \
   --from-literal=POSTGRES_PASSWORD="$PGPASS" \
   --from-literal=POSTGRES_DB=contentremixer \
   --from-literal=DSN="postgres://contentremixer:${PGPASS}@pgvector.contentremixer.svc:5432/contentremixer?sslmode=disable"
+
+# Dynatrace OTLP egress for the telemetry Collector (O11y-4, ISI-7161). The
+# OTel Collector exports persona/RAG traces/metrics/logs to Dynatrace via
+# OTLP/HTTP using these. Token from the dtctl-managed vault, never the repo.
+# See overlays/k8squad-test/dynatrace-otlp.example.yaml for the scopes.
+kubectl -n contentremixer create secret generic dynatrace-otlp \
+  --from-literal=DT_OTLP_ENDPOINT="https://<env-id>.live.dynatrace.com/api/v2/otlp" \
+  --from-literal=DT_API_TOKEN="$DT_API_TOKEN"
+
+# postgres_exporter monitoring credentials (O11y-4 security pass, ISI-7161).
+# Least privilege: a DEDICATED read-only role, NOT the operator's app role.
+# Create the role once, then the Secret. See
+# secrets/postgres-exporter-credentials.example.yaml.
+EXPPASS="$(openssl rand -hex 24)"
+psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 <<SQL
+  CREATE ROLE cr_exporter LOGIN PASSWORD '${EXPPASS}';
+  GRANT pg_monitor TO cr_exporter;
+SQL
+kubectl -n contentremixer create secret generic postgres-exporter-credentials \
+  --from-literal=DSN="postgres://cr_exporter:${EXPPASS}@pgvector.contentremixer.svc:5432/contentremixer?sslmode=disable"
 ```
 
 ## Postgres + pgvector store (P2-deploy, ISI-7148)
@@ -98,6 +118,70 @@ extension so the operator's `CREATE EXTENSION IF NOT EXISTS vector` just works.
 > here are ready for it with **no further deploy change** — the operator just
 > adds a `--postgres-dsn` flag / `PGVECTOR_DSN` env `SecretKeyRef` into the
 > existing `pgvector-credentials` Secret.
+
+## Telemetry collection plane (O11y-4, ISI-7161)
+
+The k8Squad-test overlay (**not** the base — telemetry egress is cluster-specific)
+installs the persona/RAG observability collection plane from the Phase-2
+observability strategy §8/§9 (`docs/observability/phase2-personas-rag-observability.md`):
+
+- **OTel Collector** (`collector/`, contrib distro) — receives OTLP from the
+  operator, enriches (`k8sattributes`), protects cardinality (`transform` drops
+  `source_url`/`db.query.text`/`chunk.id` from **metrics only**), redacts PII
+  (`redaction` on **traces + logs only**), tail-samples (keeps 100% of
+  errors / degraded / dimension-mismatch / slow-query, §7), and exports to
+  Dynatrace. `memory_limiter` is first and `batch` is last in every pipeline
+  (the two inviolable ordering rules). Config lives in
+  `collector/otel-collector-config.yaml` (mounted via a generated ConfigMap).
+- **postgres_exporter** (`postgres-exporter/`) — the §9 database-vantage, scraped
+  by the Collector's `prometheus/pgvector` receiver. It connects with the SAME
+  `pgvector-credentials` `DSN` the operator uses (one source of truth).
+- The **operator** is pointed at the Collector by a JSON6902 env patch in the
+  overlay `kustomization.yaml` (sets `OTEL_EXPORTER_OTLP_ENDPOINT` →
+  `otel-collector.contentremixer.svc:4317`).
+  This is what flips `app/cmd/main.go`'s OTLP export from no-op to live. It is a
+  no-op on an operator image built before that code landed (the env is ignored),
+  so it is safe to apply ahead of the next `operator-ci` image bump.
+
+**No custom OCB build** is needed — every component above ships in
+`opentelemetry-collector-contrib`. CI proves it: `collector-validate.yml` runs
+`.github/scripts/validate-collector-config.sh`, which runs the contrib image's
+`validate` subcommand against the shipped config and fails if any component is
+absent (the "validate-ocb-manifest" check).
+
+> **Editing the Collector config does NOT auto-roll the pod** — the generated
+> ConfigMap name is stable (`disableNameSuffixHash`), so after editing
+> `collector/otel-collector-config.yaml` and re-applying, run:
+> `kubectl -n contentremixer rollout restart deploy/otel-collector`.
+
+The three pgvector-availability vantages (§9) are then: operator `rag.store.up`
+(authoritative), postgres_exporter `pg_up` (DB view), and `k8s_cluster`
+StatefulSet readiness (infra view) — A4 (§10) pages on the first, with the other
+two as diagnostic drill-downs.
+
+### Security posture (O11y-4 security pass, ISI-7161)
+
+A dedicated security review of the collection plane and its fixes:
+
+- **No secrets in the repo.** The Dynatrace token and both DSNs live only in
+  out-of-band Secrets (`dynatrace-otlp`, `postgres-exporter-credentials`),
+  referenced via `secretKeyRef` / `${env:...}` — never committed (gitleaks-scanned).
+- **Least-privilege DB access.** postgres_exporter uses a dedicated `cr_exporter`
+  role (`pg_monitor` only — read-only server/stat visibility, no table data, no
+  DDL), NOT the operator's schema-owning app role.
+- **Exposed endpoints closed.** NetworkPolicies restrict the Collector's OTLP
+  receivers (`:4317/:4318`) to the operator pods and the exporter's metrics
+  (`:9187`) to the Collector — no cluster-wide unauthenticated reach. (Enforced
+  by a policy-capable CNI; correct artifact regardless.)
+- **Image provenance.** Both images are pinned by `@sha256` digest on their
+  projects' canonical registries (GHCR for OTel, quay.io for Prometheus-community),
+  so what runs is immutable and auditable.
+- **Minimal blast radius.** Both pods are non-root, read-only-rootfs, drop ALL
+  caps, `seccomp=RuntimeDefault`, with resource limits. postgres_exporter mounts
+  no SA token (`automountServiceAccountToken: false`). The Collector's ClusterRole
+  is read-only and excludes `secrets`/`configmaps`.
+- **No debug surfaces.** The Collector exposes only `health_check` (`:13133`) —
+  no `pprof`/`zpages`.
 
 ## Exposure on k8Squad test — kgateway + MetalLB (not Ingress)
 

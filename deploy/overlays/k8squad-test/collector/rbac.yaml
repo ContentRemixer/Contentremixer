@@ -1,0 +1,66 @@
+# Cluster-scoped read RBAC for the Collector (§8/§9). Read-only, get/list/watch
+# only — the Collector observes, never mutates. Two consumers:
+#   - k8sattributes processor: pods + namespaces + replicasets (to derive
+#     k8s.deployment.name) + nodes.
+#   - k8s_cluster receiver: the workload/infra set it reports on (StatefulSet
+#     replicas-ready for the §9 pgvector infra vantage, pod restarts, PVC bound
+#     state, node conditions).
+#
+# Least privilege (security pass, ISI-7161): this grant deliberately does NOT
+# include `secrets` or `configmaps` (the Collector never reads config/credential
+# objects), and drops `endpoints` / `nodes/metrics` (needed by neither consumer
+# here — nodes/metrics is a kubeletstats concern, which we do not run). It is the
+# minimal set the two components above document as required.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: contentremixer-otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - namespaces
+      - nodes
+      - services
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - replicationcontrollers
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: contentremixer-otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: contentremixer-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: contentremixer

@@ -1,0 +1,90 @@
+# postgres_exporter for the §9 pgvector availability vantage (vantage 2 — the
+# database's own view: pg_up, pg_stat_database_*, connection counts, slow-query
+# stats). Scraped by the Collector's prometheus/pgvector receiver and forwarded
+# to Dynatrace. Complements the operator's authoritative rag.store.up (§9
+# vantage 1) and the k8s_cluster StatefulSet view (vantage 3).
+#
+# Least privilege (security pass, ISI-7161): the exporter connects with a
+# DEDICATED read-only monitoring role (`cr_exporter`, granted pg_monitor), NOT
+# the operator's schema-owning app role — a compromise of this sidecar must not
+# yield DB write/DDL. Its DSN lives in its own `postgres-exporter-credentials`
+# Secret (deploy/secrets/postgres-exporter-credentials.example.yaml); role
+# creation + grant are documented in deploy/README.md. No secret value in the repo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: db-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+        app.kubernetes.io/part-of: contentremixer
+        app.kubernetes.io/component: db-exporter
+    spec:
+      # No Kubernetes API access is needed, so do not mount a usable SA token
+      # (security pass, ISI-7161 — shrinks the blast radius of a container escape).
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-exporter
+          # prometheus-community postgres_exporter (quay.io — the project's
+          # canonical registry). PINNED BY DIGEST for provenance/immutability
+          # (security pass, ISI-7161); :v0.16.0 is a human hint, @sha256 is
+          # authoritative. Bump both deliberately in a reviewed PR.
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0@sha256:6999a7657e2f2fb0ca6ebf417213eebf6dc7d21b30708c622f6fcb11183a2bb0
+          # No --auto-discover-databases: the §9 vantage is availability + the
+          # cluster-wide pg_stat_database view (both come from a single
+          # connection), so per-database fan-out would only add noise and needs
+          # broader role grants the test-tier app role may not have.
+          args:
+            - "--web.listen-address=:9187"
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-exporter-credentials
+                  key: DSN
+          ports:
+            - name: metrics
+              containerPort: 9187
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9187
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9187
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

@@ -26,6 +26,11 @@ resources:
   - operator/deployment.yaml
   - webhook/github-webhook-service.yaml
   - litellm/litellm.yaml
+  # P2-deploy (ISI-7148, design §7): the single relational+vector store.
+  # The pgvector-credentials Secret is created out-of-band (see
+  # ../secrets/pgvector-credentials.example.yaml) — NOT listed here.
+  - postgres/statefulset.yaml
+  - postgres/service.yaml
   # NB: no Ingress here — webhook exposure is cluster-specific and lives in the
   # overlay (k8Squad test uses kgateway + MetalLB, see overlays/k8squad-test).
 

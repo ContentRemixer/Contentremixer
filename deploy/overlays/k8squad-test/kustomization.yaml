@@ -13,6 +13,21 @@ resources:
   - ../../base
   - exposure.yaml
 
+# Pin the pgvector PVC to local-path (per-node local disk), NOT the
+# cluster-default nfs-csi: a single-replica Postgres fsyncing to shared NFS is
+# the stall pattern this homelab has hit before, and the persona corpus is
+# re-derivable by re-indexing (§7/§11) so it needs no shared/migratable volume.
+# JSON6902 (not strategic-merge): volumeClaimTemplates is an atomic list, so a
+# merge patch would REPLACE the entry and drop accessModes/resources.
+patches:
+  - target:
+      kind: StatefulSet
+      name: pgvector
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: local-path
+
 images:
   - name: ghcr.io/contentremixer/operator
     # Pinned to an immutable CI tag, NOT :latest, so rollouts are deterministic.

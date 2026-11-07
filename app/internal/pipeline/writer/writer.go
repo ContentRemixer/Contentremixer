@@ -115,6 +115,48 @@ func LiteLLMGenerator(c *litellm.Client) Generator {
 	})
 }
 
+// PersonaOverlay is the persona voice overlay the conditioner supplies for a
+// run (design §5.1): the deterministic self-description anchor plus the
+// retrieved top-k voice exemplars. The zero value (no self-description, no
+// exemplars) is the Phase-1 style-only prompt — weaving it changes nothing.
+type PersonaOverlay struct {
+	// SelfDescription is DevRelPersona.spec.selfDescription — the deterministic
+	// half of conditioning. It anchors the voice even when retrieval is empty
+	// or degraded and is woven into the system prompt after the style guide.
+	SelfDescription string
+	// Exemplars are the top-k owner-scoped voice chunks (the retrieval half),
+	// woven into the user prompt as tone references only.
+	Exemplars []Exemplar
+	// Degraded is true when retrieval was unavailable or returned nothing; the
+	// run still proceeds (RAG is additive, never a gate — §5.4). It is carried
+	// for observability (the §4.6 outcome ladder) and does not alter the prompt.
+	Degraded bool
+}
+
+// Exemplar is one retrieved voice chunk used as a tone reference (design §5.1).
+type Exemplar struct {
+	// Text is the chunk body — a tone/register reference, never a fact source.
+	Text string
+	// SourceURL traces the exemplar to its ingested reference (provenance).
+	SourceURL string
+	// Score is the cosine similarity of the exemplar to the retrieval seed.
+	Score float64
+}
+
+// PersonaConditioner supplies the persona voice overlay for a run (design
+// §5.1). Nil on the Writer => Phase-1 behaviour (style-only). Implemented by
+// internal/pipeline/persona over internal/rag/retrieve backed by a
+// VectorStore; tests inject stubs.
+//
+// BEST-EFFORT: Condition returns an empty overlay (not an error) when the run
+// has no persona or retrieval finds nothing, and degrades to style-only
+// (overlay.Degraded=true) on a retrieval/store error. A recycle run never
+// blocks on RAG (§2.3 step 5 / §5.4) — the writer treats a Condition error as
+// a degrade, not a failure.
+type PersonaConditioner interface {
+	Condition(ctx context.Context, rc pipeline.RunContext, s pipeline.Sample) (PersonaOverlay, error)
+}
+
 // Writer is the subtask-F implementation of pipeline.Writer.
 var _ pipeline.Writer = (*Writer)(nil)
 
@@ -125,6 +167,13 @@ type Writer struct {
 	// Generate performs the model call. Required — Phase 1 wires the
 	// LiteLLM gateway client via LiteLLMGenerator; tests inject fixtures.
 	Generate Generator
+	// Conditioner supplies the persona voice overlay (design §5). Optional:
+	// nil (or an empty rc.PersonaName) is the Phase-1 style-only path,
+	// byte-for-byte unchanged. When set and the run names a persona, the
+	// overlay is woven into the prompts additively (never replacing the style
+	// guide) and best-effort — a Condition error degrades to style-only, it
+	// never fails the write (§5.4).
+	Conditioner PersonaConditioner
 	// Now clocks the generated timestamp in Mix.Meta. Defaults to
 	// time.Now; injectable for deterministic tests.
 	Now func() time.Time
@@ -162,10 +211,23 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		return pipeline.Mix{}, fmt.Errorf("writer: style guide %s is empty", styleName)
 	}
 
+	// Persona conditioning (design §5): additive to the style-only prompt and
+	// best-effort. Only runs when a conditioner is wired AND the run names a
+	// persona; a Condition error degrades to style-only (overlay stays zero)
+	// and never fails the write — RAG is an enhancement, not a gate (§5.4).
+	var overlay PersonaOverlay
+	if w.Conditioner != nil && strings.TrimSpace(rc.PersonaName) != "" {
+		overlay, err = w.Conditioner.Condition(ctx, rc, s)
+		if err != nil {
+			// Degrade, do not fail: the Phase-1 style-only prompt still runs.
+			overlay = PersonaOverlay{Degraded: true}
+		}
+	}
+
 	resp, err := w.Generate.Generate(ctx, GenerateRequest{
 		Model:  strings.TrimSpace(rc.ModelName),
-		System: systemPrompt(format, style),
-		Prompt: userPrompt(rc, s),
+		System: systemPrompt(format, style, overlay),
+		Prompt: userPrompt(rc, s, overlay),
 	})
 	if err != nil {
 		return pipeline.Mix{}, fmt.Errorf("writer: generating %s mix from %q: %w", format, s.SourcePath, err)
@@ -200,18 +262,30 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 	}, nil
 }
 
-// systemPrompt binds the style guide into the model's instructions.
-func systemPrompt(format, style string) string {
+// systemPrompt binds the style guide into the model's instructions. When the
+// persona overlay carries a self-description, a `persona self-description`
+// block is appended AFTER the style guide (design §5.3): the deterministic
+// voice anchor that applies even when retrieval is empty/degraded. Precedence
+// is explicit — style guide outranks the persona voice — so the overlay never
+// overrides a correct-format draft.
+func systemPrompt(format, style string, overlay PersonaOverlay) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
 	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
+	if sd := strings.TrimSpace(overlay.SelfDescription); sd != "" {
+		_, _ = fmt.Fprintf(&b, "\nWrite as this specific DevRel persona. Their voice:\n\n--- persona self-description ---\n%s\n--- end of persona self-description ---\n", sd)
+		b.WriteString("The style guide outranks the persona voice: never break the required format to match the voice.\n")
+	}
 	b.WriteString("Rules:\n- Output ONLY the finished draft as Markdown, with no preamble or explanation.\n- The first line must be the H1 title heading: \"# <title>\".\n- Reuse the substance of the source; do not invent facts, numbers, or quotes.\n- No marketing voice.\n")
 	return b.String()
 }
 
 // userPrompt carries the Sample brief (meta.yaml summary + body) and the
-// run Notes (angle/audience guidance from the issue form).
-func userPrompt(rc pipeline.RunContext, s pipeline.Sample) string {
+// run Notes (angle/audience guidance from the issue form). When the persona
+// overlay carries exemplars, a `voice exemplars` block is appended (design
+// §5.3) — tone references ONLY: the no-invented-facts / reuse-the-source rules
+// from the system prompt still bind, so exemplars must not leak as content.
+func userPrompt(rc pipeline.RunContext, s pipeline.Sample, overlay PersonaOverlay) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "Input format: %s\n", s.DetectedInput)
 	_, _ = fmt.Fprintf(&b, "Output format: %s\n", rc.OutputFormat)
@@ -227,6 +301,16 @@ func userPrompt(rc pipeline.RunContext, s pipeline.Sample) string {
 	}
 	if notes := strings.TrimSpace(rc.Notes); notes != "" {
 		_, _ = fmt.Fprintf(&b, "\nAngle / audience notes from the issue:\n%s\n", notes)
+	}
+	if ex := overlay.Exemplars; len(ex) > 0 {
+		b.WriteString("\n--- voice exemplars (do not copy facts, match tone/register) ---\n")
+		b.WriteString("These are prior writings by the persona. Mirror their tone, rhythm, and register ONLY — do not reuse their facts, numbers, or claims; the source body above is the sole source of substance.\n")
+		for i, e := range ex {
+			if t := strings.TrimSpace(e.Text); t != "" {
+				_, _ = fmt.Fprintf(&b, "\nExemplar %d:\n%s\n", i+1, t)
+			}
+		}
+		b.WriteString("--- end of voice exemplars ---\n")
 	}
 	_, _ = fmt.Fprintf(&b, "\nSource body:\n\n%s\n", s.Body)
 	_, _ = fmt.Fprintf(&b, "\nWrite the %s draft now.\n", rc.OutputFormat)

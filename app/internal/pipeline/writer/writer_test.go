@@ -231,6 +231,132 @@ func TestPromptSelectsStyleFileByOutputFormat(t *testing.T) {
 	}
 }
 
+// --- persona conditioning (design §5) ---
+
+// stubConditioner returns a canned overlay (or error) and records whether it
+// was called and with what persona.
+type stubConditioner struct {
+	overlay    PersonaOverlay
+	err        error
+	called     bool
+	calledWith string
+}
+
+func (c *stubConditioner) Condition(_ context.Context, rc pipeline.RunContext, _ pipeline.Sample) (PersonaOverlay, error) {
+	c.called = true
+	c.calledWith = rc.PersonaName
+	return c.overlay, c.err
+}
+
+func TestWritePhase1UnchangedWithoutPersona(t *testing.T) {
+	// A conditioner is wired but the run names no persona: it must NOT be called
+	// and the prompt must carry no persona blocks (byte-for-byte Phase-1).
+	last, gen := captureGen(GenerateResponse{Content: "# T\n\nb"}, nil)
+	cond := &stubConditioner{overlay: PersonaOverlay{SelfDescription: "should not appear"}}
+	w := newWriter(gen)
+	w.Conditioner = cond
+	rc := blogRunContext() // PersonaName == ""
+	if _, err := w.Write(context.Background(), rc, teleprompterSample()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if cond.called {
+		t.Fatalf("conditioner was called for a persona-less run")
+	}
+	if strings.Contains(last.System, "persona self-description") || strings.Contains(last.Prompt, "voice exemplars") {
+		t.Fatalf("persona blocks leaked into a persona-less run:\nsystem:\n%s\nprompt:\n%s", last.System, last.Prompt)
+	}
+}
+
+func TestWriteInjectsPersonaOverlay(t *testing.T) {
+	last, gen := captureGen(GenerateResponse{Content: "# T\n\nb"}, nil)
+	cond := &stubConditioner{overlay: PersonaOverlay{
+		SelfDescription: "Writes dry, example-first prose for platform engineers.",
+		Exemplars: []Exemplar{
+			{Text: "Rotate your secrets like you floss: boring, daily, non-negotiable.", SourceURL: "https://ex/1", Score: 0.91},
+			{Text: "The best abstraction is the one you never notice.", SourceURL: "https://ex/2", Score: 0.88},
+		},
+	}}
+	w := newWriter(gen)
+	w.Conditioner = cond
+	rc := blogRunContext()
+	rc.PersonaName = "henrik-otel"
+	rc.Owner.Subject = "henrik"
+	if _, err := w.Write(context.Background(), rc, teleprompterSample()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !cond.called || cond.calledWith != "henrik-otel" {
+		t.Fatalf("conditioner not called with the run persona (called=%v with=%q)", cond.called, cond.calledWith)
+	}
+	// System prompt: self-description after the style guide; style still present.
+	for _, wantSub := range []string{
+		"styles/blog.md",
+		"persona self-description",
+		"Writes dry, example-first prose for platform engineers.",
+		"style guide outranks the persona voice",
+	} {
+		if !strings.Contains(last.System, wantSub) {
+			t.Fatalf("system prompt missing %q:\n%s", wantSub, last.System)
+		}
+	}
+	// Self-description must come AFTER the style guide (precedence, §5.3).
+	if strings.Index(last.System, "styles/blog.md") > strings.Index(last.System, "persona self-description") {
+		t.Fatalf("self-description block precedes the style guide:\n%s", last.System)
+	}
+	// User prompt: exemplars block with both exemplar texts + the tone-only guard.
+	for _, wantSub := range []string{
+		"voice exemplars (do not copy facts, match tone/register)",
+		"Rotate your secrets like you floss",
+		"The best abstraction is the one you never notice.",
+		"do not reuse their facts",
+		"Welcome back to the show", // source body still present
+	} {
+		if !strings.Contains(last.Prompt, wantSub) {
+			t.Fatalf("user prompt missing %q:\n%s", wantSub, last.Prompt)
+		}
+	}
+}
+
+func TestWriteSelfDescriptionOnlyOverlay(t *testing.T) {
+	// Degraded/sparse: self-description present, no exemplars → system has the
+	// anchor, user prompt has NO exemplars block.
+	last, gen := captureGen(GenerateResponse{Content: "# T\n\nb"}, nil)
+	cond := &stubConditioner{overlay: PersonaOverlay{SelfDescription: "Pragmatic and concise.", Degraded: true}}
+	w := newWriter(gen)
+	w.Conditioner = cond
+	rc := blogRunContext()
+	rc.PersonaName = "henrik-otel"
+	if _, err := w.Write(context.Background(), rc, teleprompterSample()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.Contains(last.System, "Pragmatic and concise.") {
+		t.Fatalf("self-description anchor missing:\n%s", last.System)
+	}
+	if strings.Contains(last.Prompt, "voice exemplars") {
+		t.Fatalf("exemplars block emitted with no exemplars:\n%s", last.Prompt)
+	}
+}
+
+func TestWriteDegradesOnConditionerError(t *testing.T) {
+	// A Condition error must NOT fail the write; it degrades to style-only and
+	// the run still produces a Mix (RAG is never a gate, §5.4).
+	last, gen := captureGen(GenerateResponse{Content: "# T\n\nb"}, nil)
+	cond := &stubConditioner{err: errors.New("pgvector: dial tcp: connection refused")}
+	w := newWriter(gen)
+	w.Conditioner = cond
+	rc := blogRunContext()
+	rc.PersonaName = "henrik-otel"
+	mix, err := w.Write(context.Background(), rc, teleprompterSample())
+	if err != nil {
+		t.Fatalf("Write must not fail on a conditioner error, got: %v", err)
+	}
+	if mix.Title == "" {
+		t.Fatalf("expected a Mix despite the conditioner error")
+	}
+	if strings.Contains(last.System, "persona self-description") || strings.Contains(last.Prompt, "voice exemplars") {
+		t.Fatalf("persona blocks leaked after a conditioner error:\nsystem:\n%s\nprompt:\n%s", last.System, last.Prompt)
+	}
+}
+
 // --- fail-closed errors ---
 
 func TestWriteErrors(t *testing.T) {

@@ -29,8 +29,12 @@ import (
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/analyzer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/checker"
+	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/persona"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/pr"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/writer"
+	"github.com/ContentRemixer/Contentremixer/app/internal/rag/embed"
+	"github.com/ContentRemixer/Contentremixer/app/internal/rag/retrieve"
+	"github.com/ContentRemixer/Contentremixer/app/internal/rag/store"
 	opwebhook "github.com/ContentRemixer/Contentremixer/app/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
@@ -81,6 +85,8 @@ func main() {
 	var githubWebhookAddr string
 	var recycleCheckout string
 	var litellmEndpoint string
+	var pgvectorDSN string
+	var personaNamespace string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -90,6 +96,10 @@ func main() {
 		"Local checkout of the reference repo (content/, styles/) the pipeline reads. Empty keeps the receiver ack-only.")
 	flag.StringVar(&litellmEndpoint, "litellm-endpoint", os.Getenv("LITELLM_ENDPOINT"),
 		"LiteLLM gateway origin the writer generates through (e.g. http://litellm:4000). Required for recycle runs.")
+	flag.StringVar(&pgvectorDSN, "pgvector-dsn", os.Getenv("PGVECTOR_DSN"),
+		"Postgres/pgvector DSN for persona voice retrieval (P2-D). Empty disables persona conditioning (recycle runs stay style-only, Phase-1).")
+	flag.StringVar(&personaNamespace, "persona-namespace", os.Getenv("PERSONA_NAMESPACE"),
+		"Namespace DevRelPersona CRs live in, for write-time conditioning lookup. Defaults to the pod namespace (POD_NAMESPACE) when empty.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -153,6 +163,9 @@ func main() {
 	}
 	// +kubebuilder:scaffold:builder
 
+	// One signal-aware context drives startup dials (pgvector) and the manager.
+	runCtx := ctrl.SetupSignalHandler()
+
 	// GitHub delivery receiver (subtask D): non-admission HTTP server behind
 	// the TLS Ingress, acks recycle:* issues with labelRoutes-resolved
 	// formats. When a checkout + LiteLLM endpoint are configured, matched
@@ -161,12 +174,36 @@ func main() {
 	ghServer := &githubapp.Server{Addr: githubWebhookAddr, Client: mgr.GetClient()}
 	if recycleCheckout != "" && litellmEndpoint != "" {
 		sourceFS := &analyzer.LocalFS{Root: recycleCheckout}
+		gatewayClient := &litellm.Client{BaseURL: litellmEndpoint, APIKey: os.Getenv("LITELLM_API_KEY")}
+		runWriter := &writer.Writer{
+			FS:       sourceFS,
+			Generate: writer.LiteLLMGenerator(gatewayClient),
+		}
+		// P2-D persona conditioning (design §5): best-effort voice overlay,
+		// wired only when a pgvector DSN is configured (ISI-7148 deploy). Without
+		// it, runWriter.Conditioner stays nil and runs are style-only (Phase-1).
+		if pgvectorDSN != "" {
+			nsForPersona := personaNamespace
+			if nsForPersona == "" {
+				nsForPersona = os.Getenv("POD_NAMESPACE")
+			}
+			vstore, err := store.Open(runCtx, pgvectorDSN, store.DefaultDim)
+			if err != nil {
+				setupLog.Error(err, "persona conditioning disabled: cannot open pgvector store (runs stay style-only)")
+			} else if nsForPersona == "" {
+				setupLog.Info("persona conditioning disabled: no persona namespace (set --persona-namespace or POD_NAMESPACE)")
+			} else {
+				retriever := retrieve.New(embed.NewLiteLLM(gatewayClient, embed.Alias), vstore)
+				runWriter.Conditioner = &persona.Conditioner{
+					Provider:  &persona.CRPersonaProvider{Reader: mgr.GetClient(), Namespace: nsForPersona},
+					Retriever: retriever,
+				}
+				setupLog.Info("persona conditioning enabled", "personaNamespace", nsForPersona)
+			}
+		}
 		ghServer.Runner = recycleRunner{runner: &pr.Runner{
-			Analyzer: &analyzer.Analyzer{FS: sourceFS},
-			Writer: &writer.Writer{
-				FS:       sourceFS,
-				Generate: writer.LiteLLMGenerator(&litellm.Client{BaseURL: litellmEndpoint, APIKey: os.Getenv("LITELLM_API_KEY")}),
-			},
+			Analyzer:  &analyzer.Analyzer{FS: sourceFS},
+			Writer:    runWriter,
 			Checker:   checker.New(),
 			Assembler: &pr.Assembler{GitHub: &pr.GitHubClient{}},
 			Comments:  &githubapp.GitHubClient{},
@@ -190,7 +227,7 @@ func main() {
 	}
 
 	setupLog.Info("starting manager", "version", version)
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(runCtx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

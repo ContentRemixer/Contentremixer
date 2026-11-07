@@ -1,0 +1,21 @@
+# Headless Service for the pgvector StatefulSet (design §7). Cluster-internal
+# ONLY — no Ingress, no NodePort, never public. The sole clients are the
+# operator pods, which resolve `pgvector.contentremixer.svc` on :5432.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgvector
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: pgvector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: vector-store
+spec:
+  clusterIP: None # headless — stable DNS for the single StatefulSet pod
+  selector:
+    app.kubernetes.io/name: pgvector
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP

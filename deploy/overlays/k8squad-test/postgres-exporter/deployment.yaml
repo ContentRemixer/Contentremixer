@@ -4,11 +4,12 @@
 # to Dynatrace. Complements the operator's authoritative rag.store.up (§9
 # vantage 1) and the k8s_cluster StatefulSet view (vantage 3).
 #
-# The exporter connects with the SAME DSN the operator uses — it reads the `DSN`
-# key of the pgvector-credentials Secret (deploy/secrets/pgvector-credentials.example.yaml),
-# so there is one source of truth for user/password/db/host and no secret value
-# in the repo. Read-only monitoring role is sufficient; the test tier reuses the
-# app role for simplicity (document a dedicated pg_monitor role for prod).
+# Least privilege (security pass, ISI-7161): the exporter connects with a
+# DEDICATED read-only monitoring role (`cr_exporter`, granted pg_monitor), NOT
+# the operator's schema-owning app role — a compromise of this sidecar must not
+# yield DB write/DDL. Its DSN lives in its own `postgres-exporter-credentials`
+# Secret (deploy/secrets/postgres-exporter-credentials.example.yaml); role
+# creation + grant are documented in deploy/README.md. No secret value in the repo.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +31,9 @@ spec:
         app.kubernetes.io/part-of: contentremixer
         app.kubernetes.io/component: db-exporter
     spec:
+      # No Kubernetes API access is needed, so do not mount a usable SA token
+      # (security pass, ISI-7161 — shrinks the blast radius of a container escape).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
@@ -40,8 +44,10 @@ spec:
       containers:
         - name: postgres-exporter
           # prometheus-community postgres_exporter (quay.io — the project's
-          # canonical registry). Bump deliberately.
-          image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+          # canonical registry). PINNED BY DIGEST for provenance/immutability
+          # (security pass, ISI-7161); :v0.16.0 is a human hint, @sha256 is
+          # authoritative. Bump both deliberately in a reviewed PR.
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0@sha256:6999a7657e2f2fb0ca6ebf417213eebf6dc7d21b30708c622f6fcb11183a2bb0
           # No --auto-discover-databases: the §9 vantage is availability + the
           # cluster-wide pg_stat_database view (both come from a single
           # connection), so per-database fan-out would only add noise and needs
@@ -52,7 +58,7 @@ spec:
             - name: DATA_SOURCE_NAME
               valueFrom:
                 secretKeyRef:
-                  name: pgvector-credentials
+                  name: postgres-exporter-credentials
                   key: DSN
           ports:
             - name: metrics

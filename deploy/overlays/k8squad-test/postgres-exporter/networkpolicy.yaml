@@ -1,0 +1,34 @@
+# Lock down the postgres_exporter's ingress (security pass, ISI-7161). Without
+# this, the metrics endpoint (:9187) — which exposes DB internals (connection
+# counts, pg_stat_*, slow-query stats) — is scrapeable by ANY pod in the cluster
+# (information disclosure). This NetworkPolicy makes :9187 reachable ONLY from
+# the Collector (the sole legitimate scraper).
+#
+# Note: the liveness/readiness probes also target :9187 and are node-sourced
+# (kubelet), so under a strictly-enforcing CNI they rely on the cluster allowing
+# node→pod traffic (true for k8Squad test's CNI). If a CNI that blocks node
+# traffic is adopted, move the probes to a dedicated path or add a node-CIDR
+# ipBlock rule. Defence-in-depth: enforced only if the CNI implements NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-exporter-ingress
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: db-exporter
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 9187

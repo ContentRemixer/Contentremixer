@@ -39,11 +39,14 @@ spec:
           type: RuntimeDefault
       containers:
         - name: otel-collector
-          # Canonical contrib distro on GHCR (not docker.io). Carries every
-          # component in otel-collector-config.yaml (validated in CI by
-          # hack/validate-collector-config.sh) — no custom OCB build (§8).
-          # Bump deliberately: a Collector bump can change config schema.
-          image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.116.0
+          # Canonical contrib distro on GHCR (the OTel project's own registry,
+          # not docker.io). Carries every component in otel-collector-config.yaml
+          # (validated in CI by .github/scripts/validate-collector-config.sh) —
+          # no custom OCB build (§8). PINNED BY DIGEST for provenance/immutability
+          # (security pass, ISI-7161): the :0.116.0 tag is a human-readable hint,
+          # the @sha256 is what actually runs and cannot be moved under us. Bump =
+          # edit both in a reviewed PR; a Collector bump can change config schema.
+          image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.116.0@sha256:70217a89d27c678ead44f196d80aa8c2717cb68d0301dbdc40331dbec0a3e605
           args: ["--config=/etc/otel/otel-collector-config.yaml"]
           ports:
             - name: otlp-grpc

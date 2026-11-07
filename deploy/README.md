@@ -80,6 +80,18 @@ kubectl -n contentremixer create secret generic pgvector-credentials \
 kubectl -n contentremixer create secret generic dynatrace-otlp \
   --from-literal=DT_OTLP_ENDPOINT="https://<env-id>.live.dynatrace.com/api/v2/otlp" \
   --from-literal=DT_API_TOKEN="$DT_API_TOKEN"
+
+# postgres_exporter monitoring credentials (O11y-4 security pass, ISI-7161).
+# Least privilege: a DEDICATED read-only role, NOT the operator's app role.
+# Create the role once, then the Secret. See
+# secrets/postgres-exporter-credentials.example.yaml.
+EXPPASS="$(openssl rand -hex 24)"
+psql "$ADMIN_DSN" -v ON_ERROR_STOP=1 <<SQL
+  CREATE ROLE cr_exporter LOGIN PASSWORD '${EXPPASS}';
+  GRANT pg_monitor TO cr_exporter;
+SQL
+kubectl -n contentremixer create secret generic postgres-exporter-credentials \
+  --from-literal=DSN="postgres://cr_exporter:${EXPPASS}@pgvector.contentremixer.svc:5432/contentremixer?sslmode=disable"
 ```
 
 ## Postgres + pgvector store (P2-deploy, ISI-7148)
@@ -146,6 +158,30 @@ The three pgvector-availability vantages (§9) are then: operator `rag.store.up`
 (authoritative), postgres_exporter `pg_up` (DB view), and `k8s_cluster`
 StatefulSet readiness (infra view) — A4 (§10) pages on the first, with the other
 two as diagnostic drill-downs.
+
+### Security posture (O11y-4 security pass, ISI-7161)
+
+A dedicated security review of the collection plane and its fixes:
+
+- **No secrets in the repo.** The Dynatrace token and both DSNs live only in
+  out-of-band Secrets (`dynatrace-otlp`, `postgres-exporter-credentials`),
+  referenced via `secretKeyRef` / `${env:...}` — never committed (gitleaks-scanned).
+- **Least-privilege DB access.** postgres_exporter uses a dedicated `cr_exporter`
+  role (`pg_monitor` only — read-only server/stat visibility, no table data, no
+  DDL), NOT the operator's schema-owning app role.
+- **Exposed endpoints closed.** NetworkPolicies restrict the Collector's OTLP
+  receivers (`:4317/:4318`) to the operator pods and the exporter's metrics
+  (`:9187`) to the Collector — no cluster-wide unauthenticated reach. (Enforced
+  by a policy-capable CNI; correct artifact regardless.)
+- **Image provenance.** Both images are pinned by `@sha256` digest on their
+  projects' canonical registries (GHCR for OTel, quay.io for Prometheus-community),
+  so what runs is immutable and auditable.
+- **Minimal blast radius.** Both pods are non-root, read-only-rootfs, drop ALL
+  caps, `seccomp=RuntimeDefault`, with resource limits. postgres_exporter mounts
+  no SA token (`automountServiceAccountToken: false`). The Collector's ClusterRole
+  is read-only and excludes `secrets`/`configmaps`.
+- **No debug surfaces.** The Collector exposes only `health_check` (`:13133`) —
+  no `pprof`/`zpages`.
 
 ## Exposure on k8Squad test — kgateway + MetalLB (not Ingress)
 

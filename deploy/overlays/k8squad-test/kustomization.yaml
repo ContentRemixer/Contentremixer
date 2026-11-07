@@ -20,8 +20,10 @@ resources:
   - collector/rbac.yaml
   - collector/deployment.yaml
   - collector/service.yaml
+  - collector/networkpolicy.yaml
   - postgres-exporter/deployment.yaml
   - postgres-exporter/service.yaml
+  - postgres-exporter/networkpolicy.yaml
 
 # The Collector config is mounted from a generated ConfigMap built from the SAME
 # file CI validates (hack/validate-collector-config.sh), so config and validation

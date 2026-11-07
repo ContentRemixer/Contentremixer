@@ -55,6 +55,17 @@ var validFormats = map[string]bool{
 	FormatTeleprompter: true,
 }
 
+// formatSkillDirs maps an output format to its writing skills pack directory
+// (ISI-7183: skills/<dir>/SKILL.md). A format absent from the map (short) has
+// no skill pack yet and keeps the style-only prompt; a mapped directory whose
+// SKILL.md is missing or unreadable degrades the same way — skills are an
+// enhancement layer, never a gate (styles/ stays the fail-closed contract).
+var formatSkillDirs = map[string]string{
+	FormatBlog:         "blog-writing",
+	FormatTutorial:     "technical-tutorial",
+	FormatTeleprompter: "teleprompter",
+}
+
 // DefaultModelUsed is recorded in Mix.ModelUsed when neither the generator
 // nor the run names a model — the gateway default
 // (general_settings.default_model) resolved the request.
@@ -211,6 +222,19 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		return pipeline.Mix{}, fmt.Errorf("writer: style guide %s is empty", styleName)
 	}
 
+	// Skills pack (ISI-7183): additive writer guidance from
+	// skills/<pack>/SKILL.md. Degrade, never fail — mirrors the persona
+	// conditioner's enhancement-not-a-gate semantics (§5.4).
+	skillName, skill := "", ""
+	if pack, ok := formatSkillDirs[format]; ok {
+		name := "skills/" + pack + "/SKILL.md"
+		if b, err := w.FS.ReadFile(name); err == nil {
+			if s := strings.TrimSpace(string(b)); s != "" {
+				skillName, skill = name, s
+			}
+		}
+	}
+
 	// Persona conditioning (design §5): additive to the style-only prompt and
 	// best-effort. Only runs when a conditioner is wired AND the run names a
 	// persona; a Condition error degrades to style-only (overlay stays zero)
@@ -226,7 +250,7 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 
 	resp, err := w.Generate.Generate(ctx, GenerateRequest{
 		Model:  strings.TrimSpace(rc.ModelName),
-		System: systemPrompt(format, style, overlay),
+		System: systemPrompt(format, style, skillName, skill, overlay),
 		Prompt: userPrompt(rc, s, overlay),
 	})
 	if err != nil {
@@ -268,10 +292,13 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 // voice anchor that applies even when retrieval is empty/degraded. Precedence
 // is explicit — style guide outranks the persona voice — so the overlay never
 // overrides a correct-format draft.
-func systemPrompt(format, style string, overlay PersonaOverlay) string {
+func systemPrompt(format, style, skillName, skill string, overlay PersonaOverlay) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
 	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
+	if skill != "" {
+		_, _ = fmt.Fprintf(&b, "Apply this writing skill pack on top of the style guide — on any conflict the style guide wins:\n\n--- %s ---\n%s\n--- end of skill pack ---\n", skillName, skill)
+	}
 	if sd := strings.TrimSpace(overlay.SelfDescription); sd != "" {
 		_, _ = fmt.Fprintf(&b, "\nWrite as this specific DevRel persona. Their voice:\n\n--- persona self-description ---\n%s\n--- end of persona self-description ---\n", sd)
 		b.WriteString("The style guide outranks the persona voice: never break the required format to match the voice.\n")

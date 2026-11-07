@@ -11,6 +11,10 @@
 //	internal-hostname — *.local/.internal/.lan/.svc[.cluster.local]/…      (block)
 //	brand-voice       — marketing-voice phrases (styles/*.md say "no       (warn)
 //	                    marketing voice")
+//	ai-tells          — AI-writing vocabulary red flags                  (warn)
+//	                    (skills/human-voice-review/SKILL.md, ISI-7183)
+//	seo-meta          — deterministic metadata checks from               (warn)
+//	                    skills/seo/SKILL.md (ISI-7183)
 //
 // FAIL-CLOSED semantics (design §4): a single block violation sets
 // CheckResult.Passed = false and the run must open NO PR. warn violations are
@@ -44,6 +48,8 @@ const (
 	RuleIP               = "ip"
 	RuleInternalHostname = "internal-hostname"
 	RuleBrandVoice       = "brand-voice"
+	RuleAITells          = "ai-tells"
+	RuleSEOMeta          = "seo-meta"
 )
 
 // Checker is the subtask-G implementation of pipeline.Checker. It carries no
@@ -121,6 +127,7 @@ var blockRules = []rule{
 // blocks, so a miss here cannot wrongly open or close the gate.
 var warnRules = []rule{
 	{RuleBrandVoice, pipeline.SeverityWarn, marketingRe},
+	{RuleAITells, pipeline.SeverityWarn, aiTellsRe},
 }
 
 // ipv4Re matches a dotted quad where every octet is 0-255.
@@ -137,6 +144,20 @@ var marketingRe = regexp.MustCompile(`(?i)\b(?:` + strings.Join([]string{
 	`take it to the next level`, `paradigm shift`, `synergy`, `synergies`,
 	`turnkey`, `one[- ]?stop[- ]?shop`, `delight(?:s|ing)? (?:your |our )?(?:customers|users)`,
 	`industry[- ]?leading`, `must[- ]?have`, `look no further`,
+}, `|`) + `)\b`)
+
+// aiTellsRe matches the deterministic subset of the AI-writing vocabulary
+// red flags from skills/human-voice-review/SKILL.md (ISI-7183): the phrases
+// whose word-boundary match is unambiguous in any register. Phrases already
+// covered by marketingRe (game-changer, seamless, "unlock the power", "look
+// no further") are not duplicated; skill entries that need context to judge
+// (metaphorical "navigate"/"landscape", structural tells, em-dash density)
+// stay out of Phase 1 — a warn rule must never fire on clean prose.
+var aiTellsRe = regexp.MustCompile(`(?i)\b(?:` + strings.Join([]string{
+	`delves?`, `moreover`, `furthermore`, `in conclusion`,
+	`it is important to note`, `leverage`, `robust`, `elevates?`,
+	`embark`, `tapestry`, `in today.{0,2}s fast[- ]paced world`,
+	`in the realm`, `whether you.{0,2}re`,
 }, `|`) + `)\b`)
 
 // Check implements pipeline.Checker: scan Markdown + flattened Meta, collect
@@ -161,6 +182,12 @@ func (c *Checker) Check(_ context.Context, m pipeline.Mix) (pipeline.CheckResult
 		}
 	}
 
+	// SEO skill (ISI-7183, skills/seo/SKILL.md): the two deterministic
+	// checklist lines a machine can judge — meta description present and
+	// 140-160 chars, title tag at most 60 chars. Warn-only by design: SEO
+	// quality advises, it never blocks (fail-closed is reserved for leaks).
+	out = append(out, seoMetaCheck(m)...)
+
 	passed := true
 	for _, v := range out {
 		if v.Severity == pipeline.SeverityBlock {
@@ -169,6 +196,35 @@ func (c *Checker) Check(_ context.Context, m pipeline.Mix) (pipeline.CheckResult
 		}
 	}
 	return pipeline.CheckResult{Passed: passed, Violations: out}, nil
+}
+
+// seoMetaCheck applies the deterministic subset of skills/seo/SKILL.md to the
+// Mix metadata. Every finding is SeverityWarn: the SEO skill advises on
+// discoverability, it never gates a run.
+func seoMetaCheck(m pipeline.Mix) []pipeline.Violation {
+	var vs []pipeline.Violation
+	desc, _ := m.Meta["description"].(string)
+	if n := len(strings.TrimSpace(desc)); n < 140 || n > 160 {
+		msg := "meta description missing (seo skill: 140-160 chars, verb + payoff)"
+		if n > 0 {
+			msg = fmt.Sprintf("meta description is %d chars (want 140-160)", n)
+		}
+		vs = append(vs, pipeline.Violation{
+			Rule:     RuleSEOMeta,
+			Match:    msg,
+			Severity: pipeline.SeverityWarn,
+			Where:    "meta.description",
+		})
+	}
+	if n := len(strings.TrimSpace(m.Title)); n > 60 {
+		vs = append(vs, pipeline.Violation{
+			Rule:     RuleSEOMeta,
+			Match:    fmt.Sprintf("title is %d chars (want <= 60)", n),
+			Severity: pipeline.SeverityWarn,
+			Where:    "title",
+		})
+	}
+	return vs
 }
 
 // matches runs one rule over one surface, deduping identical redacted hits

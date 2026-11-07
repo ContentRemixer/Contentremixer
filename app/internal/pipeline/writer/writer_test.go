@@ -495,3 +495,58 @@ func TestRepoStyleSetMatchesOutputFormats(t *testing.T) {
 		}
 	}
 }
+
+// --- ISI-7183: the writer loads the skills pack additively, degrades silently ---
+
+// writeFixtureTree materialises a minimal reference-repo tree for one test.
+func writeFixtureTree(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatalf("fixture mkdir %s: %v", p, err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatalf("fixture write %s: %v", p, err)
+		}
+	}
+}
+
+func TestPromptIncludesSkillPack(t *testing.T) {
+	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
+	root := t.TempDir()
+	writeFixtureTree(t, root, map[string]string{
+		"styles/blog.md":               "# blog style guide body",
+		"skills/blog-writing/SKILL.md": "# blog-writing skill structure non negociable",
+	})
+	w := &Writer{FS: fixtureFS{root: root}, Generate: gen, Now: func() time.Time { return fixedNow }}
+	if _, err := w.Write(context.Background(), blogRunContext(), teleprompterSample()); err != nil {
+		t.Fatalf("Write unexpected error: %v", err)
+	}
+	if !strings.Contains(last.System, "skills/blog-writing/SKILL.md") ||
+		!strings.Contains(last.System, "structure non negociable") {
+		t.Fatalf("system prompt missing the skill pack block: %s", last.System)
+	}
+	if !strings.Contains(last.System, "the style guide wins") {
+		t.Fatalf("system prompt missing skill-vs-style precedence note: %s", last.System)
+	}
+}
+
+func TestWriteDegradesWhenSkillMissing(t *testing.T) {
+	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
+	root := t.TempDir()
+	writeFixtureTree(t, root, map[string]string{
+		"styles/blog.md": "# blog style guide body",
+	})
+	w := &Writer{FS: fixtureFS{root: root}, Generate: gen, Now: func() time.Time { return fixedNow }}
+	mix, err := w.Write(context.Background(), blogRunContext(), teleprompterSample())
+	if err != nil {
+		t.Fatalf("Write must degrade, not fail, when the skill pack is missing: %v", err)
+	}
+	if mix.Title == "" {
+		t.Fatalf("degraded write produced no draft")
+	}
+	if strings.Contains(last.System, "SKILL.md") {
+		t.Fatalf("a missing skill must not leave a skill block in the prompt: %s", last.System)
+	}
+}

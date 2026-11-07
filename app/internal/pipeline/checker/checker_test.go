@@ -157,3 +157,69 @@ func hasRule(vs []pipeline.Violation, rule, severity string) bool {
 	}
 	return false
 }
+
+// --- ISI-7183: skills-sourced warn rules (human-voice-review + seo) ---
+
+func TestAITellsWarnNeverBlocks(t *testing.T) {
+	m := cleanDraft()
+	m.Markdown = strings.Replace(m.Markdown, "We shipped on Kubernetes 1.31.0",
+		"This moreover robust tapestry will delve deeper", 1)
+	res, err := New().Check(context.Background(), m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	found := false
+	for _, v := range res.Violations {
+		if v.Rule == RuleAITells && v.Severity == pipeline.SeverityWarn {
+			found = true
+		}
+		if v.Severity == pipeline.SeverityBlock {
+			t.Fatalf("ai-tells must never block: %+v", v)
+		}
+	}
+	if !found {
+		t.Fatalf("ai-tells did not fire on red-flag vocabulary: %+v", res.Violations)
+	}
+	if !res.Passed {
+		t.Fatalf("a warn-only rule flipped Passed: %+v", res.Violations)
+	}
+}
+
+func TestSEOMetaWarns(t *testing.T) {
+	// cleanDraft has no meta.description and a 41-char title: exactly one
+	// seo-meta warn (description), none for the title, Passed stays true.
+	res, err := New().Check(context.Background(), cleanDraft())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var descWarn, titleWarn bool
+	for _, v := range res.Violations {
+		if v.Rule == RuleSEOMeta && v.Where == "meta.description" {
+			descWarn = true
+		}
+		if v.Rule == RuleSEOMeta && v.Where == "title" {
+			titleWarn = true
+		}
+	}
+	if !descWarn {
+		t.Fatalf("missing meta.description did not warn: %+v", res.Violations)
+	}
+	if titleWarn {
+		t.Fatalf("41-char title warned (want <=60 to pass): %+v", res.Violations)
+	}
+	if !res.Passed {
+		t.Fatalf("seo-meta must never flip Passed: %+v", res.Violations)
+	}
+
+	ok := cleanDraft()
+	ok.Meta["description"] = strings.Repeat("d", 150) // 140-160: no warn
+	res2, err := New().Check(context.Background(), ok)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, v := range res2.Violations {
+		if v.Rule == RuleSEOMeta {
+			t.Fatalf("seo-clean draft still warns: %+v", v)
+		}
+	}
+}

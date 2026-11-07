@@ -1,0 +1,63 @@
+# Cluster-scoped read RBAC for the Collector (§8/§9). Read-only, get/list/watch
+# only — the Collector observes, never mutates. Two consumers:
+#   - k8sattributes processor: pods + namespaces + replicasets (to derive
+#     k8s.deployment.name) + nodes.
+#   - k8s_cluster receiver: the broader workload/infra set it reports on
+#     (StatefulSet replicas-ready for the §9 pgvector infra vantage, pod
+#     restarts, PVC bound state, node conditions).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: contentremixer-otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - namespaces
+      - nodes
+      - nodes/metrics
+      - services
+      - endpoints
+      - events
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+      - replicationcontrollers
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: contentremixer-otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: telemetry-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: contentremixer-otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: contentremixer

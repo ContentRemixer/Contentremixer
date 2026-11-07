@@ -1,0 +1,84 @@
+# postgres_exporter for the §9 pgvector availability vantage (vantage 2 — the
+# database's own view: pg_up, pg_stat_database_*, connection counts, slow-query
+# stats). Scraped by the Collector's prometheus/pgvector receiver and forwarded
+# to Dynatrace. Complements the operator's authoritative rag.store.up (§9
+# vantage 1) and the k8s_cluster StatefulSet view (vantage 3).
+#
+# The exporter connects with the SAME DSN the operator uses — it reads the `DSN`
+# key of the pgvector-credentials Secret (deploy/secrets/pgvector-credentials.example.yaml),
+# so there is one source of truth for user/password/db/host and no secret value
+# in the repo. Read-only monitoring role is sufficient; the test tier reuses the
+# app role for simplicity (document a dedicated pg_monitor role for prod).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: db-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+        app.kubernetes.io/part-of: contentremixer
+        app.kubernetes.io/component: db-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres-exporter
+          # prometheus-community postgres_exporter (quay.io — the project's
+          # canonical registry). Bump deliberately.
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+          # No --auto-discover-databases: the §9 vantage is availability + the
+          # cluster-wide pg_stat_database view (both come from a single
+          # connection), so per-database fan-out would only add noise and needs
+          # broader role grants the test-tier app role may not have.
+          args:
+            - "--web.listen-address=:9187"
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: DSN
+          ports:
+            - name: metrics
+              containerPort: 9187
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9187
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9187
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

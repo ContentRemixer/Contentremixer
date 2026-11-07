@@ -1,0 +1,20 @@
+# Cluster-internal Service for the postgres_exporter metrics endpoint. The
+# Collector's prometheus/pgvector receiver scrapes
+# postgres-exporter.contentremixer.svc.cluster.local:9187. No Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+    app.kubernetes.io/part-of: contentremixer
+    app.kubernetes.io/component: db-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: postgres-exporter
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: metrics
+      protocol: TCP

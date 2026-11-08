@@ -60,6 +60,14 @@ kubectl -n contentremixer create secret generic github-webhook \
 kubectl -n contentremixer create secret generic openai-apikey \
   --from-literal=key="$OPENAI_API_KEY"
 
+# LiteLLM gateway master key (ISI-7237 recycle enablement) — ONLY if the
+# gateway is configured with general_settings.master_key. The Phase-1 gateway
+# is keyless, so this Secret is OPTIONAL (the operator env wires it with
+# optional:true and omits the Authorization header when absent). Create it only
+# once you add a master_key to the gateway config.
+#   kubectl -n contentremixer create secret generic litellm-credentials \
+#     --from-literal=apikey="$LITELLM_MASTER_KEY"
+
 # pgvector store credentials (P2-deploy, ISI-7148 — design §7/§9). Used BOTH by
 # the Postgres StatefulSet (POSTGRES_USER/PASSWORD/DB) and by the operator
 # (DSN, via SecretKeyRef, once the RAG pipeline is wired in — see below). The
@@ -110,14 +118,13 @@ operator on boot** via an idempotent `CREATE … IF NOT EXISTS` migration
 (design §4.2) — there is no init Job. The pgvector image ships the `vector`
 extension so the operator's `CREATE EXTENSION IF NOT EXISTS vector` just works.
 
-> **Operator ↔ store wiring (forward contract, not yet in the operator binary).**
-> `app/cmd/main.go` does not yet read a DSN or construct `store.Open`, so the
-> `pgvector-credentials` `DSN` key is consumed only once the RAG pipeline is
-> wired into the DevRelPersona reconciler. That app change is tracked
-> separately (see the P2-deploy issue's follow-up); the Secret + StatefulSet
-> here are ready for it with **no further deploy change** — the operator just
-> adds a `--postgres-dsn` flag / `PGVECTOR_DSN` env `SecretKeyRef` into the
-> existing `pgvector-credentials` Secret.
+> **Operator ↔ store wiring (now live — ISI-7237).** `app/cmd/main.go` reads
+> `PGVECTOR_DSN` (flag `--pgvector-dsn`) and constructs `store.Open` for P2-D
+> persona voice conditioning. The k8Squad-test overlay wires it via a
+> `SecretKeyRef` into the existing `pgvector-credentials` `DSN` key
+> (`optional: true` — absent keeps runs style-only, never a boot failure). No
+> further deploy change is needed; create the `pgvector-credentials` Secret
+> above and the operator picks the DSN up on rollout.
 
 ## Telemetry collection plane (O11y-4, ISI-7161)
 
@@ -239,6 +246,26 @@ call an agent can run once it has a k8Squad-test kubeconfig).
 shows a `200` in GitHub → Settings → Webhooks → *Recent Deliveries* and the
 operator posts the ack comment. This is the infra prerequisite for the E2E gate
 ([ISI-7085](https://.../ISI-7085)).
+
+### Recycle pipeline enablement (ISI-7237, parent ISI-7185)
+
+The k8Squad-test overlay wires `RECYCLE_CHECKOUT_PATH` and `LITELLM_ENDPOINT`
+(plus optional `LITELLM_API_KEY` / `PGVECTOR_DSN`) onto the operator Deployment.
+`app/cmd/main.go` enables the recycle pipeline only when **both**
+`RECYCLE_CHECKOUT_PATH` and `LITELLM_ENDPOINT` are non-empty; otherwise the
+GitHub receiver stays **ack-only** (the state the ISI-7185 dry-run observed).
+
+> ⚠️ **Two runtime gaps remain before a recycle run completes end-to-end** (out
+> of scope for this overlay change — tracked as the ISI-7237 follow-up under
+> ISI-7185):
+> 1. **Checkout population.** `RECYCLE_CHECKOUT_PATH` must contain a real git
+>    working tree of the reference repo (`content/`, `styles/`, `meta.yaml`) —
+>    nothing clones it today. Needs a git-sync sidecar / init container +
+>    shared volume.
+> 2. **`git` in the operator image.** `analyzer.LocalFS.Commit()` shells out to
+>    `git rev-parse HEAD`, but the image is `distroless/static:nonroot` (no git
+>    binary). The image needs a git binary (or `Commit()` a non-exec path)
+>    before a run gets past the analyzer stage.
 
 ### Option A — Cloudflare Tunnel (RECOMMENDED)
 

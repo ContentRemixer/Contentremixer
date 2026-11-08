@@ -5,3 +5,5 @@ format: teleprompter
 duration_minutes: 3
 dry_run: true
 origin: "ISI-7185 dry-run (synthetic source for pipeline validation)"
+files:
+  teleprompter: teleprompter.md

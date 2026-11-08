@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,8 +22,11 @@ import (
 
 	appv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 
+	"github.com/ContentRemixer/Contentremixer/app/review"
+
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 )
@@ -68,8 +72,21 @@ func run() error {
 		return fmt.Errorf("build k8s client: %w", err)
 	}
 
-	st := store.New(k8s, namespace, audit.NewSlogLogger(log))
-	srv := server.New(prov, st, log)
+	auditor := audit.NewSlogLogger(log)
+	st := store.New(k8s, namespace, auditor)
+
+	// Scraper-review surface (ISI-7207): wired only when a Postgres DSN is
+	// configured (the live pgvector PG, ISI-7148). Without it, Booth boots as the
+	// CR-only API and the scrape routes are simply absent.
+	scrape, cleanup, err := buildScrapeStore(k8s, namespace, auditor, log)
+	if err != nil {
+		return err
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	srv := server.New(prov, st, scrape, log)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -79,6 +96,46 @@ func run() error {
 
 	log.Info("booth listening", slog.String("addr", addr), slog.String("namespace", namespace))
 	return httpServer.ListenAndServe()
+}
+
+// buildScrapeStore wires the scraper-review gating store from env, or returns
+// (nil, nil, nil) when BOOTH_REVIEW_DSN is unset (feature off). The returned
+// cleanup closes the DB pools on shutdown.
+func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger, log *slog.Logger) (*scrapejobs.Store, func(), error) {
+	dsn := os.Getenv("BOOTH_REVIEW_DSN")
+	if dsn == "" {
+		log.Info("scraper-review disabled: BOOTH_REVIEW_DSN not set")
+		return nil, nil, nil
+	}
+	ctx := context.Background()
+
+	// Accept-time corpus sink: embed via LiteLLM + upsert into the persona
+	// pgvector corpus (ISI-7146). Shares the same Postgres instance as review.
+	corpus, err := review.NewCorpus(ctx, dsn,
+		os.Getenv("BOOTH_LITELLM_URL"), os.Getenv("LITELLM_API_KEY"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open accept corpus: %w", err)
+	}
+	reviewStore, err := review.Open(ctx, dsn, review.WithCorpus(corpus))
+	if err != nil {
+		corpus.Close()
+		return nil, nil, fmt.Errorf("open review store: %w", err)
+	}
+
+	launcher := &scrapejobs.K8sLauncher{
+		Client:         k8s,
+		Namespace:      namespace,
+		Image:          os.Getenv("BOOTH_SCRAPER_IMAGE"),
+		ServiceAccount: envOr("BOOTH_SCRAPER_SA", "booth-scraper"),
+		DSNSecretName:  envOr("BOOTH_REVIEW_DSN_SECRET_NAME", "booth-review-dsn"),
+		DSNSecretKey:   envOr("BOOTH_REVIEW_DSN_SECRET_KEY", "dsn"),
+	}
+	cleanup := func() {
+		reviewStore.Close()
+		corpus.Close()
+	}
+	log.Info("scraper-review enabled")
+	return scrapejobs.New(reviewStore, launcher, auditor), cleanup, nil
 }
 
 func envOr(key, def string) string {

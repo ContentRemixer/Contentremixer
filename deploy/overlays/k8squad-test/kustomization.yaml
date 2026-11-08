@@ -117,6 +117,94 @@ patches:
                 name: pgvector-credentials
                 key: DSN
                 optional: true
+      # ISI-7239 (ISI-7185 follow-up): POPULATE the checkout the env above only
+      # NAMED. An init container shallow-clones the reference repo into a shared
+      # emptyDir the manager mounts read-only at RECYCLE_CHECKOUT_PATH, so
+      # analyzer.LocalFS finds content/, styles/, meta.yaml AND a real .git for
+      # Commit() (Sample.SourceCommit). Without this the receiver leaves
+      # ack-only mode but every run errors at the analyzer stage on an empty
+      # checkout. The clone uses the same github-pat Secret the receiver acks
+      # with (contents:read is sufficient for the clone).
+      #
+      # Commit() reads .git plumbing directly (no git binary in the distroless
+      # manager image), so the manager mount is read-only; only this init
+      # container needs git, and it is a throwaway image that never serves
+      # traffic.
+      - op: add
+        path: /spec/template/spec/initContainers
+        value:
+          - name: recycle-checkout-sync
+            # alpine/git v2.47.2, digest-pinned (matches the overlay's
+            # pin-by-digest convention for third-party images). Bump the tag AND
+            # digest together.
+            image: alpine/git:v2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c
+            command:
+              - /bin/sh
+              - -ec
+              - |
+                git clone --depth 1 --branch "${RECYCLE_REF:-main}" \
+                  "https://x-access-token:${GITHUB_TOKEN}@github.com/${RECYCLE_REPO}.git" \
+                  /workspace/checkout
+                echo "recycle-checkout-sync: cloned ${RECYCLE_REPO}@$(git -C /workspace/checkout rev-parse HEAD)"
+            env:
+              - name: RECYCLE_REPO
+                value: "ContentRemixer/Contentremixer"
+              - name: RECYCLE_REF
+                value: "main"
+              - name: GITHUB_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: github-pat
+                    key: token
+              # readOnlyRootFilesystem below means git may only write to the
+              # mounted volumes; point HOME/TMPDIR at the scratch emptyDir and
+              # disable system config so no write touches the root FS.
+              - name: HOME
+                value: /tmp
+              - name: TMPDIR
+                value: /tmp
+              - name: GIT_CONFIG_NOSYSTEM
+                value: "1"
+              - name: GIT_TERMINAL_PROMPT
+                value: "0"
+            volumeMounts:
+              - name: recycle-checkout
+                mountPath: /workspace/checkout
+              - name: recycle-checkout-tmp
+                mountPath: /tmp
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              # alpine/git defaults to root (0); the pod enforces runAsNonRoot,
+              # so pin an unprivileged uid. emptyDir mounts are world-writable,
+              # so the clone still writes fine.
+              runAsUser: 65532
+              capabilities:
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 250m
+                memory: 128Mi
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: recycle-checkout
+          emptyDir: {}
+      - op: add
+        path: /spec/template/spec/volumes/-
+        value:
+          name: recycle-checkout-tmp
+          emptyDir: {}
+      - op: add
+        path: /spec/template/spec/containers/0/volumeMounts/-
+        value:
+          name: recycle-checkout
+          mountPath: /workspace/checkout
+          readOnly: true
 
 images:
   - name: ghcr.io/contentremixer/operator

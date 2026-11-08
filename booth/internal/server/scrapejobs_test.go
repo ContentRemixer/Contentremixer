@@ -19,7 +19,10 @@ type fakeReviewDB struct {
 	sources map[string]review.ScrapedSource
 }
 
-func (f *fakeReviewDB) InsertJob(_ context.Context, j review.ScrapeJob) error { f.jobs[j.ID] = j; return nil }
+func (f *fakeReviewDB) InsertJob(_ context.Context, j review.ScrapeJob) error {
+	f.jobs[j.ID] = j
+	return nil
+}
 func (f *fakeReviewDB) SetJobK8sName(_ context.Context, id, n string) error {
 	j := f.jobs[id]
 	j.K8sJobName = n

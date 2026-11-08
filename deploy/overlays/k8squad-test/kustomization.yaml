@@ -89,7 +89,7 @@ images:
     # the operator env patch is a no-op on it. This pin activates OTLP export.
     newName: ghcr.io/contentremixer/content-operator
     # Pinned to an immutable CI tag, NOT :latest, so rollouts are deterministic.
-    # image-publish.yml published this from the PR #29 main-merge (commit
-    # 6d83a5771309, ISI-7161) — the first build carrying `setupOTLP`. Bump to a
-    # newer sha-<12> only when app/ changes rebuild the binary.
-    newTag: sha-6d83a5771309
+    # ISI-7185 dry-run bump: 6d83a5771309 (PR #29 main-merge, ISI-7161,
+    # first `setupOTLP` build) -> a9be806a59e5 (PR #32 head, skills-wired
+    # build). Bump to a newer sha-<12> only when app/ changes rebuild it.
+    newTag: sha-a9be806a59e5

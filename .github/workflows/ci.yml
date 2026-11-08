@@ -86,6 +86,10 @@ jobs:
       - name: Run tests (unit + envtest + pgvector integration)
         env:
           PGVECTOR_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          # ISI-7208 content-collaboration store integration test (app/content)
+          # runs against the same Postgres service; its tables are plain (no
+          # vector extension), so it shares the pgvector service DSN.
+          CONTENT_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
         run: make test
       - name: Upload coverage profile
         uses: actions/upload-artifact@v4

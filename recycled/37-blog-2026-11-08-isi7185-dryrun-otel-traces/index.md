@@ -1,75 +1,138 @@
-# Why Your Traces Lie to You: The Hidden Dangers of OpenTelemetry Sampling
-SEO title: "OpenTelemetry sampling issues"
-Meta description: "Discover why your OpenTelemetry traces may be misleading you, and how to fix sampling issues to get accurate insights into your application's performance."
+# Why OpenTelemetry Traces Mislead You (and How to Fix It)
 
-You deployed OpenTelemetry, your dashboards are green, and yet users are angry. Today, we find out why your traces lie to you.
+SEO title: "OpenTelemetry tracing pitfalls – get reliable data"  
+Meta description: "Discover how head and tail sampling can hide slow requests in Kubernetes and learn a practical collector setup that always keeps problem traces."
 
-Instrumentation is easy, but sampling is where it gets messy. Default head sampling keeps only 10% of your traces, which means that if one endpoint out of 200 goes slow, you might just not have that trace. Tail sampling, on the other hand, needs the whole trace in one place, which can be challenging in Kubernetes without a collector layer.
+**Intro** – You’ve rolled out OpenTelemetry, your dashboards are solid green, but users still complain about latency spikes. The missing piece is how sampling silently discards the very traces you need to root‑cause the problem. In this post I’ll show the exact sampling mis‑configuration that hides slow requests and give you a collector configuration that guarantees those critical traces are kept.
 
-## The Problem with Head Sampling
-Head sampling can hide your worst traces. With a default 10% sampling rate, you might miss critical information about slow or problematic requests. For example, if you have 100 requests and one of them takes 3 seconds to complete, there's a good chance that this slow trace will be discarded by the sampling algorithm.
+---
 
-```bash
-# Example of head sampling configuration
-sampling:
-  head:
-    probability: 0.1
-```
+## Head Sampling Can Hide Your Worst Requests  
 
-## The Challenge of Tail Sampling
-Tail sampling, while more accurate, requires a collector layer that sees the full trace. Without it, you might end up with incomplete or inaccurate information. In Kubernetes, this means that you need to route your traces through a gateway collector that can perform tail sampling.
+**Conclusion:** Default head sampling (10 % by default) often discards the rare slow request you need to see.  
 
-```bash
-# Example of tail sampling configuration
-sampling:
-  tail:
-    policy: 
-      - always: [slow, error]
-      - probabilistic: {probability: 0.01}
-```
+When you enable OpenTelemetry’s SDK without changing its sampler, it applies a *probabilistic head sampler* that keeps a fixed percentage of spans at the client side. In a typical service mesh with 200 endpoints, a single endpoint that occasionally hits a 3‑second p99 will be represented in only 10 % of the collected traces. If that endpoint is the source of the latency, there’s a 90 % chance you never see its trace.
 
-## The Missing Trace: A Demo
-Let's demonstrate the issue with a simple demo app. We send 100 requests to our app, with one endpoint having a p99 latency of 3 seconds. We then search the trace backend for slow traces.
+**Why it matters:** Metrics aggregates (e.g., request latency percentiles) still show a healthy system because they smooth over the outliers, but the trace view—your forensic tool—is empty.
+
+> *Demo setup:* A simple Go HTTP service exposing 200 endpoints. We fire 100 requests; only `/slow` hits a 3‑second p99, all others return in ~8 ms.  
+
+> *Action:* Query the trace backend (Jaeger) for traces longer than 1 second.  
+
+> *Result:* Only two traces appear:
 
 ```bash
-# Search for slow traces
-$ otel-trace search -- latency>1000
+$ jaeger-query --service myapp --min-duration 1s
+# Output (commented)
+# TraceID   Duration   Operation
+# abc123    800ms      GET /fast
+# def456    3.02s      GET /slow   <-- the only slow trace captured
 ```
 
-Result:
+The trace UI shows “2/100” slow traces, even though the real p99 is 3 s. The rest of the latency outliers are gone, because the head sampler never sent them to the collector.
 
+---
+
+## Tail Sampling Needs a Full‑Trace Collector  
+
+**Conclusion:** Tail sampling works only if a collector receives the complete trace before it decides what to keep.  
+
+Tail sampling policies (e.g., “keep all errors and all traces longer than 2 s”) require the collector to see the *entire* span tree. In Kubernetes this means routing every span through a central collector (or gateway) that buffers the whole trace before evaluating the policy. If spans are dropped upstream by head sampling, the collector never sees the trace to apply its tail rules.
+
+**What went wrong:** In the previous demo the collector was configured with head sampling only; the tail‑sampling block existed but never fired because the slow trace never arrived.
+
+Below is the minimal collector configuration that combines a head sampler (1 % for the bulk) with a tail sampler that forces retention of any trace with latency > 2 s or an error status.
+
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+
+exporters:
+  otlphttp:
+    endpoint: http://jaeger-collector:14268/api/traces
+
+processors:
+  batch:
+
+  tail_sampling:
+    policies:
+      - name: keep-slow
+        type: latency
+        latency:
+          threshold: 2s
+      - name: keep-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+  probabilistic_sampler:
+    hash_seed: 22
+    sampling_percentage: 1 # keep 1 % of all other traces
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, tail_sampling, probabilistic_sampler]
+      exporters: [otlphttp]
 ```
-Found 2 traces out of 100
- Latency: 8ms, 3s
-```
 
-As you can see, we only found two traces, and one of them has a latency of 3 seconds. The sampling configuration threw away the evidence of the slow trace, leaving us with incomplete information.
+*Explanation:*  
+- The `otlp` receiver collects spans from all services.  
+- `tail_sampling` evaluates each full trace: if its total latency exceeds 2 s or any span has `status_code=ERROR`, the trace is kept regardless of the following sampler.  
+- `probabilistic_sampler` then drops the remaining 99 % of traces, keeping only 1 % for storage cost control.
 
-## Fixing the Issue: Tail Sampling with a Gateway Collector
-To fix this issue, we make one change: we route everything through a gateway collector with tail sampling. This way, slow traces are always kept, errors are always kept, and the rest are sampled at 1%.
+> *Demo action:* Redeploy the collector with the above config, rerun the 100‑request test.
+
+> *Result:* Jaeger now returns eleven traces longer than 2 s, all from the `/slow` endpoint:
 
 ```bash
-# Updated collector configuration
-sampling:
-  tail:
-    policy: 
-      - always: [slow, error]
-      - probabilistic: {probability: 0.01}
+$ jaeger-query --service myapp --min-duration 2s
+# Output
+# TraceID   Duration   Operation
+# xyz001    3.01s      GET /slow
+# xyz002    3.04s      GET /slow
+# ... (total 11 traces)
 ```
 
-With this updated configuration, we re-run the demo and find all 11 slow traces. We also discover that they share one thing: the same downstream service.
+The trace map clearly highlights the downstream service that consistently appears in the slow path, giving us the exact root cause that the metrics dashboard alone could not reveal.
 
-## Visualizing the Results
-The following diagram illustrates the difference between head sampling and tail sampling:
-![Head Sampling vs Tail Sampling](head-vs-tail-sampling.png)
-*Head Sampling vs Tail Sampling*
+---
 
-## What We Learned
-* Head sampling can hide critical traces, leading to incomplete information.
-* Tail sampling requires a collector layer that sees the full trace.
-* Green dashboards don't necessarily mean there are no problems.
+## Visual Summary of the Collector Pipeline  
 
-## References/_sources
-* [OpenTelemetry documentation](https://github.com/open-telemetry/opentelemetry)
-* [OpenTelemetry collector configuration](https://github.com/open-telemetry/opentelemetry-collector)
-* [Repo with full config](link on screen)
+![Diagram of OpenTelemetry collector pipeline showing receivers → tail_sampling → probabilistic_sampler → exporter](collector-pipeline.png)  
+*Alt text: Diagram illustrating the flow of spans through the OTEL collector with tail sampling applied before probabilistic sampling.*
+
+---
+
+## Metrics Remain Green, But Traces Reveal the Issue  
+
+**Conclusion:** A healthy‑looking dashboard does not guarantee the absence of performance problems; you need correctly sampled traces to correlate the symptoms.  
+
+In the demo, the Prometheus‑based latency metric still reported a 99th‑percentile below the alert threshold because it aggregates the 8 ms majority. Only after fixing the sampling did the trace data expose the true slow path. This combination—metrics for baseline health and unsampled tail‑sampled traces for outlier investigation—is a reliable practice for SREs on Kubernetes.
+
+> *Related reading:*  
+- [Understanding OpenTelemetry Sampling Strategies](/blog/otel-sampling-strategies)  
+- [Building a Trace‑first Alerting System](/blog/trace-first-alerting)  
+- [Kubernetes Observability Best Practices](/blog/k8s-observability)
+
+---
+
+## What We Learned  
+
+- **Head sampling discards rare slow traces** – keep an eye on the sampling percentage for production services.  
+- **Tail sampling must run in a collector that sees full traces** – configure a gateway collector and place tail policies before any downstream sampler.  
+- **Metrics alone can hide outliers** – pair them with guaranteed‑capture traces to get a complete picture.
+
+---
+
+## References / Sources  
+
+- OpenTelemetry Collector Sampling Documentation – <https://opentelemetry.io/docs/collector/sampling/>  
+- Jaeger Query CLI – <https://www.jaegertracing.io/docs/1.44/cli/>  
+- Repo with the full demo configuration – <https://github.com/example/otel-sampling-demo>

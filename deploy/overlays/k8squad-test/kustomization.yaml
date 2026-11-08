@@ -54,13 +54,34 @@ patches:
       - op: add
         path: /spec/volumeClaimTemplates/0/spec/storageClassName
         value: local-path
-  # O11y-4: point the operator at the Collector so persona/RAG telemetry flows.
+  # Operator env (O11y-4 OTLP export + ISI-7237 recycle enablement).
   # JSON6902 (not a strategic-merge Deployment fragment): a merge fragment is
   # scanned by Trivy as a standalone workload and false-flags "no securityContext"
   # (the real hardening lives in the base). An op-list adds the env without
-  # looking like a workload. No-op on the currently-pinned operator image until
-  # it is rebuilt with app/cmd/main.go setupOTLP (next operator-ci publish); the
-  # env is simply ignored until then. containers/0 is the sole `manager` container.
+  # looking like a workload. containers/0 is the sole `manager` container.
+  #
+  # The OTEL_* / POD_NAMESPACE entries point persona/RAG telemetry at the
+  # Collector (ISI-7161).
+  #
+  # RECYCLE_CHECKOUT_PATH + LITELLM_ENDPOINT (ISI-7237) take the GitHub receiver
+  # out of ack-only mode: cmd/main.go enables the recycle pipeline only when
+  # BOTH are non-empty (otherwise it logs "recycle pipeline ack-only"). The
+  # dry-run (ISI-7185) proved the operator deploys but never processed recycle
+  # issues precisely because these were unset.
+  #   - RECYCLE_CHECKOUT_PATH: local reference-repo checkout (content/, styles/,
+  #     meta.yaml) the analyzer reads. It still needs POPULATING and a `git`
+  #     binary in the image for analyzer.Commit() — tracked as the ISI-7237
+  #     follow-up under ISI-7185; this var is the config seam, not the clone.
+  #   - LITELLM_ENDPOINT: the in-cluster LiteLLM gateway Service (base litellm,
+  #     port 4000) the writer generates through.
+  #   - LITELLM_API_KEY: gateway master key IF the gateway is configured with
+  #     one. OPTIONAL — the Phase-1 gateway is keyless (no master_key rendered),
+  #     so the Secret may be absent; optional:true keeps the pod schedulable.
+  #   - PGVECTOR_DSN: enables P2-D persona voice conditioning (design §5). Reuses
+  #     the existing pgvector-credentials/DSN (ISI-7148). OPTIONAL — absent => the
+  #     conditioner stays nil and runs are style-only (Phase-1), never a boot fail.
+  #   - PERSONA_NAMESPACE is intentionally omitted: cmd/main.go defaults it to
+  #     POD_NAMESPACE (set above) when empty.
   - target:
       kind: Deployment
       name: contentremixer-operator
@@ -80,6 +101,22 @@ patches:
             value: "contentremixer-operator"
           - name: OTEL_RESOURCE_ATTRIBUTES
             value: "service.namespace=contentremixer,deployment.environment=k8squad-test"
+          - name: RECYCLE_CHECKOUT_PATH
+            value: "/workspace/checkout"
+          - name: LITELLM_ENDPOINT
+            value: "http://litellm.contentremixer.svc.cluster.local:4000"
+          - name: LITELLM_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: litellm-credentials
+                key: apikey
+                optional: true
+          - name: PGVECTOR_DSN
+            valueFrom:
+              secretKeyRef:
+                name: pgvector-credentials
+                key: DSN
+                optional: true
 
 images:
   - name: ghcr.io/contentremixer/operator

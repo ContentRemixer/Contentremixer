@@ -1,5 +1,5 @@
 author: henrik
-generated: "2026-11-08T21:22:02Z"
+generated: "2026-11-08T21:48:45Z"
 notes: 'ISI-7191 real recycle test (teleprompter to blog). Angle: practitioner post for SRE/platform engineers running OpenTelemetry on Kubernetes; keep the demo story (head vs tail sampling, the missing slow trace). Target 800-1200 words. Include SEO title (max 60 chars) and meta description (140-160 chars) in the draft.'
 output_format: blog
 sample_clearance:
@@ -7,10 +7,10 @@ sample_clearance:
     model: default
     output_format: blog
     recycle_issue: 37
-    source_commit: 30a73760fd61e5cf9601b61315c80b46bad0106a
+    source_commit: f16732c7ba61ab3851b4c6a6f6bf1a0ca379e9fb
     source_path: content/videos/2026/2026-11-08-isi7185-dryrun-otel-traces
 source:
-    commit: 30a73760fd61e5cf9601b61315c80b46bad0106a
+    commit: f16732c7ba61ab3851b4c6a6f6bf1a0ca379e9fb
     input_format: teleprompter
     path: content/videos/2026/2026-11-08-isi7185-dryrun-otel-traces
-title: 'OpenTelemetry Pitfalls: Why Your Traces Lie to You'
+title: 'Why Your Traces Lie to You: The Hidden Dangers of OpenTelemetry Sampling'

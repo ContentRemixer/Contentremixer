@@ -16,6 +16,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/web"
 )
 
 // Server wires the auth provider, the gating stores, and the route table.
@@ -72,6 +73,15 @@ func (s *Server) Handler() http.Handler {
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by
 	// content.Store.
 	s.mountContent(mux)
+
+	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
+	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the
+	// fallback AFTER the explicit API/health routes above — ServeMux's longest-
+	// prefix match keeps /v1/* and /healthz on their handlers, and everything
+	// else (/, /login, /content, …) resolves to the SPA, which falls back to
+	// index.html for client-side routes. Auth is enforced per-API-route and in
+	// the client router; the static assets themselves are public (standard SPA).
+	mux.Handle("/", web.Handler())
 
 	return mux
 }

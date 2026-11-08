@@ -1,0 +1,7 @@
+# Node / Vite workspace. node_modules is never committed; dist IS committed so the
+# Booth Go build can embed it (embed.FS, §2) without a JS toolchain in booth-ci.
+# web-ci rebuilds dist and fails if it drifts from source (lockstep).
+node_modules/
+.vite/
+*.local
+npm-debug.log*

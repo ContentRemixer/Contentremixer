@@ -1,0 +1,73 @@
+# Web CI — the ContentRemixer SPA under booth/web/ (ISI-7206, W0).
+#
+# Separate from booth-ci (the Go module) because it needs a Node toolchain, not
+# Go. Three guarantees:
+#   1. tokens lockstep — tokens.css/tokens.ts must match a fresh generation from
+#      branding/kit/tokens.json (§2.1). Editing the brand without regenerating
+#      fails here.
+#   2. typecheck + build — the SPA compiles (tsc) and bundles (vite).
+#   3. dist lockstep — the committed build (embedded by the Booth Go binary,
+#      booth/web/embed.go) matches a fresh `npm run build`, so a source change
+#      without a rebuilt dist is caught rather than silently shipping stale assets.
+name: web-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'booth/web/**'
+      - 'branding/kit/tokens.json'
+      - 'branding/kit/build/build_css.py'
+      - '.github/workflows/web-ci.yml'
+  pull_request:
+    paths:
+      - 'booth/web/**'
+      - 'branding/kit/tokens.json'
+      - 'branding/kit/build/build_css.py'
+      - '.github/workflows/web-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: booth/web
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Tokens lockstep (tokens.json -> tokens.css/ts)
+        run: python3 ../../branding/kit/build/build_css.py --check
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: booth/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Dist lockstep (committed build matches fresh build)
+        run: |
+          if ! git diff --exit-code -- dist; then
+            echo "::error::booth/web/dist is stale. Run 'npm run build' in booth/web and commit the result."
+            exit 1
+          fi

@@ -159,7 +159,7 @@ func resolveRef(gitDir, ref string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("analyzer: ref %s has no loose or packed entry in %s: %w", ref, gitDir, err)
 	}
-	defer packed.Close()
+	defer func() { _ = packed.Close() }()
 
 	scanner := bufio.NewScanner(packed)
 	for scanner.Scan() {

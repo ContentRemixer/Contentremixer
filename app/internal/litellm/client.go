@@ -42,6 +42,13 @@ type Client struct {
 	APIKey string
 	// HTTP is the transport; a client with DefaultTimeout is used when nil.
 	HTTP *http.Client
+	// DefaultModel is sent as "model" when a request carries none. LiteLLM
+	// v1.82 rejects an omitted model with "Invalid model name passed in
+	// model=None" on /chat/completions (general_settings.default_model does
+	// not backfill a missing field), so the caller-side default alias must
+	// be explicit. Wired from LITELLM_DEFAULT_MODEL in cmd/main.go; empty
+	// keeps the omitted-model request shape (test fakes rely on it).
+	DefaultModel string
 }
 
 // ChatCompletion sends the messages and returns the completion text plus
@@ -56,6 +63,9 @@ func (c *Client) ChatCompletion(ctx context.Context, model string, messages ...C
 		hc = &http.Client{Timeout: DefaultTimeout}
 	}
 
+	if strings.TrimSpace(model) == "" {
+		model = strings.TrimSpace(c.DefaultModel)
+	}
 	payload := map[string]any{"messages": messages}
 	if strings.TrimSpace(model) != "" {
 		payload["model"] = strings.TrimSpace(model)

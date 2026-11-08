@@ -21,11 +21,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
 	appv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+	appcontent "github.com/ContentRemixer/Contentremixer/app/content"
 
 	"github.com/ContentRemixer/Contentremixer/app/review"
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
@@ -86,7 +88,15 @@ func run() error {
 		defer cleanup()
 	}
 
-	srv := server.New(prov, st, scrape, log)
+	// Content-collaboration surface (ISI-7208): wired only when a Postgres
+	// DSN is configured (the live pgvector PG, ISI-7148). Without it, Booth
+	// boots as the CR-only API and the content routes are simply absent.
+	contentStore, err := buildContentStore(os.Getenv("BOOTH_CONTENT_DSN"), auditor, log)
+	if err != nil {
+		return err
+	}
+
+	srv := server.New(prov, st, scrape, contentStore, log)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -136,6 +146,20 @@ func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger,
 	}
 	log.Info("scraper-review enabled")
 	return scrapejobs.New(reviewStore, launcher, auditor), cleanup, nil
+}
+
+// buildContentStore wires the content-collaboration gating store from a
+// DSN, or returns (nil, nil) when dsn is empty (feature off).
+func buildContentStore(dsn string, auditor audit.Logger, log *slog.Logger) (*content.Store, error) {
+	if dsn == "" {
+		log.Info("content collaboration disabled: BOOTH_CONTENT_DSN not set")
+		return nil, nil
+	}
+	repo, err := appcontent.Open(context.Background(), dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open content store: %w", err)
+	}
+	return content.New(repo, auditor), nil
 }
 
 func envOr(key, def string) string {

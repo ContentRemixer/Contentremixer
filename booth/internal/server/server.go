@@ -14,26 +14,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 )
 
 // Server wires the auth provider, the gating stores, and the route table.
 type Server struct {
-	auth   *auth.Provider
-	store  *store.Store
-	scrape *scrapejobs.Store
-	log    *slog.Logger
+	auth    *auth.Provider
+	store   *store.Store
+	scrape  *scrapejobs.Store
+	content *content.Store
+	log     *slog.Logger
 }
 
-// New builds a Server. If log is nil, slog.Default() is used. scrape may be nil
-// (Postgres not configured), in which case the scraper-review routes are not
-// mounted.
-func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, log *slog.Logger) *Server {
+// New builds a Server. If log is nil, slog.Default() is used. scrape and
+// content may each be nil (Postgres not configured), in which case the
+// corresponding scraper-review / content-collaboration routes are not mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, scrape: scrape, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -71,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Scraper-review surface (plan §3.2), gated by scrapejobs.Store.
 	s.mountScrapeJobs(mux)
+	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by
+	// content.Store.
+	s.mountContent(mux)
 
 	return mux
 }

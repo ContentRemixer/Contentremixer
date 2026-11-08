@@ -260,7 +260,11 @@ func main() {
 	ghServer := &githubapp.Server{Addr: githubWebhookAddr, Client: mgr.GetClient()}
 	if recycleCheckout != "" && litellmEndpoint != "" {
 		sourceFS := &analyzer.LocalFS{Root: recycleCheckout}
-		gatewayClient := &litellm.Client{BaseURL: litellmEndpoint, APIKey: os.Getenv("LITELLM_API_KEY")}
+		gatewayClient := &litellm.Client{
+			BaseURL:      litellmEndpoint,
+			APIKey:       os.Getenv("LITELLM_API_KEY"),
+			DefaultModel: os.Getenv("LITELLM_DEFAULT_MODEL"),
+		}
 		runWriter := &writer.Writer{
 			FS:       sourceFS,
 			Generate: writer.LiteLLMGenerator(gatewayClient),

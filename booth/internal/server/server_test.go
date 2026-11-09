@@ -47,7 +47,7 @@ func newTestServer(t *testing.T, objs ...client.Object) (http.Handler, *auth.Tok
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(prov, st, nil, nil).Handler(), prov.Codec
+	return New(prov, st, nil, nil, nil).Handler(), prov.Codec
 }
 
 // tokenFor mints a bearer token for an arbitrary session so tests can exercise

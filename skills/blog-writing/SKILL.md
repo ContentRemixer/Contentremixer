@@ -8,7 +8,7 @@ description: Write practitioner-grade blog posts for DevRel - structure, voice, 
 1. Title states the problem or payoff (not the technology alone)
 2. Immediately after the H1: the SEO block - exactly two lines, SEO title: "<= 60 chars, keyword + benefit>" then Meta description: "<140-160 chars, verb + payoff>"
 3. Intro: the pain in 2 sentences, the promise in 1 - under 80 words
-4. Body: H2 sections, each ONE idea, each opening with its conclusion (inverted pyramid)
+4. Body: H2 sections, each ONE idea, each opening with its conclusion (inverted pyramid). The first sentence of the paragraph IS the conclusion/finding — write it as plain prose. NEVER prefix it with a bold label like `**Conclusion:**`.
 5. Code blocks: executable, copy-pasteable, language-tagged, expected output shown as comments
 6. Visual slot every 2-3 sections (diagram, screenshot, or illustration - see visual-design skill)
 7. Close: "What we learned" (3 bullets max) + sources/references
@@ -20,10 +20,10 @@ description: Write practitioner-grade blog posts for DevRel - structure, voice, 
 
 ## Lengths
 - Concept post: 800-1200 words. Tutorial post: 1200-1800 words. Never pad - but never compress a source into a summary either.
-- Recycle expansion rule: a spoken script (~450 words for 3 minutes) must GROW into the full target length by expanding each demo beat into its narrative (setup, action, result, so-what), restoring the context the script assumed on camera, and keeping every number/story from the source. If the draft lands under target, the missing depth is the failure - not extra words.
+- Recycle expansion rule: a spoken script (~450 words for 3 minutes) must GROW into the full target length by expanding each demo beat into its narrative (setup → action → result → so-what). This is an **internal organizing frame**, not a visible outline. Write flowing paragraphs — NEVER use `**Setup**`, `**Action**`, `**Result**`, or `**So what:**` as inline bold labels. The structure is for your logic; the reader sees prose.
 
 ## Depth (recycles)
-- Every demo beat from the source becomes a section: what we set up, what we ran, what came back, what it means
+- Every demo beat from the source becomes a section: what we set up, what we ran, what came back, what it means. Write as connected narrative paragraphs; the four beats are the paragraph topics, not labeled sub-items.
 - Numbers stay exact (2 of 100 traces, 10% head sampling, 3s p99); round only when the source rounded
 - First person where true ("we lost the afternoon to this"); the practitioner voice is the product
 - Never invent configs, commands, or benchmarks the source does not contain - describe them in prose and mark the slot for the author

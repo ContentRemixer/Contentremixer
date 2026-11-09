@@ -78,6 +78,35 @@ export const LogoutIcon = (p: IconProps) => (
   </svg>
 );
 
+// A3 system-state glyphs.
+export const InboxIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M3 13h5l1.5 3h5L21 13" />
+    <path d="M3 13 6 5h12l3 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+);
+
+export const AlertTriangleIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M10.3 4 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z" />
+    <path d="M12 9v4M12 17h.01" />
+  </svg>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
+export const LockIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="4" y="11" width="16" height="9" rx="2" />
+    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+  </svg>
+);
+
 // --- extended set added for the W7 component library (ISI-7210) ---
 
 export const CheckIcon = (p: IconProps) => (

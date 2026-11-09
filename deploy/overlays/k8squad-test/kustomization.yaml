@@ -105,6 +105,16 @@ patches:
             value: "/workspace/checkout"
           - name: LITELLM_ENDPOINT
             value: "http://litellm.contentremixer.svc.cluster.local:4000"
+          # ISI-7244 (ISI-7185 first live recycle): the writer sends
+          # chat/completions with model=$LITELLM_DEFAULT_MODEL. cmd/main.go left
+          # it empty on the assumption the gateway would fall back to the
+          # default ModelProfile, but this LiteLLM config rejects model=None
+          # ("Invalid model name passed in model=None") - it serves exactly one
+          # route named "default" (model-default-shim). Pin the gateway's served
+          # model name here so recycle runs reach writer->checker->PR instead of
+          # erroring 400 at the writer stage.
+          - name: LITELLM_DEFAULT_MODEL
+            value: "default"
           - name: LITELLM_API_KEY
             valueFrom:
               secretKeyRef:

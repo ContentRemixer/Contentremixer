@@ -1,0 +1,16 @@
+author: henrik
+generated: "2026-11-09T02:04:08Z"
+notes: First live recycle of the ISI-7185 dry-run teleprompter into a blog post.
+output_format: blog
+sample_clearance:
+    input_format: teleprompter
+    model: default
+    output_format: blog
+    recycle_issue: 51
+    source_commit: 559a7d8f0b2d8684c055e2e5cde16c61b2980146
+    source_path: content/videos/2026/2026-11-08-isi7185-dryrun-otel-traces
+source:
+    commit: 559a7d8f0b2d8684c055e2e5cde16c61b2980146
+    input_format: teleprompter
+    path: content/videos/2026/2026-11-08-isi7185-dryrun-otel-traces
+title: Why Your Traces Lie to You – Reveal Hidden Latency Fast

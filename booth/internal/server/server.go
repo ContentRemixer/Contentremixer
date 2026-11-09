@@ -62,7 +62,7 @@ func (s *Server) Handler() http.Handler {
 
 	// CRUD over the registered kinds, each wrapped by the auth Middleware so the
 	// session is resolved (or the request 401'd) before the handler runs.
-	for _, kind := range []store.ResourceKind{store.ModelProfileKind, store.ReferenceRepoKind} {
+	for _, kind := range []store.ResourceKind{store.DevRelPersonaKind, store.ModelProfileKind, store.ReferenceRepoKind} {
 		base := "/v1/" + routeName(kind.Kind)
 		kind := kind // capture
 		mux.Handle("GET "+base, s.protect(s.listHandler(kind)))
@@ -72,6 +72,9 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("DELETE "+base+"/{name}", s.protect(s.deleteHandler(kind)))
 	}
 
+	// Admin-only Users & Roles CRUD (plan §3.2 A1/Admin, W6). Gated by an
+	// explicit Admin-role check in each handler (users have no per-row owner).
+	s.mountUsers(mux)
 	// Scraper-review surface (plan §3.2), gated by scrapejobs.Store.
 	s.mountScrapeJobs(mux)
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by

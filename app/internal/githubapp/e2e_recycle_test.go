@@ -458,12 +458,16 @@ func TestE2E_RecycleBlogOnTeleprompterSource_OpensStyledBlogPR(t *testing.T) {
 		t.Fatalf("delivery status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 
-	// The run worker is async; wait for the PR to be opened (or fail loud).
+	// The run worker is async. Wait for the run's TERMINAL side-effect — the
+	// opened-PR report comment — not just gh.pullOpened. The PR is opened inside
+	// Assemble (sets pullOpened), but the "opened #N" report comment is posted a
+	// step later (pr.Runner); gating only on pullOpened races that trailing
+	// comment on a slow runner and the comment assertion below flakes.
 	waitFor(t, 5*time.Second, func() bool {
 		gh.mu.Lock()
 		defer gh.mu.Unlock()
-		return gh.pullOpened
-	}, "no pull request was opened end-to-end")
+		return gh.pullOpened && strings.Contains(strings.Join(gh.comments, "\n"), "opened #101")
+	}, "no opened-PR report comment was posted end-to-end")
 
 	gh.mu.Lock()
 	defer gh.mu.Unlock()

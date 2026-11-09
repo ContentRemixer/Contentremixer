@@ -71,3 +71,36 @@ jobs:
             echo "::error::booth/web/dist is stale. Run 'npm run build' in booth/web and commit the result."
             exit 1
           fi
+
+  # Playwright E2E (ISI-7214, W8). Drives the built SPA through `vite preview`
+  # with every Booth /v1/* call stubbed (e2e/fixtures.ts), so the suite is
+  # hermetic — no Postgres, no k8s, no Go binary. Covers A1/A3/B6/B3/admin.
+  # Separate job from build so a flaky browser run never masks a type/build break
+  # (and vice-versa); both gate the PR via the two-pipeline required checks.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: booth/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright browser (chromium + OS deps)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E (webServer builds + previews the SPA)
+        run: npm run e2e
+
+      - name: Upload Playwright report on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: booth/web/playwright-report/
+          retention-days: 7

@@ -5,3 +5,10 @@ node_modules/
 .vite/
 *.local
 npm-debug.log*
+
+# Playwright E2E (ISI-7214, W8) — transient run artifacts; the specs under e2e/
+# and playwright.config.ts ARE committed, the outputs are not.
+test-results/
+playwright-report/
+blob-report/
+.playwright/

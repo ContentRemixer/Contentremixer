@@ -255,17 +255,21 @@ The k8Squad-test overlay wires `RECYCLE_CHECKOUT_PATH` and `LITELLM_ENDPOINT`
 `RECYCLE_CHECKOUT_PATH` and `LITELLM_ENDPOINT` are non-empty; otherwise the
 GitHub receiver stays **ack-only** (the state the ISI-7185 dry-run observed).
 
-> ⚠️ **Two runtime gaps remain before a recycle run completes end-to-end** (out
-> of scope for this overlay change — tracked as the ISI-7237 follow-up under
-> ISI-7185):
-> 1. **Checkout population.** `RECYCLE_CHECKOUT_PATH` must contain a real git
->    working tree of the reference repo (`content/`, `styles/`, `meta.yaml`) —
->    nothing clones it today. Needs a git-sync sidecar / init container +
->    shared volume.
-> 2. **`git` in the operator image.** `analyzer.LocalFS.Commit()` shells out to
->    `git rev-parse HEAD`, but the image is `distroless/static:nonroot` (no git
->    binary). The image needs a git binary (or `Commit()` a non-exec path)
->    before a run gets past the analyzer stage.
+> ✅ **Both prior runtime gaps are now closed (ISI-7239, under ISI-7185):**
+> 1. **Checkout population.** The overlay adds a `recycle-checkout-sync` init
+>    container that shallow-clones the reference repo (`RECYCLE_REPO`, default
+>    `ContentRemixer/Contentremixer`) into a shared `emptyDir` the manager
+>    mounts **read-only** at `RECYCLE_CHECKOUT_PATH` (`/workspace/checkout`). It
+>    authenticates with the same `github-pat` Secret the receiver acks with
+>    (`contents:read` suffices). Re-clone happens on every pod start — the
+>    checkout is ephemeral and re-derivable, so no PVC. To point at a different
+>    repo/branch, edit the `RECYCLE_REPO` / `RECYCLE_REF` env on the init
+>    container.
+> 2. **`git` in the operator image.** `analyzer.LocalFS.Commit()` no longer
+>    shells out — it resolves `HEAD` by reading the checkout's `.git` plumbing
+>    (`HEAD`, loose refs, `packed-refs`) directly, so the distroless
+>    (`distroless/static:nonroot`) manager image needs **no** git binary. Only
+>    the throwaway init container carries `git`.
 
 ### Option A — Cloudflare Tunnel (RECOMMENDED)
 

@@ -12,6 +12,8 @@ delve | moreover | furthermore | in conclusion | it is important to note | lever
 - Zero first person, zero opinions, zero specific numbers
 - Hollow intensifiers: "incredibly powerful", "highly efficient"
 - Em-dash overuse; semicolons in casual content; title-case subheads in a casual piece
+- Scaffolding leaked into prose: visible bold labels like `**Conclusion:**`, `**Setup**`, `**Action**`, `**Result**`, `**So what:**` inside paragraphs — these are writer's internal frame, never reader-visible in a human-authored post
+- Identical sub-structure repeated in every section (e.g. every H2 body has the same 4 bold sub-labels in the same order)
 
 ## The pulse test (read aloud)
 - Sentence length should VARY (4-25 words). If rhythm is flat, rewrite

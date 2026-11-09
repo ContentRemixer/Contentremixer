@@ -105,6 +105,16 @@ patches:
             value: "/workspace/checkout"
           - name: LITELLM_ENDPOINT
             value: "http://litellm.contentremixer.svc.cluster.local:4000"
+          # ISI-7244 (ISI-7185 first live recycle): the writer sends
+          # chat/completions with model=$LITELLM_DEFAULT_MODEL. cmd/main.go left
+          # it empty on the assumption the gateway would fall back to the
+          # default ModelProfile, but this LiteLLM config rejects model=None
+          # ("Invalid model name passed in model=None") - it serves exactly one
+          # route named "default" (model-default-shim). Pin the gateway's served
+          # model name here so recycle runs reach writer->checker->PR instead of
+          # erroring 400 at the writer stage.
+          - name: LITELLM_DEFAULT_MODEL
+            value: "default"
           - name: LITELLM_API_KEY
             valueFrom:
               secretKeyRef:
@@ -217,4 +227,12 @@ images:
     # ISI-7185 dry-run bump: 6d83a5771309 (PR #29 main-merge, ISI-7161,
     # first `setupOTLP` build) -> a9be806a59e5 (PR #32 head, skills-wired
     # build). Bump to a newer sha-<12> only when app/ changes rebuild it.
-    newTag: sha-a9be806a59e5
+    # ISI-7243 live-activation bump: a9be806a59e5 -> d61d7a97901c (PR #44
+    # main-merge, ISI-7239). This is the FIRST image carrying the git-less
+    # analyzer.LocalFS.Commit() (reads .git plumbing directly, no git binary);
+    # under the old pin Commit() still execs `git rev-parse HEAD` which the
+    # distroless manager lacks, so every recycle run errored at the analyzer
+    # stage. The init-container checkout works on any image; only Commit()
+    # needed the rebuild. The later a6063bda merge (ISI-7210) is web-only and
+    # did not rebuild content-operator, so d61d7a97901c remains authoritative.
+    newTag: sha-d61d7a97901c

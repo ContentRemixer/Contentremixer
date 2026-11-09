@@ -12,6 +12,20 @@ export class ApiError extends Error {
   }
 }
 
+// Central 401 handler (W1). Any API call that comes back 401 means the Booth
+// session is gone — the plan requires "401 from any API call → session-expired
+// screen + redirect" (§3.1). The AuthProvider registers a handler here so a 401
+// from a deep data call tears the whole app down to the session-expired surface,
+// not just the component that happened to make the call. The initial whoami probe
+// and the login POST also pass through here, but the handler no-ops unless a live
+// session was already established, so those stay plain anonymous/invalid flows.
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+export function setUnauthorizedHandler(fn: UnauthorizedHandler | null): void {
+  unauthorizedHandler = fn;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -21,6 +35,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   });
 
   if (!res.ok) {
+    if (res.status === 401) unauthorizedHandler?.();
     let msg = res.statusText;
     try {
       const data = await res.json();

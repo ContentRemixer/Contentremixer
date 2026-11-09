@@ -1,5 +1,5 @@
-import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from "react";
-import { api, ApiError } from "./api";
+import { createContext, useContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { api, ApiError, setUnauthorizedHandler } from "./api";
 
 // Mirrors booth/auth.Session JSON ({sub, role}). Role vocabulary is frozen by
 // design §6.1 — the server is authoritative; this only drives cosmetic nav (§4).
@@ -15,8 +15,14 @@ export type AuthStatus = "loading" | "authenticated" | "anonymous";
 interface AuthCtx {
   status: AuthStatus;
   session: Session | null;
+  // expired distinguishes "session timed out while using the app" (show the A3
+  // session-expired surface) from a plain never-signed-in anonymous state (show
+  // the normal login). It is set by the central 401 handler and cleared on a
+  // fresh successful sign-in.
+  expired: boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
+  clearExpired: () => void;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -24,6 +30,12 @@ const Ctx = createContext<AuthCtx | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [session, setSession] = useState<Session | null>(null);
+  const [expired, setExpired] = useState(false);
+
+  // Mirror of status for the imperative 401 handler, which runs outside React's
+  // render cycle and must read the live value without re-registering.
+  const statusRef = useRef<AuthStatus>(status);
+  statusRef.current = status;
 
   const refresh = useCallback(async () => {
     try {
@@ -51,15 +63,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* logout is idempotent server-side; clear locally regardless */
     }
+    setExpired(false);
     setSession(null);
     setStatus("anonymous");
+  }, []);
+
+  const clearExpired = useCallback(() => setExpired(false), []);
+
+  // Register the central 401 interceptor. A 401 on any API call while a session
+  // was live means it expired mid-use → flip to the session-expired surface and
+  // redirect. A 401 before auth (the boot whoami probe, a bad-credentials login)
+  // is left to its local flow — the status gate keeps this a no-op there.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      if (statusRef.current === "authenticated") {
+        setExpired(true);
+        setSession(null);
+        setStatus("anonymous");
+      }
+    });
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  return <Ctx.Provider value={{ status, session, refresh, logout }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ status, session, expired, refresh, logout, clearExpired }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useAuth(): AuthCtx {

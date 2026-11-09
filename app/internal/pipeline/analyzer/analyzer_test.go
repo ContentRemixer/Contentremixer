@@ -320,6 +320,82 @@ func TestLocalFSCommit(t *testing.T) {
 	}
 }
 
+// TestLocalFSCommitNoGitBinary exercises Commit()'s git-plumbing resolution
+// against hand-built .git layouts, with NO git binary involved — the operator
+// image is distroless and ships none (ISI-7239). Each case mirrors a layout an
+// init-container `git clone` can leave behind.
+func TestLocalFSCommitNoGitBinary(t *testing.T) {
+	const want = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4"
+
+	writeGit := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		root := t.TempDir()
+		for name, body := range files {
+			abs := filepath.Join(root, filepath.FromSlash(name))
+			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(abs, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+
+	t.Run("detached HEAD", func(t *testing.T) {
+		root := writeGit(t, map[string]string{".git/HEAD": want + "\n"})
+		got, err := (LocalFS{Root: root}).Commit()
+		if err != nil || got != want {
+			t.Fatalf("Commit() = %q, %v; want %q, nil", got, err, want)
+		}
+	})
+
+	t.Run("symbolic HEAD via loose ref", func(t *testing.T) {
+		root := writeGit(t, map[string]string{
+			".git/HEAD":            "ref: refs/heads/main\n",
+			".git/refs/heads/main": want + "\n",
+		})
+		got, err := (LocalFS{Root: root}).Commit()
+		if err != nil || got != want {
+			t.Fatalf("Commit() = %q, %v; want %q, nil", got, err, want)
+		}
+	})
+
+	t.Run("symbolic HEAD via packed-refs", func(t *testing.T) {
+		root := writeGit(t, map[string]string{
+			".git/HEAD": "ref: refs/heads/main\n",
+			".git/packed-refs": "# pack-refs with: peeled fully-peeled sorted\n" +
+				want + " refs/heads/main\n" +
+				"ffffffffffffffffffffffffffffffffffffffff refs/tags/v1\n" +
+				"^eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
+		})
+		got, err := (LocalFS{Root: root}).Commit()
+		if err != nil || got != want {
+			t.Fatalf("Commit() = %q, %v; want %q, nil", got, err, want)
+		}
+	})
+
+	t.Run("worktree .git pointer file", func(t *testing.T) {
+		root := t.TempDir()
+		realGit := writeGit(t, map[string]string{".git/HEAD": want + "\n"})
+		if err := os.WriteFile(filepath.Join(root, ".git"),
+			[]byte("gitdir: "+filepath.Join(realGit, ".git")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := (LocalFS{Root: root}).Commit()
+		if err != nil || got != want {
+			t.Fatalf("Commit() = %q, %v; want %q, nil", got, err, want)
+		}
+	})
+
+	t.Run("missing ref errors", func(t *testing.T) {
+		root := writeGit(t, map[string]string{".git/HEAD": "ref: refs/heads/gone\n"})
+		if _, err := (LocalFS{Root: root}).Commit(); err == nil {
+			t.Fatal("expected an error when the ref resolves to nothing")
+		}
+	})
+}
+
 // --- sanity: fixture tree is what the tests assume ---
 
 func TestFixtureTreeIntact(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
 )
@@ -23,18 +24,19 @@ import (
 type Server struct {
 	auth    *auth.Provider
 	store   *store.Store
+	scrape  *scrapejobs.Store
 	content *content.Store
 	log     *slog.Logger
 }
 
-// New builds a Server. If log is nil, slog.Default() is used. content may be
-// nil (Postgres not configured), in which case the content-collaboration
-// routes are not mounted.
-func New(prov *auth.Provider, st *store.Store, content *content.Store, log *slog.Logger) *Server {
+// New builds a Server. If log is nil, slog.Default() is used. scrape and
+// content may each be nil (Postgres not configured), in which case the
+// corresponding scraper-review / content-collaboration routes are not mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, content: content, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -70,6 +72,8 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("DELETE "+base+"/{name}", s.protect(s.deleteHandler(kind)))
 	}
 
+	// Scraper-review surface (plan §3.2), gated by scrapejobs.Store.
+	s.mountScrapeJobs(mux)
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by
 	// content.Store.
 	s.mountContent(mux)

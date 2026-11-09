@@ -77,3 +77,57 @@ export const LogoutIcon = (p: IconProps) => (
     <path d="M16 17l5-5-5-5M21 12H9" />
   </svg>
 );
+
+// --- extended set added for the W7 component library (ISI-7210) ---
+
+export const CheckIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m20 6-11 11-5-5" />
+  </svg>
+);
+
+export const CloseIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M18 6 6 18M6 6l12 12" />
+  </svg>
+);
+
+export const PlusIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+export const ChevronRightIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
+export const CommentIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9.5 9.5 0 0 1-4-.9L3 20l1.4-4.5a8.4 8.4 0 0 1-1-4A8.38 8.38 0 0 1 12 3a8.38 8.38 0 0 1 9 8.5Z" />
+  </svg>
+);
+
+export const MoreIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="5" cy="12" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+  </svg>
+);
+
+export const UserPlusIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M19 8v6M22 11h-6" />
+  </svg>
+);
+
+export const SparkleIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
+  </svg>
+);

@@ -57,6 +57,28 @@ var ModelProfileKind = ResourceKind{
 	},
 }
 
+// DevRelPersonaKind — owner-scoped style config (Phase 2, ISI-7143). NOT
+// admin-only: a DevRel may create/list/mutate their OWN personas (clause 2 of
+// §6.3 admits on owner match); the validating webhook enforces a non-empty
+// owner so no persona is ever platform-owned. Admin still sees all via clause 1.
+var DevRelPersonaKind = ResourceKind{
+	Kind:      "DevRelPersona",
+	AdminOnly: false,
+	newObject: func() client.Object { return &v1alpha1.DevRelPersona{} },
+	newList:   func() client.ObjectList { return &v1alpha1.DevRelPersonaList{} },
+	ownerOf: func(o client.Object) string {
+		return o.(*v1alpha1.DevRelPersona).Spec.Owner.Subject
+	},
+	items: func(l client.ObjectList) []client.Object {
+		src := l.(*v1alpha1.DevRelPersonaList).Items
+		out := make([]client.Object, len(src))
+		for i := range src {
+			out[i] = &src[i]
+		}
+		return out
+	},
+}
+
 // ReferenceRepoKind — admin-only platform config (design §2.2, §6.1).
 var ReferenceRepoKind = ResourceKind{
 	Kind:      "ReferenceRepo",

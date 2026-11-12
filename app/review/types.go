@@ -106,6 +106,43 @@ type ScrapedChunk struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+// StyleProfile is the synthesized, DevRel-reviewable writing-style profile for a
+// persona (plan §10 decision 1 = synthesize). Style synthesis (D3, ISI-7358)
+// produces it from the persona's accepted + embedded exemplars; the owning
+// DevRel reviews it, runs a content test against it (D4, ISI-7359), and
+// VALIDATES it (D7, ISI-7362).
+//
+// It lives as a Postgres row — NOT in DevRelPersona CRD status — for the same
+// reason the scraped corpus does: it is expensive-to-regenerate synthesized
+// content (an LLM call) and large free text, which etcd/status is the wrong
+// store for. The CRD carries only the Validated status condition (a cheap
+// declarative gate the writer-conditioner reads); THIS row is the content source
+// of truth, and the Booth validate action writes both in the same operation.
+// One profile per (owner, persona). See docs/design/isi-7356-devrel-model-contract.md.
+type StyleProfile struct {
+	PersonaName   string `json:"personaName"`
+	OwnerSubject  string `json:"owner"`
+	ReferenceRepo string `json:"referenceRepo,omitempty"`
+	// Traits is the synthesized voice/tone description the DevRel reviews
+	// (markdown). It is human-readable on purpose: the onboarding "review your
+	// style" surface renders it verbatim.
+	Traits string `json:"traits"`
+	// Sample is a short generated passage demonstrating the synthesized style,
+	// shown alongside Traits so the DevRel judges the profile on real output.
+	Sample string `json:"sample"`
+	// Validated is the owner's accept decision. It mirrors the DevRelPersona
+	// `Validated` status condition; the Booth validate action writes both.
+	Validated   bool       `json:"validated"`
+	ValidatedAt *time.Time `json:"validatedAt,omitempty"`
+	// SourceCount is how many accepted exemplars the synthesis drew on — shown
+	// for reviewer confidence and used to detect a profile gone stale after
+	// re-ingestion (SourceCount drift vs the persona's accepted sources).
+	SourceCount   int       `json:"sourceCount"`
+	SynthesizedAt time.Time `json:"synthesizedAt"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
 // validSourceTransitions is the review state machine: a source only ever leaves
 // pending, and each terminal/transient target is reached exactly once.
 var validSourceTransitions = map[SourceStatus]map[SourceStatus]bool{
@@ -134,10 +171,21 @@ func (e ErrInvalidTransition) Error() string {
 	return fmt.Sprintf("review: invalid source transition %s -> %s", e.From, e.To)
 }
 
-// KnownSourceKinds mirrors the scraper's supported kinds (youtube|article). The
-// Booth API validates job requests against this so a bad kind fails at enqueue
-// time, not inside a pod that can only fail the whole Job.
-var KnownSourceKinds = []string{"youtube", "article"}
+// KnownSourceKinds mirrors the scraper's supported reference kinds. The Booth
+// API validates job requests against this so a bad kind fails at enqueue time,
+// not inside a pod that can only fail the whole Job.
+//
+// It is string-duplicated from v1alpha1.KnownReferenceKinds on purpose: this
+// public package stays free of the k8s API types so the Booth module can import
+// it without dragging in controller-runtime. The lock-step is enforced
+// mechanically by TestKnownSourceKindsMatchCRD (app/review), not by a comment.
+var KnownSourceKinds = []string{
+	"youtube",
+	"article",
+	"github-repo",
+	"teleprompter-script",
+	"talk-recording",
+}
 
 // ValidSourceKind reports whether kind is a scraper-supported reference kind.
 func ValidSourceKind(kind string) bool {

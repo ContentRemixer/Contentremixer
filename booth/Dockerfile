@@ -9,7 +9,7 @@
 #
 # Cross-compile from the native BUILDPLATFORM (Go needs no emulation to target a
 # foreign GOARCH), so a multi-arch buildx run stays fast.
-FROM --platform=$BUILDPLATFORM golang:1.26.10 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.11 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /workspace

@@ -60,6 +60,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/logout", s.auth.Handlers.Logout)
 	mux.Handle("GET /v1/auth/whoami", s.auth.Middleware.Wrap(http.HandlerFunc(s.auth.Handlers.WhoAmI)))
 
+	// DevRel self-service first-run detection (ISI-7360 D5): the SPA probes this
+	// after login to decide whether to launch the onboarding wizard. Behind the
+	// session Middleware; the answer is scoped to the caller's own subject.
+	mux.Handle("GET /v1/onboarding-status", s.protect(s.onboardingStatusHandler))
+
 	// CRUD over the registered kinds, each wrapped by the auth Middleware so the
 	// session is resolved (or the request 401'd) before the handler runs.
 	for _, kind := range []store.ResourceKind{store.DevRelPersonaKind, store.ModelProfileKind, store.ReferenceRepoKind} {
@@ -150,6 +155,15 @@ func (s *Server) createHandler(kind store.ResourceKind) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
+		}
+		// Self-service owner stamping (ISI-7360 D5): for owner-scoped kinds
+		// (DevRelPersona), an OMITTED owner defaults to the caller's subject so a
+		// DevRel owns what they create without having to know/send their own
+		// subject. An explicitly-supplied owner is left intact and still runs the
+		// full §6.3 gate — so a DevRel naming someone else's subject is denied
+		// (403), not silently re-homed; an Admin may create on a DevRel's behalf.
+		if kind.OwnerStampable() && kind.OwnerSubject(obj) == "" {
+			kind.SetOwnerSubject(obj, sess.Subject)
 		}
 		if err := s.store.Create(r.Context(), sess, kind, obj); err != nil {
 			s.writeStoreErr(w, err)

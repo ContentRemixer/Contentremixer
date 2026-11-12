@@ -18,7 +18,8 @@ var dummyHash, _ = HashPassword("not-a-real-password-timing-equalizer")
 // §6.3 predicate) changes.
 type Authenticator interface {
 	// Authenticate returns the Session for valid credentials, or
-	// ErrInvalidCredentials. The returned subject == username.
+	// ErrInvalidCredentials. The Session carries the user's stable Subject (the
+	// owner key, not the username — see auth.User.Subject / contract §6).
 	Authenticate(username, password string) (Session, error)
 }
 
@@ -44,5 +45,5 @@ func (a *BcryptAuthenticator) Authenticate(username, password string) (Session, 
 	if !verifyPassword(u.BcryptHash, password) {
 		return Session{}, ErrInvalidCredentials
 	}
-	return Session{Subject: u.Username, Role: u.Role}, nil
+	return Session{Subject: u.Subject, Role: u.Role}, nil
 }

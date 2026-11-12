@@ -4,11 +4,16 @@
 // no vectors — so it is independent of decision #6 (pgvector) and hands its
 // RawDocs to the chunk stage (internal/rag/chunk), which hands chunks to P2-C.
 //
-// Two kinds are wired, mirroring v1alpha1.KnownReferenceKinds and the CRD
-// enum:
+// Dispatch covers every v1alpha1.KnownReferenceKinds entry (and the CRD enum).
+// Two kinds fetch today; the three DevRel-onboarding kinds (ISI-7356 contract)
+// are registered as fail-closed placeholders until D2 (ISI-7357) lands their
+// fetchers, so byKind's key set always equals the enum:
 //
-//	youtube → fetch the video's caption track and normalize to transcript text
-//	article → fetch the page HTML and extract the readable article body
+//	youtube             → fetch the video's caption track → transcript text
+//	article             → fetch the page HTML → readable article body (also blog)
+//	github-repo         → markdown-only repo fetch              (D2: ISI-7357)
+//	teleprompter-script → script document → plain text          (D2: ISI-7357)
+//	talk-recording      → captioned recording URL → captions    (D2: ISI-7357)
 //
 // Every network call goes through an injectable Doer seam and is bounded by a
 // per-scrape timeout, so the whole stage is unit-testable with fixtures and
@@ -131,15 +136,47 @@ func New(opts *Options) *Scraper {
 	s.byKind = map[string]kindScraper{
 		KindYouTube: &youtubeScraper{fetch: f},
 		KindArticle: &articleScraper{fetch: f, robots: s.robots},
+		// DevRel onboarding kinds (ISI-7356 contract). Their fetchers are D2
+		// (ISI-7357); until then they fail closed with a clear "not yet
+		// implemented" error so a reference that admits against the CRD enum
+		// surfaces an actionable scrape failure rather than the misleading
+		// "unsupported kind" path (which, now that the enum lists these, would
+		// name the kind as both wanted and unsupported). byKind's key set MUST
+		// equal v1alpha1.KnownReferenceKinds — asserted by TestByKindCoversKnownKinds.
+		KindGitHubRepo:         notImplemented(KindGitHubRepo, "ISI-7357"),
+		KindTeleprompterScript: notImplemented(KindTeleprompterScript, "ISI-7357"),
+		KindTalkRecording:      notImplemented(KindTalkRecording, "ISI-7357"),
 	}
 	return s
 }
 
-// Kind identifiers (mirror v1alpha1.KnownReferenceKinds).
+// Kind identifiers alias the v1alpha1 contract constants (the single source of
+// truth) so the dispatch cannot drift from KnownReferenceKinds.
 const (
-	KindYouTube = "youtube"
-	KindArticle = "article"
+	KindYouTube            = v1alpha1.ReferenceKindYouTube
+	KindArticle            = v1alpha1.ReferenceKindArticle
+	KindGitHubRepo         = v1alpha1.ReferenceKindGitHubRepo
+	KindTeleprompterScript = v1alpha1.ReferenceKindTeleprompterScript
+	KindTalkRecording      = v1alpha1.ReferenceKindTalkRecording
 )
+
+// notImplementedScraper is a placeholder for a reference kind that is in the
+// contract (v1alpha1.KnownReferenceKinds) but whose fetcher has not landed yet.
+// It keeps byKind's key set equal to the enum (lock-step) while failing closed
+// with an actionable error naming the tracking issue. D2 replaces each entry
+// with the real per-kind scraper (ISI-7357).
+type notImplementedScraper struct {
+	kind  string
+	issue string
+}
+
+func notImplemented(kind, issue string) kindScraper {
+	return notImplementedScraper{kind: kind, issue: issue}
+}
+
+func (n notImplementedScraper) scrape(context.Context, v1alpha1.PersonaReference) ([]rag.RawDoc, error) {
+	return nil, fmt.Errorf("scrape: reference kind %q is not yet implemented (tracked by %s)", n.kind, n.issue)
+}
 
 // Scrape resolves one reference to RawDocs. It validates the reference, applies
 // the per-scrape timeout, dispatches by Kind, stamps FetchedAt/SourceKind, and
@@ -231,6 +268,7 @@ func classifyScrapeErr(err error) metricconv.ReferenceFailReason {
 	case strings.Contains(msg, "no usable text") || strings.Contains(msg, "yielded no"):
 		return metricconv.ReferenceFailReasonEmpty
 	case strings.Contains(msg, "unsupported reference kind") ||
+		strings.Contains(msg, "not yet implemented") ||
 		strings.Contains(msg, "could not locate") ||
 		strings.Contains(msg, "decode") ||
 		strings.Contains(msg, "robots") ||

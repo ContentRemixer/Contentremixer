@@ -30,6 +30,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
+    - jsonPath: .status.conditions[?(@.type=="Validated")].status
+      name: Validated
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -73,6 +76,18 @@ spec:
                       for Admin/platform-owned resources.
                     type: string
                 type: object
+              primaryContentKind:
+                description: |-
+                  PrimaryContentKind is the dominant medium this DevRel produces, captured
+                  during onboarding (plan O2): blog | video | talk | tutorial. It conditions
+                  style synthesis (D3) and the content test (D4). Optional; unset means
+                  "unspecified" and the synthesizer falls back to a medium-agnostic profile.
+                enum:
+                - blog
+                - video
+                - talk
+                - tutorial
+                type: string
               references:
                 description: |-
                   References are the style exemplars to ingest (talks, posts). A change to
@@ -82,12 +97,17 @@ spec:
                   properties:
                     kind:
                       description: |-
-                        Kind selects how P2-B fetches the exemplar: youtube | article.
-                        The closed set mirrors KnownReferenceKinds; the validating webhook
-                        rejects anything else with a message naming the allowed kinds.
+                        Kind selects how the scraper fetches the exemplar: youtube | article |
+                        github-repo | teleprompter-script | talk-recording. The closed set mirrors
+                        KnownReferenceKinds; the validating webhook rejects anything else with a
+                        message naming the allowed kinds. Keep this enum in lock-step with the
+                        ReferenceKind* constants.
                       enum:
                       - youtube
                       - article
+                      - github-repo
+                      - teleprompter-script
+                      - talk-recording
                       type: string
                     url:
                       description: URL of the exemplar (a YouTube video or an article
@@ -100,11 +120,35 @@ spec:
                   type: object
                 type: array
                 x-kubernetes-list-type: atomic
+              retrieval:
+                description: |-
+                  Retrieval tunes top-k owner-scoped exemplar retrieval at write time
+                  (design §5). Optional; defaults apply when unset. Read by the P2-D writer
+                  conditioner (ISI-7147), never by the ingestion reconciler.
+                properties:
+                  minScore:
+                    description: |-
+                      MinScore drops exemplars below this cosine similarity (0..1), as a decimal
+                      string so the CRD does not depend on float OpenAPI semantics. Empty or "0"
+                      keeps all top-k; a malformed value is treated as 0 by the conditioner
+                      (best-effort, never fails the run).
+                    type: string
+                  topK:
+                    default: 5
+                    description: |-
+                      TopK is the maximum number of voice exemplars injected into the writer
+                      prompt. Defaults to 5 when zero.
+                    maximum: 20
+                    minimum: 1
+                    type: integer
+                type: object
               selfDescription:
                 description: |-
                   SelfDescription is a free-text description of the persona's voice/style.
                   The agent may author or refine it (P2-D writer feedback loop); it seeds
-                  the style prompt even before any references are embedded.
+                  the style prompt even before any references are embedded. The DevRel
+                  onboarding bio / extra-context box REUSES this field — no new field is
+                  added for it (ISI-7356).
                 type: string
             required:
             - owner

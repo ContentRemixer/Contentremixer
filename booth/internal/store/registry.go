@@ -23,6 +23,7 @@ type ResourceKind struct {
 	newObject func() client.Object
 	newList   func() client.ObjectList
 	ownerOf   func(client.Object) string
+	setOwner  func(client.Object, string)
 	items     func(client.ObjectList) []client.Object
 }
 
@@ -34,6 +35,17 @@ func (r ResourceKind) NewList() client.ObjectList { return r.newList() }
 
 // OwnerSubject reads spec.owner.subject from a typed object of this kind.
 func (r ResourceKind) OwnerSubject(o client.Object) string { return r.ownerOf(o) }
+
+// OwnerStampable reports whether this kind supports server-side owner stamping
+// (true only for owner-scoped classes such as DevRelPersona; admin-only platform
+// config is never stamped — its owner is deliberately empty/platform-owned).
+func (r ResourceKind) OwnerStampable() bool { return r.setOwner != nil }
+
+// SetOwnerSubject writes spec.owner.subject on a typed object of this kind. It is
+// how the create path stamps a self-service resource with the caller's subject so
+// a DevRel owns what they create without having to (or being able to spoof) the
+// owner field. Callers must guard with OwnerStampable.
+func (r ResourceKind) SetOwnerSubject(o client.Object, subject string) { r.setOwner(o, subject) }
 
 // Items enumerates the elements of a typed list of this kind.
 func (r ResourceKind) Items(l client.ObjectList) []client.Object { return r.items(l) }
@@ -68,6 +80,9 @@ var DevRelPersonaKind = ResourceKind{
 	newList:   func() client.ObjectList { return &v1alpha1.DevRelPersonaList{} },
 	ownerOf: func(o client.Object) string {
 		return o.(*v1alpha1.DevRelPersona).Spec.Owner.Subject
+	},
+	setOwner: func(o client.Object, subject string) {
+		o.(*v1alpha1.DevRelPersona).Spec.Owner.Subject = subject
 	},
 	items: func(l client.ObjectList) []client.Object {
 		src := l.(*v1alpha1.DevRelPersonaList).Items

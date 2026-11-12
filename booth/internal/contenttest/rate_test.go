@@ -11,7 +11,12 @@ func TestLimiter_CapsPerWindowPerSubject(t *testing.T) {
 	l := NewLimiter(2, time.Minute)
 	l.now = func() time.Time { return now }
 
-	if !l.Allow("a") || !l.Allow("a") {
+	// Two separate Allow calls (each records a hit) — kept as distinct
+	// statements so the two budget-consuming calls are not a single repeated
+	// expression.
+	first := l.Allow("a")
+	second := l.Allow("a")
+	if !first || !second {
 		t.Fatal("first two calls should be allowed")
 	}
 	if l.Allow("a") {

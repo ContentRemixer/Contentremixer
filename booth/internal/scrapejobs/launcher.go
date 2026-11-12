@@ -20,6 +20,12 @@ type JobSpec struct {
 	PersonaName   string
 	SourceURL     string
 	SourceKind    string
+	// SourceText is the inline body for the no-fetch teleprompter-script kind
+	// (plan §5: "direct text ingest — no fetch"). The DevRel pastes a script
+	// during onboarding and Booth stores it; the gating store passes it here so
+	// the scrape-job ingests it without a network fetch. Empty for fetch kinds.
+	// Teleprompter scripts are small (a few KB); it rides as a Job env literal.
+	SourceText string
 }
 
 // Launcher enqueues a scrape as an out-of-process unit. The real impl creates a
@@ -90,6 +96,11 @@ func (l *K8sLauncher) Launch(ctx context.Context, spec JobSpec) (string, error) 
 				Key:                  l.DSNSecretKey,
 			},
 		}},
+	}
+	// Only the no-fetch teleprompter-script kind carries an inline body; keep it
+	// off fetch-kind Jobs so their manifests stay small.
+	if spec.SourceText != "" {
+		env = append(env, corev1.EnvVar{Name: "SCRAPE_SOURCE_TEXT", Value: spec.SourceText})
 	}
 
 	job := &batchv1.Job{

@@ -11,9 +11,9 @@
 //
 //	youtube             → fetch the video's caption track → transcript text
 //	article             → fetch the page HTML → readable article body (also blog)
-//	github-repo         → markdown-only repo fetch              (D2: ISI-7357)
-//	teleprompter-script → script document → plain text          (D2: ISI-7357)
-//	talk-recording      → captioned recording URL → captions    (D2: ISI-7357)
+//	github-repo         → markdown-only repo fetch (README + docs/** + tutorials)
+//	teleprompter-script → inline script body → plain text (no fetch)
+//	talk-recording      → captioned/transcript URL → caption text (reuses youtube)
 //
 // Every network call goes through an injectable Doer seam and is bounded by a
 // per-scrape timeout, so the whole stage is unit-testable with fixtures and
@@ -76,6 +76,20 @@ type Options struct {
 	// DisableRobots turns off robots.txt enforcement. Default (false) means a
 	// Disallow for our UserAgent on the target path fails the scrape closed.
 	DisableRobots bool
+	// SourceText is the inline body for no-fetch reference kinds, i.e.
+	// teleprompter-script: the DevRel pastes a talk/teleprompter script during
+	// onboarding, Booth stores it, and the scrape-job hands it here so the
+	// scraper ingests it directly — no network fetch (plan §5) — then it is
+	// chunked/embedded like any fetched exemplar. Empty for fetch kinds. Because
+	// a scrape-job process handles exactly one reference, carrying the single
+	// inline body on Options (rather than the frozen URL+Kind PersonaReference,
+	// which has no text field) is the seam D2 uses without reopening the D1 CRD
+	// contract.
+	SourceText string
+	// GitHubToken, when non-empty, authenticates github-repo API + raw fetches so
+	// a repo scrape is not throttled by GitHub's 60-req/hr anonymous limit.
+	// Optional: anonymous access works for public repos within the fan-out budget.
+	GitHubToken string
 }
 
 func (o *Options) timeout() time.Duration {
@@ -133,19 +147,18 @@ func New(opts *Options) *Scraper {
 		maxDocs: o.maxDocs(),
 		robots:  newRobotsCache(f, o.DisableRobots),
 	}
+	yt := &youtubeScraper{fetch: f}
 	s.byKind = map[string]kindScraper{
-		KindYouTube: &youtubeScraper{fetch: f},
+		KindYouTube: yt,
 		KindArticle: &articleScraper{fetch: f, robots: s.robots},
-		// DevRel onboarding kinds (ISI-7356 contract). Their fetchers are D2
-		// (ISI-7357); until then they fail closed with a clear "not yet
-		// implemented" error so a reference that admits against the CRD enum
-		// surfaces an actionable scrape failure rather than the misleading
-		// "unsupported kind" path (which, now that the enum lists these, would
-		// name the kind as both wanted and unsupported). byKind's key set MUST
-		// equal v1alpha1.KnownReferenceKinds — asserted by TestByKindCoversKnownKinds.
-		KindGitHubRepo:         notImplemented(KindGitHubRepo, "ISI-7357"),
-		KindTeleprompterScript: notImplemented(KindTeleprompterScript, "ISI-7357"),
-		KindTalkRecording:      notImplemented(KindTalkRecording, "ISI-7357"),
+		// DevRel onboarding kinds (ISI-7356 contract) — D2 (ISI-7357) fetchers.
+		// byKind's key set MUST equal v1alpha1.KnownReferenceKinds — asserted by
+		// TestByKindCoversKnownKinds — so a kind the CRD admits never dead-ends.
+		KindGitHubRepo:         &githubRepoScraper{fetch: f, maxDocs: s.maxDocs, token: o.GitHubToken},
+		KindTeleprompterScript: &teleprompterScraper{text: o.SourceText},
+		// talk-recording v1 reuses the youtube transcript path when the URL is a
+		// YouTube video, else parses a captioned/transcript URL (plan §10 dec. 2).
+		KindTalkRecording: &talkRecordingScraper{fetch: f, robots: s.robots, youtube: yt},
 	}
 	return s
 }
@@ -159,24 +172,6 @@ const (
 	KindTeleprompterScript = v1alpha1.ReferenceKindTeleprompterScript
 	KindTalkRecording      = v1alpha1.ReferenceKindTalkRecording
 )
-
-// notImplementedScraper is a placeholder for a reference kind that is in the
-// contract (v1alpha1.KnownReferenceKinds) but whose fetcher has not landed yet.
-// It keeps byKind's key set equal to the enum (lock-step) while failing closed
-// with an actionable error naming the tracking issue. D2 replaces each entry
-// with the real per-kind scraper (ISI-7357).
-type notImplementedScraper struct {
-	kind  string
-	issue string
-}
-
-func notImplemented(kind, issue string) kindScraper {
-	return notImplementedScraper{kind: kind, issue: issue}
-}
-
-func (n notImplementedScraper) scrape(context.Context, v1alpha1.PersonaReference) ([]rag.RawDoc, error) {
-	return nil, fmt.Errorf("scrape: reference kind %q is not yet implemented (tracked by %s)", n.kind, n.issue)
-}
 
 // Scrape resolves one reference to RawDocs. It validates the reference, applies
 // the per-scrape timeout, dispatches by Kind, stamps FetchedAt/SourceKind, and
@@ -303,9 +298,15 @@ func (f *fetcher) get(ctx context.Context, url string) ([]byte, *http.Response, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, resp, fmt.Errorf("scrape: fetch %q: unexpected status %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	body, err := readCapped(resp.Body)
 	if err != nil {
 		return nil, resp, fmt.Errorf("scrape: read body of %q: %w", url, err)
 	}
 	return body, resp, nil
+}
+
+// readCapped reads at most maxBodyBytes from r, so a hostile or runaway origin
+// cannot exhaust memory. Shared by every fetch path (article/youtube/github).
+func readCapped(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, maxBodyBytes))
 }

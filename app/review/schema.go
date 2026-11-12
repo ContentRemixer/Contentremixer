@@ -53,4 +53,25 @@ CREATE TABLE IF NOT EXISTS scraped_chunks (
 );
 
 CREATE INDEX IF NOT EXISTS scraped_chunks_source_idx ON scraped_chunks (source_id, ordinal);
+
+-- style_profiles holds the synthesized, DevRel-reviewable writing-style profile
+-- per (owner, persona) (plan §10 decision 1, ISI-7356 §4). Style synthesis (D3,
+-- ISI-7358) upserts it; the content-test endpoint (D4, ISI-7359) reads Traits to
+-- condition a test generation, and the persona-validate action (D4/D7) flips
+-- validated — the Postgres source of truth whose cheap declarative mirror is the
+-- DevRelPersona "Validated" status condition. One row per (owner, persona).
+CREATE TABLE IF NOT EXISTS style_profiles (
+    owner_subject   TEXT         NOT NULL,
+    persona_name    TEXT         NOT NULL,
+    reference_repo  TEXT         NOT NULL DEFAULT '',
+    traits          TEXT         NOT NULL DEFAULT '',
+    sample          TEXT         NOT NULL DEFAULT '',
+    validated       BOOLEAN      NOT NULL DEFAULT false,
+    validated_at    TIMESTAMPTZ,
+    source_count    INT          NOT NULL DEFAULT 0,
+    synthesized_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (owner_subject, persona_name)
+);
 `

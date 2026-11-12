@@ -331,3 +331,65 @@ func marshalMeta(m map[string]any) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// AcceptedExemplar is one owner-scoped style exemplar: an accepted source's
+// chunk text plus the source it came from. Style synthesis (D3, ISI-7358)
+// reads these to derive the persona's named style traits — the same text that
+// accept embedding pushed into the retrieval corpus, so the profile describes
+// the corpus (no second embedding pass: rate/cost guard, plan §5).
+type AcceptedExemplar struct {
+	SourceURL  string
+	SourceKind string
+	Title      string
+	Ordinal    int
+	Text       string
+}
+
+// ListAcceptedExemplars returns the (owner, persona)'s accepted sources' chunk
+// texts in deterministic order (source URL, then ordinal within a source), so
+// repeated syntheses draw the same input. max <= 0 defaults to
+// DefaultExemplarLimit. Only ACCEPTED sources contribute: pending/discarded
+// sources are not voice exemplars, and rescraping rows never enter.
+func (s *Store) ListAcceptedExemplars(ctx context.Context, owner, persona string, max int) ([]AcceptedExemplar, error) {
+	if owner == "" || persona == "" {
+		return nil, fmt.Errorf("review: accepted exemplars need owner+persona (got owner=%q persona=%q)", owner, persona)
+	}
+	if max <= 0 {
+		max = DefaultExemplarLimit
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT s.source_url, s.source_kind, s.title, c.ordinal, c.text
+FROM scraped_chunks c
+JOIN scraped_sources s ON s.id = c.source_id
+WHERE s.owner_subject=$1 AND s.persona_name=$2 AND s.status=$3
+ORDER BY s.source_url, c.ordinal
+LIMIT $4`, owner, persona, string(SourceAccepted), max)
+	if err != nil {
+		return nil, fmt.Errorf("review: list accepted exemplars (%s/%s): %w", owner, persona, err)
+	}
+	defer rows.Close()
+
+	var out []AcceptedExemplar
+	for rows.Next() {
+		var e AcceptedExemplar
+		if err := rows.Scan(&e.SourceURL, &e.SourceKind, &e.Title, &e.Ordinal, &e.Text); err != nil {
+			return nil, fmt.Errorf("review: scan accepted exemplar: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// CountAcceptedSources reports how many distinct accepted sources back the
+// (owner, persona) corpus — StyleProfile.SourceCount, shown for reviewer
+// confidence and used to detect a profile gone stale after re-ingestion.
+func (s *Store) CountAcceptedSources(ctx context.Context, owner, persona string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+SELECT count(*) FROM scraped_sources WHERE owner_subject=$1 AND persona_name=$2 AND status=$3`,
+		owner, persona, string(SourceAccepted)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("review: count accepted sources (%s/%s): %w", owner, persona, err)
+	}
+	return n, nil
+}

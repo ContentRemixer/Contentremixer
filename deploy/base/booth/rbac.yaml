@@ -1,0 +1,56 @@
+# Booth RBAC (ISI-7340, ISI-7334 Phase 2).
+#
+# Namespaced Role, NOT a ClusterRole: booth builds a plain controller-runtime
+# client (no cache, no leader election) and every store method passes
+# client.InNamespace(BOOTH_NAMESPACE) — a Role matches what the binary actually
+# does and keeps the web UI from ever seeing other namespaces.
+#
+# Scope (design §6.2 — Booth's single SA client serves all users; per-user
+# tenancy is the app-side §6.3 predicate, NOT k8s RBAC):
+#   - ModelProfile + ReferenceRepo: the CR kinds the /v1 CRUD surface serves
+#     today (booth/internal/store/registry.go, server.go's registered kinds).
+#   - DevRelPersona: the owner-scoped Phase-2 kind the store registry documents
+#     as the next entry — granted now so the deploy doesn't need an RBAC follow-
+#     up the day the UI wires it.
+#   - batch Jobs: the scraper-review launcher only CREATES the Job and hands the
+#     DSN as a SecretKeyRef (never reads Secrets via the API); status is
+#     tracked in the review database, not the Job object, so no watch/get verbs.
+# The BI-content/review surfaces (scraper-review, content collaboration) are
+# Postgres-backed (BOOTH_*_DSN) and need NO k8s RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: booth
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: booth
+    app.kubernetes.io/part-of: contentremixer
+rules:
+  - apiGroups: ["contentremixer.io"]
+    resources: ["modelprofiles", "referencerepos", "devrelpersonas"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # scraper-review job launcher (booth/internal/scrapejobs.K8sLauncher).
+  # trivy:ignore:KSV-0048 — create on batch Jobs IS this component's designed,
+  #   audited capability (the §6.3 authz predicate + audit record precede every
+  #   Launch); the Role is namespaced and grants create ONLY — no
+  #   update/patch/delete, no other workload kinds. Owner: DevOps (ISI-7340).
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: booth
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: booth
+    app.kubernetes.io/part-of: contentremixer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: booth
+subjects:
+  - kind: ServiceAccount
+    name: booth
+    namespace: contentremixer

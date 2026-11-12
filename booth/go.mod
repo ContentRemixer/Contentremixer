@@ -1,6 +1,6 @@
 module github.com/ContentRemixer/Contentremixer/booth
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/ContentRemixer/Contentremixer/app v0.0.0

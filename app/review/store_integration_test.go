@@ -22,7 +22,7 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() {
 		// Isolate runs: drop our tables so repeated runs start clean.
-		_, _ = st.pool.Exec(context.Background(), `DROP TABLE IF EXISTS scraped_chunks, scraped_sources, scrape_jobs CASCADE`)
+		_, _ = st.pool.Exec(context.Background(), `DROP TABLE IF EXISTS style_profiles, scraped_chunks, scraped_sources, scrape_jobs CASCADE`)
 		st.Close()
 	})
 	return st

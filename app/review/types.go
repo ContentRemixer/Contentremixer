@@ -196,3 +196,8 @@ func ValidSourceKind(kind string) bool {
 	}
 	return false
 }
+
+// DefaultExemplarLimit caps how many accepted exemplar chunks a synthesis pass
+// reads from the review store (D3 rate/cost guard, plan §5: bound the LLM call).
+// The prompt-side character cap lives with the synthesizer.
+const DefaultExemplarLimit = 48

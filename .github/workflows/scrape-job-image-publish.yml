@@ -1,0 +1,112 @@
+# scrape-job image build & publish (ISI-7343) — the app/cmd/scrape-job binary
+# the Booth K8sLauncher runs as a batch Job. Mirrors image-publish.yml (the
+# operator), but:
+#   - package is the dedicated `ghcr.io/contentremixer/scrape-job`.
+#   - file = app/Dockerfile.scrape-job (distroless/static, no git), context app/.
+#
+#   PRs / design branches : build-only, both arches, GHA cache, NO push, NO creds.
+#   push to main          : build + push the `sha-<12>` tag (no `latest`).
+#   push to v* tag        : build + push `vX.Y.Z` + `latest` + `sha-<12>`.
+#
+# Published images are cosign keyless-signed (Fulcio/Rekor OIDC) and carry
+# BuildKit SBOM + max-provenance attestations, exactly like content-operator and
+# booth. The Booth Deployment pins BOOTH_SCRAPER_IMAGE to the `sha-<12>` tag this
+# emits (set in the k8squad-test overlay once a main build publishes it).
+name: scrape-job-image-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "app/**"
+      - ".github/workflows/scrape-job-image-publish.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/scrape-job-image-publish.yml"
+
+permissions:
+  contents: read
+  packages: write   # push to GHCR
+  id-token: write   # cosign keyless OIDC (Fulcio)
+
+concurrency:
+  group: scrape-job-image-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/contentremixer/scrape-job
+  # Pin cosign so keyless signing is reproducible across runner image bumps.
+  COSIGN_VERSION: v2.4.1
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # The `sha-<12hex>` tag is the hand-off contract: the Booth deploy pins
+      # exactly this tag via BOOTH_SCRAPER_IMAGE. `latest` is release-only, so
+      # main publishes the sha tag alone.
+      - name: Compute tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA12="${GITHUB_SHA::12}"
+          TAGS="${IMAGE}:sha-${SHA12}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:latest"
+          fi
+          echo "tags=${TAGS}" >>"$GITHUB_OUTPUT"
+          {
+            echo "### scrape-job-image-publish"
+            echo "- push: \`${{ github.event_name != 'pull_request' }}\`"
+            echo "- tags:"
+            echo "$TAGS" | tr ',' '\n' | sed 's/^/  - `/; s/$/`/'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # Creds only on push events — PRs stay build-only with no secret exposure.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: app/Dockerfile.scrape-job
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Sign the pushed image index BY DIGEST (one signature covers every tag and
+      # both arches). Keyless: OIDC → Fulcio cert → Rekor transparency log.
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Sign image (keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo "signed ${IMAGE}@${DIGEST}" >>"$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,36 @@
+# Build the scrape-job binary (ISI-7343) — the app/cmd/scrape-job entrypoint the
+# Booth K8sLauncher runs as a Kubernetes batch Job (booth/internal/scrapejobs).
+# It fetches ONE reference (ISI-7145 scraper), chunks it, and writes pending
+# ScrapedSource/ScrapedChunk rows to Postgres (app/review), then marks the
+# scrape_jobs row done. Published as ghcr.io/contentremixer/scrape-job by
+# scrape-job-image-publish.yml; the Booth Deployment points BOOTH_SCRAPER_IMAGE
+# at the sha-<12> tag.
+#
+# Separate Dockerfile (not app/Dockerfile): that one builds cmd/main.go (the
+# operator) and ships git on alpine for analyzer.Commit(). The scrape-job only
+# reaches Postgres + the public internet — no git, no shell — so it rides the
+# smaller, attack-surface-minimal distroless/static:nonroot (ca-certificates for
+# the HTTPS scrape + Postgres TLS are built in; default UID 65532 matches the
+# launcher's hardened Job securityContext: runAsNonRoot, readOnlyRootFilesystem,
+# drop-ALL).
+FROM golang:1.26.11 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY api/ api/
+COPY internal/ internal/
+COPY review/ review/
+COPY cmd/scrape-job/ cmd/scrape-job/
+# TARGETOS/TARGETARCH come from buildx per-platform; honour them so the arm64
+# image carries an arm64 binary (the operator Dockerfile hardcodes amd64 — a
+# known wart; this one cross-compiles correctly for the multi-arch publish).
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -a -o scrape-job ./cmd/scrape-job
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /workspace/scrape-job /scrape-job
+USER 65532:65532
+ENTRYPOINT ["/scrape-job"]

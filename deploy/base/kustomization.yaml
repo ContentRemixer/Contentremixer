@@ -31,9 +31,19 @@ resources:
   # ../secrets/pgvector-credentials.example.yaml) — NOT listed here.
   - postgres/statefulset.yaml
   - postgres/service.yaml
+  # Booth web UI / API server (ISI-7340, ISI-7334 Phase 2). The booth-auth
+  # Secret (session key + seed Admin) is created out-of-band exactly like
+  # pgvector-credentials (see ../secrets/booth-auth.example.yaml).
+  - booth/serviceaccount.yaml
+  - booth/rbac.yaml
+  - booth/service.yaml
+  - booth/deployment.yaml
   # NB: no Ingress here — webhook exposure is cluster-specific and lives in the
   # overlay (k8Squad test uses kgateway + MetalLB, see overlays/k8squad-test).
+  # Same for the Booth HTTPRoute: it attaches to the overlay's Gateway.
 
 images:
   - name: ghcr.io/contentremixer/operator
     newTag: latest # overlay pins a real sha-/vX.Y.Z tag
+  - name: ghcr.io/contentremixer/booth
+    newTag: latest # overlay pins a real sha- tag (booth-image-publish.yml)

@@ -1,0 +1,19 @@
+# Booth Service (ISI-7340): ClusterIP :8080, frontend target of the
+# `contentremixer` Gateway's booth HTTPRoute (overlay exposure.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: booth
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: booth
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: booth
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP

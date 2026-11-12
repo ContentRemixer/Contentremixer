@@ -1,0 +1,150 @@
+# Booth Deployment (ISI-7340, ISI-7334 Phase 2): the web UI / API server
+# (single front door to the CRs, design §6). 1 replica — the user store and
+# sessions are IN-MEMORY (board caveat: users/sessions the UI creates reset on
+# pod restart; the seed Admin is re-created from booth-auth at every start), so
+# more replicas would not share state.
+#
+# Image: ghcr.io/contentremixer/booth, built by booth-image-publish.yml from
+# THIS tree (Go + embedded web/dist in one distroless-static binary, EXPOSE
+# 8080, non-root). Tag pinned per-overlay like the operator.
+#
+# Secrets (out-of-band, design §8 / secrets decision #4):
+#   - booth-auth: BOOTH_SESSION_KEY / BOOTH_ADMIN_USERNAME /
+#     BOOTH_ADMIN_BCRYPT_HASH — shape in deploy/secrets/booth-auth.example.yaml.
+#     fail-closed: the pod stays in CreateContainerConfigError until the
+#     Secret exists (intended — no silent no-auth boot).
+#   - pgvector-credentials: DSN (the same one the operator reads) backs the
+#     optional-but-demo-critical scraper-review (BOOTH_REVIEW_DSN) and content
+#     collaboration (BOOTH_CONTENT_DSN) surfaces; absent => CR-only API.
+#   - litellm-credentials: LITELLM_API_KEY is optional:true — the Phase-1
+#     gateway is keyless (see the operator patch in the k8squad-test overlay).
+#
+# Base assumes TLS upstream (secure cookies, design §7). Clusters that serve
+# Booth over plain HTTP set BOOTH_INSECURE_COOKIE=true in the OVERLAY — see
+# the k8squad-test patch (plain-HTTP LAN exposure).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booth
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: booth
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: booth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: booth
+        app.kubernetes.io/part-of: contentremixer
+    spec:
+      serviceAccountName: booth
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: booth
+          # Pinned, immutable tag — the overlay's kustomize images transformer
+          # restates the pin (ops convention, same lane as the operator); both
+          # refs MUST stay in sync when Booth CI publishes a new sha- tag.
+          # trivy:ignore:KSV-0125 — ghcr.io/contentremixer is this project's
+          #   own GHCR namespace, not an untrusted third-party registry; the
+          #   published image is cosign-signed by CI (ISI-7339). Owner: DevOps
+          #   (ISI-7340), accepted 2026-11-12, revisit if a centralized
+          #   trivy.yaml registry allowlist lands.
+          image: ghcr.io/contentremixer/booth:sha-eae1427662b4
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Resolve the namespace live; the binary's default
+            # ("content-remixer") is a dev default, not our install namespace.
+            - name: BOOTH_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Auth — fails closed when booth-auth is missing (see header).
+            - name: BOOTH_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_SESSION_KEY
+            - name: BOOTH_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_ADMIN_USERNAME
+            - name: BOOTH_ADMIN_BCRYPT_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_ADMIN_BCRYPT_HASH
+            # Scraper-review (ISI-7207) + content collaboration (ISI-7208):
+            # same live pgvector DSN the operator uses (ISI-7148). When absent,
+            # Booth boots as the CR-only API and the routes are not mounted.
+            - name: BOOTH_REVIEW_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: DSN
+            - name: BOOTH_CONTENT_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-credentials
+                  key: DSN
+            # Scraper Job pods resolve their own REVIEW_DSN from this Secret —
+            # the launcher injects it as a SecretKeyRef (DSN never rides in the
+            # Job manifest). Same pgvector secret as above; defaults are
+            # booth-review-dsn/dsn, so pin them explicitly.
+            - name: BOOTH_REVIEW_DSN_SECRET_NAME
+              value: pgvector-credentials
+            - name: BOOTH_REVIEW_DSN_SECRET_KEY
+              value: DSN
+            # Accept-time persona corpus embeddings run through the LiteLLM
+            # gateway (base litellm, port 4000) — same endpoint the operator's
+            # writer uses.
+            - name: BOOTH_LITELLM_URL
+              value: http://litellm.contentremixer.svc:4000
+            - name: LITELLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-credentials
+                  key: apikey
+                  optional: true
+            # NB: BOOTH_SCRAPER_IMAGE intentionally unset while the scrape-job
+            # image has no published ref — the launcher refuses with a clear
+            # error at Launch time (list/approve flows still work). Set it in
+            # an overlay once app/cmd/scrape-job ships a ghcr.io tag.
+            # BOOTH_SCRAPER_SA defaults to "booth-scraper" (serviceaccount.yaml).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # KSV-0014: Booth serves HTTP and talks to the API server — the
+            # distroless-static binary writes nothing to the root FS (slog to
+            # stdout; no temp files), so lock it down.
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

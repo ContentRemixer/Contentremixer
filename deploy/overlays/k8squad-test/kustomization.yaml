@@ -216,7 +216,49 @@ patches:
           mountPath: /workspace/checkout
           readOnly: true
 
+  # ISI-7340 (ISI-7334 Phase 2): the Booth web UI is served over PLAIN HTTP on
+  # the internal LAN test URL (board decision: LAN-direct exposure, no TLS edge
+  # for the demo; the LAN layout itself is internal — do NOT commit addresses),
+  # so the session cookie must drop its Secure flag —
+  # otherwise the browser refuses to store it over http://. Base keeps the
+  # secure default (design §7 assumes TLS upstream); this cluster-specific
+  # override belongs in the overlay. Same JSON6902 style as the operator env
+  # patch above (a merge fragment would false-flag in Trivy as a workload).
+  - target:
+      kind: Deployment
+      name: booth
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: BOOTH_INSECURE_COOKIE
+          value: "true"
+  # ISI-7340 TEMP node pin: the booth image is injected ONLY into a single
+  # worker's containerd because BOTH pull paths are currently broken on this
+  # cluster — the node containerd's ghcr pull-through mirror is unreachable
+  # (ops outage, tracked internally) AND the ghcr.io/contentremixer/booth
+  # package is still private (no packages:read credential in-cluster), so a
+  # node without the cached image cannot pull it. The internal outage detail
+  # and remediation live in the ops tracker, NOT in this public repo. Remove
+  # this pin once the pull path is restored and the package is pullable.
+  - target:
+      kind: Deployment
+      name: booth
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: k8squad-test-workers-4c7xp-r4p87
+
 images:
+  - name: ghcr.io/contentremixer/booth
+    # First booth deploy (ISI-7340): sha-eae1427662b4 is the tag
+    # booth-image-publish.yml pushed from PR #56 / merge commit eae1427 —
+    # the ONLY image of Booth that exists (brand-new GHCR package, cosign-
+    # signed by digest ghcr.io/contentremixer/booth@sha256:06410db6a80c…).
+    # Bump deliberately on the next Booth merge that rebuilds web/dist or
+    # booth/ Go code, matching the CI-published sha-<12> tag.
+    newTag: sha-eae1427662b4
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin

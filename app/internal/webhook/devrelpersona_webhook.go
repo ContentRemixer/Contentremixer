@@ -23,7 +23,9 @@ import (
 //   - require owner: spec.owner.subject must be non-empty (unlike the
 //     Admin-owned Phase-1 CRDs, a persona is always owned by a DevRel);
 //   - reject unknown reference kind: a defence-in-depth re-check of the
-//     CRD enum so the error message names the allowed kinds.
+//     CRD enum so the error message names the allowed kinds;
+//   - reject unknown content-format-target content type: the same
+//     defence-in-depth re-check for spec.contentFormatTargets (D1b, ISI-7370).
 type DevRelPersonaCustomValidator struct{}
 
 var _ admission.CustomValidator = &DevRelPersonaCustomValidator{}
@@ -83,6 +85,16 @@ func validateDevRelPersona(p *contentremixerv1alpha1.DevRelPersona) error {
 		}
 	}
 
+	for i, t := range p.Spec.ContentFormatTargets {
+		if !knownContentFormatType(t.ContentType) {
+			errs = append(errs, field.NotSupported(
+				field.NewPath("spec", "contentFormatTargets").Index(i).Child("contentType"),
+				t.ContentType,
+				contentremixerv1alpha1.KnownContentFormatTypes,
+			))
+		}
+	}
+
 	if len(errs) > 0 {
 		return apierrors.NewInvalid(
 			contentremixerv1alpha1.GroupVersion.WithKind("DevRelPersona").GroupKind(),
@@ -94,6 +106,15 @@ func validateDevRelPersona(p *contentremixerv1alpha1.DevRelPersona) error {
 func knownReferenceKind(kind string) bool {
 	for _, k := range contentremixerv1alpha1.KnownReferenceKinds {
 		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func knownContentFormatType(t contentremixerv1alpha1.ContentFormatType) bool {
+	for _, k := range contentremixerv1alpha1.KnownContentFormatTypes {
+		if k == t {
 			return true
 		}
 	}

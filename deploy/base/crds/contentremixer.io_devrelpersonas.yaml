@@ -63,6 +63,52 @@ spec:
               `role==Admin OR resource.owner==subject`); the owner is enforced non-empty
               by the validating webhook.
             properties:
+              contentFormatTargets:
+                description: |-
+                  ContentFormatTargets are per-content-type OUTPUT length/format targets the
+                  DevRel aims for, captured during onboarding (plan §4/§9, decision 6; O3b,
+                  ISI-7361) and editable later (D7, ISI-7362), e.g. youtube-short→"≤3min",
+                  blog→"~1500 words", linkedin-post→"~1300 chars". These are SOFT writer
+                  guidance (aim-for length/format, NOT hard truncation — decision 6): the
+                  content test (D4, ISI-7359) and LinkedIn promote (D9, ISI-7369) read them to
+                  steer and score generated content, they never clip it. Distinct from the
+                  INPUT References kinds (style exemplar *sources*). ContentType is a closed
+                  set (KnownContentFormatTypes); at most one target per content type.
+                items:
+                  description: |-
+                    ContentFormatTarget is a single per-content-type output length/format target.
+                    It is SOFT writer guidance (decision 6): consumers aim for it, they do not
+                    hard-truncate. See DevRelPersonaSpec.ContentFormatTargets.
+                  properties:
+                    contentType:
+                      description: |-
+                        ContentType is the output deliverable this target applies to: blog |
+                        youtube-short | youtube-video | linkedin-post. The closed set mirrors
+                        KnownContentFormatTypes; the validating webhook rejects anything else with a
+                        message naming the allowed types. Keep this enum in lock-step with the
+                        ContentFormat* constants.
+                      enum:
+                      - blog
+                      - youtube-short
+                      - youtube-video
+                      - linkedin-post
+                      type: string
+                    lengthSpec:
+                      description: |-
+                        LengthSpec is the free-text aim-for length/format for this content type,
+                        e.g. "≤3min", "~25min", "~1500 words", "~1300 chars". It is intentionally
+                        unstructured — a human-readable hint the writer and content test interpret,
+                        not a parsed limit (decision 6: soft guidance, never hard truncation).
+                      minLength: 1
+                      type: string
+                  required:
+                  - contentType
+                  - lengthSpec
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - contentType
+                x-kubernetes-list-type: map
               owner:
                 description: |-
                   Owner is the DevRel that owns this persona. REQUIRED for DevRelPersona

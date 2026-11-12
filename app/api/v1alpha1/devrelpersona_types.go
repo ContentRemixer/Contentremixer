@@ -158,6 +158,20 @@ type DevRelPersonaSpec struct {
 	// +listType=atomic
 	References []PersonaReference `json:"references,omitempty"`
 
+	// ContentFormatTargets are per-content-type OUTPUT length/format targets the
+	// DevRel aims for, captured during onboarding (plan §4/§9, decision 6; O3b,
+	// ISI-7361) and editable later (D7, ISI-7362), e.g. youtube-short→"≤3min",
+	// blog→"~1500 words", linkedin-post→"~1300 chars". These are SOFT writer
+	// guidance (aim-for length/format, NOT hard truncation — decision 6): the
+	// content test (D4, ISI-7359) and LinkedIn promote (D9, ISI-7369) read them to
+	// steer and score generated content, they never clip it. Distinct from the
+	// INPUT References kinds (style exemplar *sources*). ContentType is a closed
+	// set (KnownContentFormatTypes); at most one target per content type.
+	// +optional
+	// +listType=map
+	// +listMapKey=contentType
+	ContentFormatTargets []ContentFormatTarget `json:"contentFormatTargets,omitempty"`
+
 	// Retrieval tunes top-k owner-scoped exemplar retrieval at write time
 	// (design §5). Optional; defaults apply when unset. Read by the P2-D writer
 	// conditioner (ISI-7147), never by the ingestion reconciler.
@@ -178,6 +192,26 @@ type PersonaReference struct {
 	// ReferenceKind* constants.
 	// +kubebuilder:validation:Enum=youtube;article;github-repo;teleprompter-script;talk-recording
 	Kind string `json:"kind"`
+}
+
+// ContentFormatTarget is a single per-content-type output length/format target.
+// It is SOFT writer guidance (decision 6): consumers aim for it, they do not
+// hard-truncate. See DevRelPersonaSpec.ContentFormatTargets.
+type ContentFormatTarget struct {
+	// ContentType is the output deliverable this target applies to: blog |
+	// youtube-short | youtube-video | linkedin-post. The closed set mirrors
+	// KnownContentFormatTypes; the validating webhook rejects anything else with a
+	// message naming the allowed types. Keep this enum in lock-step with the
+	// ContentFormat* constants.
+	// +kubebuilder:validation:Enum=blog;youtube-short;youtube-video;linkedin-post
+	ContentType ContentFormatType `json:"contentType"`
+
+	// LengthSpec is the free-text aim-for length/format for this content type,
+	// e.g. "≤3min", "~25min", "~1500 words", "~1300 chars". It is intentionally
+	// unstructured — a human-readable hint the writer and content test interpret,
+	// not a parsed limit (decision 6: soft guidance, never hard truncation).
+	// +kubebuilder:validation:MinLength=1
+	LengthSpec string `json:"lengthSpec"`
 }
 
 // DevRelPersonaStatus defines the observed state of a DevRelPersona.

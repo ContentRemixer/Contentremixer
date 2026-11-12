@@ -1,0 +1,14 @@
+# Repo-root .dockerignore — applies to the booth image build (context: repo
+# root, see booth/Dockerfile). The operator build uses context: app/, which has
+# its own (empty) context root, so this file does not affect it.
+#
+# node_modules is 90 MB+ and never needed: the SPA is served from the committed
+# booth/web/dist, which Go embeds at compile time. Keep it (and VCS/CI cruft)
+# out of the build context.
+**/node_modules
+**/.git
+.github
+docs
+booth/web/src
+booth/web/e2e
+booth/web/public

@@ -27,7 +27,6 @@ var (
 type fakeProfiles struct {
 	profile   review.StyleProfile
 	getErr    error
-	validated *review.StyleProfile
 	valErr    error
 	gotValOwn string
 }

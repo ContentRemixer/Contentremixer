@@ -233,32 +233,32 @@ patches:
         value:
           name: BOOTH_INSECURE_COOKIE
           value: "true"
-  # ISI-7340 TEMP node pin: the booth image is injected ONLY into a single
-  # worker's containerd because BOTH pull paths are currently broken on this
-  # cluster — the node containerd's ghcr pull-through mirror is unreachable
-  # (ops outage, tracked internally) AND the ghcr.io/contentremixer/booth
-  # package is still private (no packages:read credential in-cluster), so a
-  # node without the cached image cannot pull it. The internal outage detail
-  # and remediation live in the ops tracker, NOT in this public repo. Remove
-  # this pin once the pull path is restored and the package is pullable.
-  - target:
-      kind: Deployment
-      name: booth
-    patch: |-
-      - op: add
-        path: /spec/template/spec/nodeSelector
-        value:
-          kubernetes.io/hostname: k8squad-test-workers-4c7xp-r4p87
+  # ISI-7392: the ISI-7340 TEMP node pin is LIFTED. The pin existed because the
+  # booth image had to be injected into a single worker's containerd (private
+  # package + no in-cluster pull creds). ISI-7392 verified nodes DO reach
+  # upstream ghcr.io (ISI-7342 repoint) but get 401 on the private booth package
+  # (anonymous token), so a *new* tag cannot be pulled by ANY node while the
+  # package stays private. The durable fix is making ghcr.io/contentremixer/booth
+  # PUBLIC — then every node pulls anonymously and no node pin / pull secret is
+  # needed. With the pin removed, the pod schedules on any worker once the
+  # package is public. (If the owner instead supplies a read:packages token,
+  # wire it as the `booth` SA's imagePullSecret rather than re-adding this pin.)
 
 images:
   - name: ghcr.io/contentremixer/booth
-    # First booth deploy (ISI-7340): sha-eae1427662b4 is the tag
-    # booth-image-publish.yml pushed from PR #56 / merge commit eae1427 —
-    # the ONLY image of Booth that exists (brand-new GHCR package, cosign-
-    # signed by digest ghcr.io/contentremixer/booth@sha256:06410db6a80c…).
-    # Bump deliberately on the next Booth merge that rebuilds web/dist or
-    # booth/ Go code, matching the CI-published sha-<12> tag.
-    newTag: sha-eae1427662b4
+    # ISI-7392: bumped eae1427662b4 -> b17e54e65ca0 to ship the DevRel
+    # self-service onboarding feature (ISI-7350: D0–D9 + D1b). eae1427 (PR #56)
+    # predates the onboarding wizard (D6/PR #69) so it does NOT serve it.
+    #
+    # NOTE on the tag choice: origin/main HEAD is 851d8520899b, but
+    # booth-image-publish.yml only triggers on booth/**, app/**, or its own
+    # workflow file. The two commits on top of main (PR #72 brand foundation,
+    # PR #71 docs) touched ONLY branding/ and docs/, so NO booth image was built
+    # for sha-851d852089 (it does not exist in GHCR). The newest published booth
+    # image is sha-b17e54e65ca0 (PR #70, ISI-7363 D8 E2E), whose booth/ + web/dist
+    # content is byte-identical to current main — so this IS "latest main" for
+    # Booth. Bump again only when a future merge rebuilds booth/ or web/dist.
+    newTag: sha-b17e54e65ca0
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin

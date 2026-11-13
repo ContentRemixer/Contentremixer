@@ -89,9 +89,27 @@ type denyLimiter struct{}
 
 func (denyLimiter) Allow(string) bool { return false }
 
+type fakeSynth struct {
+	req     review.SynthesizeRequest
+	profile review.StyleProfile
+	err     error
+}
+
+func (f *fakeSynth) Synthesize(_ context.Context, req review.SynthesizeRequest) (review.StyleProfile, error) {
+	f.req = req
+	return f.profile, f.err
+}
+
 func newStore(p *fakeProfiles, pe *fakePersonas, r *fakeRunner, lim rateGuard) (*Store, *capAuditor) {
 	a := &capAuditor{}
-	return New(p, pe, r, lim, a), a
+	return New(p, pe, r, nil, lim, a), a
+}
+
+// newStoreSynth wires a synthesizer so the Synthesize action (ISI-7361 D6) can
+// be exercised.
+func newStoreSynth(p *fakeProfiles, pe *fakePersonas, synth *fakeSynth) (*Store, *capAuditor) {
+	a := &capAuditor{}
+	return New(p, pe, &fakeRunner{}, synth, nil, a), a
 }
 
 // --- RunTest ---
@@ -321,5 +339,73 @@ func TestGetProfile_DoesNotValidateOrAudit(t *testing.T) {
 	}
 	if len(a.entries) != 0 {
 		t.Fatalf("read must not audit (got %d entries)", len(a.entries))
+	}
+}
+
+// --- Synthesize (ISI-7361 D6, O6 trigger) ---
+
+func TestSynthesize_HappyPath_StampsConditioningFromPersona(t *testing.T) {
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub, SelfDescription: "warm", PrimaryContentKind: "blog"}}
+	synth := &fakeSynth{profile: review.StyleProfile{OwnerSubject: aliceSub, PersonaName: "ada", Traits: "t", SourceCount: 3}}
+	s, aud := newStoreSynth(&fakeProfiles{}, pe, synth)
+	sp, err := s.Synthesize(context.Background(), alice, "ada")
+	if err != nil {
+		t.Fatalf("Synthesize = %v, want nil", err)
+	}
+	if sp.Traits != "t" {
+		t.Fatalf("unexpected profile %+v", sp)
+	}
+	if synth.req.OwnerSubject != aliceSub || synth.req.SelfDescription != "warm" || synth.req.PrimaryContentKind != "blog" {
+		t.Fatalf("synthesize request not stamped from persona conditioning: %+v", synth.req)
+	}
+	if aud.last().Decision != audit.DecisionAllow {
+		t.Fatalf("expected an allow audit entry")
+	}
+}
+
+func TestSynthesize_MissingName(t *testing.T) {
+	s, _ := newStoreSynth(&fakeProfiles{}, &fakePersonas{}, &fakeSynth{})
+	if _, err := s.Synthesize(context.Background(), alice, ""); !IsBadRequest(err) {
+		t.Fatalf("empty name = %v, want bad request", err)
+	}
+}
+
+func TestSynthesize_NotConfiguredIsBadRequest(t *testing.T) {
+	// A store built without a synthesizer rejects synthesis as a bad request
+	// (the route is normally unmounted, but the guard is belt-and-suspenders).
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub}}
+	s, _ := newStore(&fakeProfiles{}, pe, &fakeRunner{}, nil)
+	if _, err := s.Synthesize(context.Background(), alice, "ada"); !IsBadRequest(err) {
+		t.Fatalf("no synth = %v, want bad request", err)
+	}
+	if s.CanSynthesize() {
+		t.Fatalf("CanSynthesize should be false without a synthesizer")
+	}
+}
+
+func TestSynthesize_ForbiddenDenies(t *testing.T) {
+	pe := &fakePersonas{condErr: bstore.ErrForbidden}
+	s, _ := newStoreSynth(&fakeProfiles{}, pe, &fakeSynth{})
+	if _, err := s.Synthesize(context.Background(), alice, "bob-persona"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("forbidden = %v, want ErrForbidden", err)
+	}
+}
+
+func TestSynthesize_UpstreamErrorAuditsDeny(t *testing.T) {
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub}}
+	synth := &fakeSynth{err: errors.New("gateway down")}
+	s, aud := newStoreSynth(&fakeProfiles{}, pe, synth)
+	if _, err := s.Synthesize(context.Background(), alice, "ada"); err == nil {
+		t.Fatal("expected a synthesis error")
+	}
+	if aud.last().Decision != audit.DecisionDeny {
+		t.Fatalf("expected a deny audit entry on synthesis failure")
+	}
+}
+
+func TestCanSynthesize_TrueWhenWired(t *testing.T) {
+	s, _ := newStoreSynth(&fakeProfiles{}, &fakePersonas{}, &fakeSynth{})
+	if !s.CanSynthesize() {
+		t.Fatal("CanSynthesize should be true when a synthesizer is wired")
 	}
 }

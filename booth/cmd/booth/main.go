@@ -180,8 +180,19 @@ func buildContentTestStore(reviewStore *review.Store, st *store.Store, auditor a
 	}
 	runner := apptest.NewRunner(litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_CONTENT_TEST_MODEL"))
 	limiter := contenttest.NewLimiter(envIntOr("BOOTH_CONTENT_TEST_RATE_PER_MIN", 10), time.Minute)
-	log.Info("content-test enabled")
-	return contenttest.New(reviewStore, st, runner, limiter, auditor)
+	// D3 style-recognition synthesizer (ISI-7358) wired behind the same gateway
+	// so the onboarding wizard (O6→O7, ISI-7361 D6) can synthesize + review a
+	// style profile over HTTP. NewDefaultSynthesizer expresses the rate/cost
+	// guard as primitives (0 = package defaults) so Booth need not import
+	// app/internal/pipeline/style. BOOTH_STYLE_SYNTH_MODEL pins the model alias
+	// (empty = gateway default); BOOTH_STYLE_SYNTH_MIN_INTERVAL_SEC overrides the
+	// re-synthesis guard interval (0 = default).
+	synth := review.NewDefaultSynthesizer(
+		reviewStore, litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_STYLE_SYNTH_MODEL"),
+		time.Duration(envIntOr("BOOTH_STYLE_SYNTH_MIN_INTERVAL_SEC", 0))*time.Second, 0, 0,
+	)
+	log.Info("content-test + style synthesis enabled")
+	return contenttest.New(reviewStore, st, runner, synth, limiter, auditor)
 }
 
 // buildPromoteStore wires the promotion-suggestion gating store (ISI-7369). Like

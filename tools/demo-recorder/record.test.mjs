@@ -14,6 +14,22 @@ import {
   buildMeta,
   runPipeline,
 } from "./record.mjs";
+import { launchOptions } from "./lib/pacing.mjs";
+
+test("launchOptions gates --no-sandbox on PW_NO_SANDBOX (root CI containers)", () => {
+  const prev = process.env.PW_NO_SANDBOX;
+  try {
+    delete process.env.PW_NO_SANDBOX;
+    assert.deepEqual(launchOptions().args, undefined, "sandbox ON by default");
+    process.env.PW_NO_SANDBOX = "1";
+    assert.deepEqual(launchOptions().args, ["--no-sandbox"], "opt-in disables sandbox");
+    // slowMo is always carried; explicit overrides still win.
+    assert.equal(launchOptions({ slowMo: 450 }).slowMo, 450);
+  } finally {
+    if (prev === undefined) delete process.env.PW_NO_SANDBOX;
+    else process.env.PW_NO_SANDBOX = prev;
+  }
+});
 
 // Minimal recording deps: every stage is a spy that records call order.
 function makeDeps(overrides = {}) {

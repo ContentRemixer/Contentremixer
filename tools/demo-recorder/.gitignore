@@ -1,0 +1,4 @@
+# Node workspace for the demo-recorder runtime. node_modules is restored from
+# package-lock.json (npm ci) and never committed. Recorded output lands in the
+# repo's content/demos/ Crate, not here.
+node_modules/

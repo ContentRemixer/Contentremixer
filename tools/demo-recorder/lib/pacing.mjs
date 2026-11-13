@@ -22,8 +22,14 @@ export const PACING = {
 };
 
 // Launch options carrying the human-pace slowMo. Spread into chromium.launch().
+// Chromium refuses to run as root without --no-sandbox, and CI job containers
+// (GitHub Actions) run as root. PW_NO_SANDBOX=1 opts in — the E2E workflow sets
+// it. A demo recorder is not a security boundary, so this is safe where enabled;
+// it is OFF by default so non-root/desktop runs keep the sandbox.
 export function launchOptions(overrides = {}) {
-  return { slowMo: PACING.slowMoMs, ...overrides };
+  const base = { slowMo: PACING.slowMoMs };
+  if (process.env.PW_NO_SANDBOX === "1") base.args = ["--no-sandbox"];
+  return { ...base, ...overrides };
 }
 
 // Clamp slowMo into the researched 400-600ms band.

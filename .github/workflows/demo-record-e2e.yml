@@ -1,0 +1,137 @@
+# DR-3 E2E demo recording (ISI-7401) — run a demo-recorder scenario in the DR-2
+# runtime image (ISI-7400), produce demo.mp4 + meta.yaml for the Crate, and open a
+# Sample PR for the Graphic Designer realism gate (plan §5).
+#
+# Manually dispatched: the recorded site is an INPUT, so the target can change
+# without a code change. The plan's canonical `demo.otelt.io` is NXDOMAIN, so the
+# `url` input points the scenario at a reachable environment (DR-3 uses the public
+# Grafana play ground, https://play.grafana.org).
+#
+# The recording runs via `docker run` of ghcr.io/contentremixer/demo-recorder
+# (Playwright + ffmpeg baked in) on the host runner, so host tooling (git, curl)
+# stays available for the artifact + PR steps. The resulting MP4 + meta.yaml are
+# uploaded as a build artifact AND committed to a branch + opened as a PR so the
+# clip can be reviewed and merged as a reusable Sample.
+name: demo-record-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario module (relative to tools/demo-recorder/)"
+        default: "scenarios/demo-otelt.mjs"
+        required: true
+      slug:
+        description: "Crate slug → content/demos/YYYY/<slug>/"
+        default: "otelt-overview"
+        required: true
+      orientation:
+        description: "landscape (1920x1080) or shorts (1080x1920)"
+        default: "landscape"
+        required: true
+      url:
+        description: "Target URL (feeds DEMO_URL_OVERRIDE; blank = scenario meta.url)"
+        default: "https://play.grafana.org"
+        required: false
+      image:
+        description: "demo-recorder runtime image ref"
+        default: "ghcr.io/contentremixer/demo-recorder:sha-e2c1ad26b19b"
+        required: true
+      open_pr:
+        description: "Open a Sample PR with the recorded MP4"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # push the Sample branch
+  pull-requests: write # open the Sample PR
+  packages: read # pull the demo-recorder image from GHCR
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Record demo → MP4 (in the DR-2 image)
+        id: rec
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          docker run --rm \
+            -e DEMO_URL_OVERRIDE="${{ inputs.url }}" \
+            -e PW_NO_SANDBOX=1 \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work/tools/demo-recorder \
+            "${{ inputs.image }}" \
+            bash -lc "npm ci --no-audit --no-fund && node record.mjs '${{ inputs.scenario }}' --slug '${{ inputs.slug }}' --orientation '${{ inputs.orientation }}' --content-root /work"
+          end=$(date +%s)
+          echo "duration_sec=$((end - start))" >> "$GITHUB_OUTPUT"
+          # Files land root-owned via the container; hand them back to the runner.
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/content" || true
+
+      - name: Locate artifacts + summary
+        id: loc
+        run: |
+          set -euo pipefail
+          dir=$(find content/demos -type d -name "${{ inputs.slug }}" | head -1)
+          test -s "$dir/demo.mp4" || { echo "no MP4 produced"; exit 1; }
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          ls -la "$dir"
+          bytes=$(stat -c%s "$dir/demo.mp4")
+          {
+            echo "### DR-3 recording"
+            echo ""
+            echo "- scenario: \`${{ inputs.scenario }}\` → \`${{ inputs.url }}\`"
+            echo "- slug: \`${{ inputs.slug }}\` · orientation: \`${{ inputs.orientation }}\`"
+            echo "- MP4 size: $((bytes / 1024)) KiB · pipeline wall time: ${{ steps.rec.outputs.duration_sec }}s"
+            echo ""
+            echo '```'
+            cat "$dir/meta.yaml"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload MP4 + meta
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ inputs.slug }}
+          path: |
+            ${{ steps.loc.outputs.dir }}/demo.mp4
+            ${{ steps.loc.outputs.dir }}/meta.yaml
+          if-no-files-found: error
+
+      - name: Open Sample PR
+        if: ${{ inputs.open_pr }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIR: ${{ steps.loc.outputs.dir }}
+        run: |
+          set -euo pipefail
+          branch="sample/dr3-${{ inputs.slug }}-${GITHUB_RUN_ID}"
+          git config user.name "demo-recorder[bot]"
+          git config user.email "noreply@paperclip.ing"
+          git checkout -b "$branch"
+          git add "$DIR/demo.mp4" "$DIR/meta.yaml"
+          git commit \
+            -m "feat(ISI-7401): DR-3 recorded demo Sample (${{ inputs.slug }})" \
+            -m "Recorded ${{ inputs.url }} via tools/demo-recorder on the DR-2 image. For the Graphic Designer realism gate (plan §5): pacing, visible cursor + click highlight, on-screen scrub (no secrets)." \
+            -m "Co-Authored-By: Paperclip <noreply@paperclip.ing>"
+          git push origin "$branch"
+          body=$(printf '%s\n' \
+            "DR-3 recorded Sample — closes the [ISI-7401] acceptance once reviewed." \
+            "" \
+            "- Source: \`${{ inputs.url }}\` · scenario \`${{ inputs.scenario }}\`" \
+            "- Delivered: \`$DIR/demo.mp4\` + \`meta.yaml\`" \
+            "- Pipeline wall time: ${{ steps.rec.outputs.duration_sec }}s" \
+            "" \
+            "**Realism gate (Graphic Designer, plan §5):** confirm pacing, a visible cursor + click highlight, and that NO tenant IDs / tokens / real emails / internal hostnames are on screen. A secret on screen is a hard reject." \
+            "" \
+            "Dispatched from workflow run \`${GITHUB_RUN_ID}\`.")
+          gh pr create --base main --head "$branch" \
+            --title "feat(ISI-7401): DR-3 demo Sample — ${{ inputs.slug }}" \
+            --body "$body"

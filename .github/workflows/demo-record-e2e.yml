@@ -1,0 +1,99 @@
+# DR-3 E2E demo recording (ISI-7401) — run a demo-recorder scenario inside the
+# DR-2 runtime image (ISI-7400) and produce demo.mp4 + meta.yaml for the Crate.
+#
+# Manually dispatched: the recorded site is an INPUT, so the board can point it at
+# any reachable URL without a code change. Default target is the plan's
+# `demo.otelt.io`; override `url` to record an already-live environment.
+#
+# The job runs `tools/demo-recorder/record.mjs <scenario>` in
+# ghcr.io/contentremixer/demo-recorder (Playwright + ffmpeg baked in — nothing is
+# installed at run), uploads the resulting MP4 + meta.yaml as a build artifact for
+# the Graphic Designer realism gate (plan §5), and prints the duration to the job
+# summary. Committing the approved MP4 to content/demos/ is a deliberate follow-up
+# step after the realism review passes.
+name: demo-record-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario module (relative to tools/demo-recorder/)"
+        default: "scenarios/demo-otelt.mjs"
+        required: true
+      slug:
+        description: "Crate slug → content/demos/YYYY/<slug>/"
+        default: "otelt-overview"
+        required: true
+      orientation:
+        description: "landscape (1920x1080) or shorts (1080x1920)"
+        default: "landscape"
+        required: true
+      url:
+        description: "Override the scenario's target URL (leave blank to use the scenario meta.url)"
+        default: ""
+        required: false
+      image:
+        description: "demo-recorder runtime image ref"
+        default: "ghcr.io/contentremixer/demo-recorder:sha-e2c1ad26b19b"
+        required: true
+
+permissions:
+  contents: read
+  packages: read # pull the private demo-recorder image from GHCR
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record demo → MP4
+        id: rec
+        working-directory: tools/demo-recorder
+        env:
+          DEMO_URL_OVERRIDE: ${{ inputs.url }}
+        run: |
+          set -euo pipefail
+          # The image bakes browsers + ffmpeg; deps are already installed there.
+          # npm ci is a no-op refresh and keeps the wrapper self-contained.
+          npm ci --no-audit --no-fund
+          start=$(date +%s)
+          node record.mjs "${{ inputs.scenario }}" \
+            --slug "${{ inputs.slug }}" \
+            --orientation "${{ inputs.orientation }}" \
+            --content-root "$GITHUB_WORKSPACE"
+          end=$(date +%s)
+          echo "duration_sec=$((end - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Locate artifacts
+        id: loc
+        run: |
+          set -euo pipefail
+          dir=$(find content/demos -type d -name "${{ inputs.slug }}" | head -1)
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          ls -la "$dir"
+          {
+            echo "### DR-3 recording"
+            echo ""
+            echo "- scenario: \`${{ inputs.scenario }}\`"
+            echo "- slug: \`${{ inputs.slug }}\` · orientation: \`${{ inputs.orientation }}\`"
+            echo "- pipeline wall time: ${{ steps.rec.outputs.duration_sec }}s"
+            echo ""
+            echo '```'
+            cat "$dir/meta.yaml"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload MP4 + meta for realism review
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ inputs.slug }}
+          path: |
+            ${{ steps.loc.outputs.dir }}/demo.mp4
+            ${{ steps.loc.outputs.dir }}/meta.yaml
+          if-no-files-found: error

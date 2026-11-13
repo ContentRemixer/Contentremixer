@@ -20,9 +20,18 @@ func persona(subject string, refs ...contentremixerv1alpha1.PersonaReference) *c
 	}
 }
 
+func personaWithTargets(subject string, targets ...contentremixerv1alpha1.ContentFormatTarget) *contentremixerv1alpha1.DevRelPersona {
+	p := persona(subject)
+	p.Spec.ContentFormatTargets = targets
+	return p
+}
+
 func TestValidateDevRelPersona(t *testing.T) {
 	ok := contentremixerv1alpha1.PersonaReference{URL: "https://youtu.be/abc", Kind: "youtube"}
 	art := contentremixerv1alpha1.PersonaReference{URL: "https://example.com/post", Kind: "article"}
+
+	blogTarget := contentremixerv1alpha1.ContentFormatTarget{ContentType: contentremixerv1alpha1.ContentFormatBlog, LengthSpec: "~1500 words"}
+	shortTarget := contentremixerv1alpha1.ContentFormatTarget{ContentType: contentremixerv1alpha1.ContentFormatYouTubeShort, LengthSpec: "≤3min"}
 
 	cases := []struct {
 		name     string
@@ -44,6 +53,13 @@ func TestValidateDevRelPersona(t *testing.T) {
 			in:       persona("", contentremixerv1alpha1.PersonaReference{URL: "x", Kind: "tweet"}),
 			wantErr:  true,
 			contains: "owner",
+		},
+		{name: "valid with format targets", in: personaWithTargets("alice", blogTarget, shortTarget), wantErr: false},
+		{
+			name:     "unknown content format type",
+			in:       personaWithTargets("alice", contentremixerv1alpha1.ContentFormatTarget{ContentType: "tiktok", LengthSpec: "≤1min"}),
+			wantErr:  true,
+			contains: "contentFormatTargets",
 		},
 	}
 

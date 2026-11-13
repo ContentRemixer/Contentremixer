@@ -75,6 +75,36 @@ to a medium-agnostic profile. Enforced by the CRD OpenAPI enum alone (a scalar
 enum apiserver rejects with a clear message — no webhook re-check needed, unlike
 the list-valued reference kinds).
 
+## 2b. `ContentFormatTargets` (D1b, ISI-7370)
+
+New optional `spec.contentFormatTargets` — a list of per-content-type **output**
+length/format targets the DevRel aims for (plan §4/§9, decision 6): each entry is
+`{contentType, lengthSpec}`, e.g. `youtube-short → "≤3min"`, `youtube-video →
+"~25min"`, `blog → "~1500 words"`, `linkedin-post → "~1300 chars"`. Added after
+D1 closed (board requirement), hence its own change.
+
+Three things to keep straight, because they are easy to conflate:
+
+- **vs. reference `kind`** — references are *input* style-exemplar sources;
+  `contentFormatTargets` describe *output* deliverables.
+- **vs. `primaryContentKind`** — `primaryContentKind` is the single dominant
+  medium (`blog | video | talk | tutorial`); `contentFormatTargets` is a
+  per-channel length/format map and uses its own closed set
+  (`KnownContentFormatTypes`: `blog | youtube-short | youtube-video |
+  linkedin-post`) — a different axis that does **not** require a `styles/*.md`.
+- **soft, not hard** (decision 6) — consumers *aim for* the `lengthSpec`, they
+  never truncate. `lengthSpec` is deliberately free-text (`minLength: 1`), an
+  interpreted hint rather than a parsed limit.
+
+`contentType` is a closed set enforced **both** by the CRD OpenAPI enum **and** a
+defence-in-depth webhook re-check (friendlier message naming the allowed types,
+same pattern as reference `kind`). The list is `listType=map` keyed on
+`contentType`, so the apiserver enforces at most one target per content type.
+
+Consumed by: D4 content-test (ISI-7359), D6 onboarding O3b (ISI-7361), D7 persona
+targets editor (ISI-7362), D9 LinkedIn promote (ISI-7369). Lock-step surfaces for
+adding a content-format type are listed in the checklist below.
+
 ## 3. Bio / extra-context box → reuse `SelfDescription`
 
 The onboarding bio / extra-context box **reuses the existing
@@ -176,3 +206,11 @@ deliverable. This section is the contract D5 implements against.
 - [ ] `review.KnownSourceKinds`
 - [ ] `make manifests` → copy to `deploy/base/crds` + `deploy/charts/.../crds`
 - [ ] `TestByKindCoversKnownKinds` + `TestKnownSourceKindsMatchCRD` green
+
+## Lock-step checklist (for the next person who adds a content-format type)
+
+- [ ] `ContentFormat*` const + `KnownContentFormatTypes` (`common_types.go`)
+- [ ] `ContentFormatTarget.ContentType` `+kubebuilder:validation:Enum` marker
+      (`devrelpersona_types.go`)
+- [ ] `make manifests` → copy to `deploy/base/crds` + `deploy/charts/.../crds`
+- [ ] webhook `knownContentFormatType` needs no edit (iterates the slice)

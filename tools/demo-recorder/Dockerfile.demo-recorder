@@ -11,7 +11,7 @@
 # the browsers are already baked and PINNED to this image's Playwright version.
 #
 # CONTRACT (coordinated with DR-1, ISI-7399): the `playwright` npm version in
-# package.json MUST equal the base image tag — here 1.64.1 == v1.64.1-noble. If
+# package.json MUST equal the base image tag — here 1.64.0 == v1.64.0-noble. If
 # DR-1 bumps one, bump both. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 makes `npm ci`
 # trust the baked browsers instead of re-downloading them (keeps the image slim
 # and the build offline-from-browsers).
@@ -20,7 +20,7 @@
 # demo-recorder-image-publish.yml, multi-arch (linux/amd64, linux/arm64),
 # cosign keyless-signed with SBOM + max provenance — the scrape-job lane
 # (ISI-7343) shape.
-FROM mcr.microsoft.com/playwright:v1.64.1-noble
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
 
 # ffmpeg = the only extra system dep over the Playwright base. Clean the apt
 # lists in the same layer so they never ship in the image.
@@ -42,15 +42,23 @@ RUN npm ci --omit=dev --no-audit --no-fund
 
 # Source last. record.mjs + lib/* are DR-1 (ISI-7399) deliverables; smoke.mjs is
 # the self-contained cold-start probe shipped with the runtime. The glob COPYs
-# whatever the scaffold provides without churning this Dockerfile.
-COPY . .
+# whatever the scaffold provides without churning this Dockerfile. --chown gives
+# the non-root runtime user ownership of the app tree it executes.
+COPY --chown=pwuser:pwuser . .
 
 # OpenContainers image metadata (org.opencontainers.image.*).
 LABEL org.opencontainers.image.title="demo-recorder" \
       org.opencontainers.image.description="Playwright->MP4 demo recorder runtime (browsers + ffmpeg baked in)" \
       org.opencontainers.image.source="https://github.com/ContentRemixer/Contentremixer" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="mcr.microsoft.com/playwright:v1.64.1-noble"
+      org.opencontainers.image.base.name="mcr.microsoft.com/playwright:v1.64.0-noble"
+
+# Drop to the non-root user baked into the Playwright image (uid 1000). The build
+# steps above (apt, npm ci, COPY) need root; the recorder itself runs
+# unprivileged — this is both the Trivy DS-0002 fix and the Playwright-recommended
+# way to run this image. Chromium runs fine as pwuser; smoke.mjs also passes
+# --no-sandbox so it survives hardened CI seccomp profiles.
+USER pwuser
 
 # No ENTRYPOINT that auto-runs a recording: an agent (or the DR-3 E2E, ISI-7401)
 # drives the container with an explicit `node record.mjs <scenario>`. Default to a

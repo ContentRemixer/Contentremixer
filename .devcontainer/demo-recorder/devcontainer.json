@@ -3,7 +3,7 @@
   //
   // The dev-loop twin of tools/demo-recorder/Dockerfile.demo-recorder: same
   // Playwright base image (browsers + system deps baked, PINNED to playwright
-  // 1.64.1 == the npm pin in package.json), the devcontainers Node feature for a
+  // 1.64.0 == the npm pin in package.json), the devcontainers Node feature for a
   // managed toolchain, and ffmpeg added in postCreateCommand (the one system dep
   // the recorder needs beyond the base). An agent can open this and run
   // `node record.mjs` / `npm run smoke` with no extra setup.
@@ -11,7 +11,7 @@
   // Open with: "Dev Containers: Open Folder in Container" pointed at
   // tools/demo-recorder (or reference this config explicitly).
   "name": "demo-recorder",
-  "image": "mcr.microsoft.com/playwright:v1.64.1-noble",
+  "image": "mcr.microsoft.com/playwright:v1.64.0-noble",
 
   "features": {
     "ghcr.io/devcontainers/features/node:1": {

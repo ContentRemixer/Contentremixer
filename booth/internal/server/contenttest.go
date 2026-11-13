@@ -18,7 +18,22 @@ func (s *Server) mountContentTest(mux *http.ServeMux) {
 		return
 	}
 	mux.Handle("POST /v1/content-test", s.protect(s.runContentTest))
+	mux.Handle("GET /v1/devrelpersonas/{name}/style-profile", s.protect(s.getStyleProfile))
 	mux.Handle("POST /v1/devrelpersonas/{name}/validate", s.protect(s.validatePersona))
+}
+
+func (s *Server) getStyleProfile(w http.ResponseWriter, r *http.Request) {
+	sess, ok := session(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sp, err := s.contentTest.GetProfile(r.Context(), sess, r.PathValue("name"))
+	if err != nil {
+		s.writeContentTestErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sp)
 }
 
 func (s *Server) runContentTest(w http.ResponseWriter, r *http.Request) {

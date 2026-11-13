@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/build-passing-7C3AED?style=flat-square&labelColor=1A1235" alt="build">
-  <img src="https://img.shields.io/badge/license-MIT-EC4899?style=flat-square&labelColor=1A1235" alt="license">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-EC4899?style=flat-square&labelColor=1A1235" alt="license"></a>
   <a href="docs/getting-started.md"><img src="https://img.shields.io/badge/docs-read_the_guide-7C3AED?style=flat-square&labelColor=1A1235" alt="docs"></a>
   <img src="https://img.shields.io/badge/status-active-F97316?style=flat-square&labelColor=1A1235" alt="status">
 </p>
@@ -19,14 +19,19 @@
 
 You keep your reference content in this repo — **The Crate**. When you want a new format, you open an issue and tag it with a `recycle:*` label. A GitHub App picks it up, the operator runs a three-step pipeline, and you get a pull request with the remixed content, ready to review.
 
-```
-GitHub issue                 Operator pipeline                      Result
-(labels: recycle:blog,  ──▶  analyze ─▶ write ─▶ check (Master)  ──▶  Pull request
- recycle:short, ...)         │          │         │                    (recycled/<slug>/,
-                             │          │         │                     Sample clearance)
-   GitHub App webhook ───────┘          │         └── scrub rules             │
-   posts an ack comment                 └── styles/<format>.md                ▼
-                                                                       review ─▶ merge ─▶ The Drop
+```mermaid
+%%{init: {'theme':'base','themeVariables':{
+  'primaryColor':'#1A1235','primaryTextColor':'#F5F3FF','primaryBorderColor':'#7C3AED',
+  'lineColor':'#A78BFA','secondaryColor':'#312E5A','tertiaryColor':'#0D0A1A',
+  'fontFamily':'ui-sans-serif, system-ui'}}}%%
+flowchart LR
+  Issue["GitHub issue<br/>labels: recycle:blog · short · …"] -->|GitHub App webhook| Analyze
+  subgraph Pipeline["Operator pipeline"]
+    direction LR
+    Analyze[analyze] --> Write[write] --> Check["check · Mastering<br/>scrub rules + styles/&lt;format&gt;.md"]
+  end
+  Check --> PR["Pull request<br/>recycled/&lt;slug&gt;/ · Sample clearance"]
+  PR --> Review[review] --> Merge[merge] --> Drop["The Drop"]
 ```
 
 A human reviews and merges every Mix — the agent proposes, you decide.
@@ -116,6 +121,10 @@ Contributions are welcome — whether you're adding reference content to the Cra
 - **Code changes** (operator, Booth, web UI) go through pull requests. Start from the [Getting Started guide](docs/getting-started.md) for the local-dev setup — the operator in `app/` needs Go 1.26; the Booth in `booth/` is a separate module referencing `app/` via a `replace` directive.
 - **Match the brand.** Copy and UI follow the [Voice & Tone](branding/kit/VOICE-AND-TONE.md) one-pager and the [Brand kit](branding/kit/BRAND-KIT.md) — talk like a DevRel who ships: clear, a little playful, never hype.
 - **Never leak internals.** No tenant IDs, tokens, IPs, or internal hostnames in content or committed config — Mastering enforces it, but keep it out from the start.
+
+## License
+
+ContentRemixer is licensed under the **[Apache License 2.0](LICENSE)**.
 
 ---
 

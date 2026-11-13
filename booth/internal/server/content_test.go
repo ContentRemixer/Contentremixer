@@ -232,7 +232,7 @@ func newContentTestServer(t *testing.T) (http.Handler, *auth.TokenCodec, *conten
 	repo := newMemRepo()
 	memRepoForTest = repo
 	cs := content.New(repo, audit.NewSlogLogger(nil))
-	return New(prov, st, nil, cs, nil, nil).Handler(), prov.Codec, cs
+	return New(prov, st, nil, cs, nil, nil, nil).Handler(), prov.Codec, cs
 }
 
 // TestContentRoutes_Unauthenticated covers the middleware wrap: no session, no

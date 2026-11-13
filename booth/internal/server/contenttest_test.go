@@ -90,7 +90,7 @@ func newCTServer(t *testing.T, ct *contenttest.Store) (http.Handler, *auth.Token
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(prov, st, nil, nil, ct, nil).Handler(), prov.Codec
+	return New(prov, st, nil, nil, ct, nil, nil).Handler(), prov.Codec
 }
 
 // ctStore builds a content-test gating store over concrete fakes. The fakes are

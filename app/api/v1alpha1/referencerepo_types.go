@@ -69,9 +69,84 @@ type LabelRoute struct {
 	InputFormat string `json:"inputFormat,omitempty"`
 
 	// OutputFormat selects the writer style guide styles/<outputFormat>.md:
-	// blog | short | tutorial | teleprompter.
-	// +kubebuilder:validation:Enum=blog;short;tutorial;teleprompter
+	// blog | short | tutorial | teleprompter | demo | video.
+	// demo|video are media formats (fat runtime: Chromium + ffmpeg) routed to
+	// the "media" actor template (ADR-1/ADR-3); the rest are lean content
+	// formats routed to "content".
+	// +kubebuilder:validation:Enum=blog;short;tutorial;teleprompter;demo;video
 	OutputFormat string `json:"outputFormat"`
+
+	// Skill names the skill pack the route loads (e.g. content-writer,
+	// demo-recorder, video-designer). Optional: derived from OutputFormat via
+	// DefaultSkill when omitted (ADR-3 — "derivable from outputFormat"). An
+	// explicit value overrides the default.
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Skill string `json:"skill,omitempty"`
+
+	// ActorTemplate selects the runtime footprint the WorkOrder dispatches to
+	// (ADR-3): "content" (lean LLM call, inline) or "media" (fat Chromium +
+	// ffmpeg, k8s-Job/substrate). Optional: derived from OutputFormat via
+	// DefaultActorTemplate when omitted (demo|video => media, else content).
+	// An explicit value overrides the default.
+	// +kubebuilder:validation:Enum=content;media
+	// +optional
+	ActorTemplate string `json:"actorTemplate,omitempty"`
+}
+
+// Actor templates (ADR-3): specialization is by runtime footprint, not by
+// skill identity. "content" is the lean LLM image (inline run-worker);
+// "media" is the fat image (headless Chromium + ffmpeg) run as a k8s-Job
+// (P0) or substrate actor (P1).
+const (
+	ActorTemplateContent = "content"
+	ActorTemplateMedia   = "media"
+)
+
+// DefaultActorTemplate returns the runtime template an outputFormat routes to
+// when a LabelRoute omits actorTemplate (ADR-3). demo|video are the fat media
+// skills; every other (lean) format stays on the content template.
+func DefaultActorTemplate(outputFormat string) string {
+	switch outputFormat {
+	case "demo", "video":
+		return ActorTemplateMedia
+	default:
+		return ActorTemplateContent
+	}
+}
+
+// DefaultSkill returns the skill pack an outputFormat loads when a LabelRoute
+// omits skill (ADR-3 defaults; an explicit route.skill overrides it).
+func DefaultSkill(outputFormat string) string {
+	switch outputFormat {
+	case "demo":
+		return "demo-recorder"
+	case "video":
+		return "video-designer"
+	case "tutorial":
+		return "tutorial"
+	case "teleprompter":
+		return "teleprompter"
+	default: // blog, short
+		return "content-writer"
+	}
+}
+
+// EffectiveSkill is the route's explicit skill, or the OutputFormat default.
+func (r LabelRoute) EffectiveSkill() string {
+	if r.Skill != "" {
+		return r.Skill
+	}
+	return DefaultSkill(r.OutputFormat)
+}
+
+// EffectiveActorTemplate is the route's explicit template, or the OutputFormat
+// default. This is the single value the Dispatcher selects a strategy by.
+func (r LabelRoute) EffectiveActorTemplate() string {
+	if r.ActorTemplate != "" {
+		return r.ActorTemplate
+	}
+	return DefaultActorTemplate(r.OutputFormat)
 }
 
 // ReferenceRepoStatus defines the observed state of a ReferenceRepo.

@@ -27,15 +27,16 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 	"github.com/ContentRemixer/Contentremixer/app/internal/controller"
+	"github.com/ContentRemixer/Contentremixer/app/internal/dispatch"
 	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp"
 	"github.com/ContentRemixer/Contentremixer/app/internal/litellm"
-	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/analyzer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/checker"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/persona"
@@ -65,26 +66,40 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// recycleRunner adapts the recycle pipeline (subtasks E–H) to the webhook's
-// RouteRunner hook: it rebuilds the RunContext from the enqueue request and
-// executes analyze → write → check → PR assembly. ModelName stays empty so
-// the LiteLLM gateway default (the ModelProfile with spec.default=true)
-// resolves it.
+// recycleRunner adapts the webhook's RouteRunner hook to the Dispatcher seam
+// (ISI-7393): it translates an enqueued RouteRequest into a runtime-agnostic
+// dispatch.WorkOrder and hands it to the Dispatcher, which picks the strategy
+// by actor template (content => inline pipeline, media => k8s-Job stub). The
+// operator keeps no knowledge of which runtime ran it (ISI-7389 §4).
 type recycleRunner struct {
-	runner *pr.Runner
+	dispatcher *dispatch.Dispatcher
 }
 
 func (a recycleRunner) RunRoute(ctx context.Context, req githubapp.RouteRequest) error {
-	rc := pipeline.RunContext{
-		Repo:         req.Repo,
-		IssueNumber:  req.IssueNumber,
-		SourcePath:   req.SourcePath,
-		InputFormat:  req.Route.InputFormat,
-		OutputFormat: req.Route.OutputFormat,
-		Notes:        req.Notes,
+	wo := dispatch.WorkOrder{
+		Repo:        req.Repo,
+		IssueNumber: req.IssueNumber,
+		Inputs: dispatch.Inputs{
+			SourcePath:   req.SourcePath,
+			Notes:        req.Notes,
+			InputFormat:  req.Route.InputFormat,
+			OutputFormat: req.Route.OutputFormat,
+			Token:        req.Token,
+			PRTarget:     req.PRTarget,
+		},
+		Skill:         req.Route.Skill,
+		ActorTemplate: req.Route.ActorTemplate,
+		// MemoryRef stays empty here: the pre-seam path never set
+		// Owner/Persona on the RunContext, so recycle:blog is byte-for-byte
+		// unchanged. Persona conditioning remains the writer's concern.
 	}
-	_, err := a.runner.Run(ctx, rc, req.PRTarget, req.Token)
-	return err
+	runtime, err := a.dispatcher.Dispatch(ctx, wo)
+	if err != nil {
+		return err
+	}
+	logf.FromContext(ctx).Info("dispatched recycle run", "repo", wo.Repo, "issue", wo.IssueNumber,
+		"template", wo.ActorTemplate, "skill", wo.Skill, "runtime", string(runtime))
+	return nil
 }
 
 // setupOTLP wires the process-wide OpenTelemetry SDK providers to an OTLP/gRPC
@@ -291,13 +306,22 @@ func main() {
 				setupLog.Info("persona conditioning enabled", "personaNamespace", nsForPersona)
 			}
 		}
-		ghServer.Runner = recycleRunner{runner: &pr.Runner{
+		contentRunner := &pr.Runner{
 			Analyzer:  &analyzer.Analyzer{FS: sourceFS},
 			Writer:    runWriter,
 			Checker:   checker.New(),
 			Assembler: &pr.Assembler{GitHub: &pr.GitHubClient{}},
 			Comments:  &githubapp.GitHubClient{},
-		}}
+		}
+		// Dispatcher seam (ISI-7393): content => inline pipeline, media =>
+		// k8s-Job stub (fails closed with ErrMediaNotWired until the media
+		// launcher child lands). Adding substrate later is a new strategy here
+		// with no change above this line.
+		dispatcher := dispatch.New(map[string]dispatch.Strategy{
+			contentremixerv1alpha1.ActorTemplateContent: dispatch.ContentStrategy{Pipeline: contentRunner},
+			contentremixerv1alpha1.ActorTemplateMedia:   dispatch.MediaStrategy{},
+		})
+		ghServer.Runner = recycleRunner{dispatcher: dispatcher}
 		setupLog.Info("recycle pipeline enabled", "checkout", recycleCheckout, "litellm", litellmEndpoint)
 	} else {
 		setupLog.Info("recycle pipeline ack-only (set --recycle-checkout and --litellm-endpoint to enable runs)")

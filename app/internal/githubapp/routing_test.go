@@ -17,6 +17,9 @@ func starterRepo() *contentremixerv1alpha1.ReferenceRepo {
 				{Label: "recycle:short", InputFormat: "auto", OutputFormat: "short"},
 				{Label: "recycle:tutorial", InputFormat: "auto", OutputFormat: "tutorial"},
 				{Label: "recycle:teleprompter", InputFormat: "", OutputFormat: "teleprompter"}, // empty => auto default
+				{Label: "recycle:demo", InputFormat: "auto", OutputFormat: "demo"},             // skill/template derived => media
+				// explicit skill overrides the derived default; template derived from "video".
+				{Label: "recycle:custom", InputFormat: "auto", OutputFormat: "video", Skill: "my-pinned-skill"},
 			},
 		},
 	}
@@ -32,12 +35,12 @@ func TestResolve(t *testing.T) {
 		{
 			name:        "single mapped label",
 			labels:      []string{"recycle:blog"},
-			wantMatched: []Route{{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog"}},
+			wantMatched: []Route{{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog", Skill: "content-writer", ActorTemplate: "content"}},
 		},
 		{
 			name:         "non-recycle labels are dropped, not reported",
 			labels:       []string{"bug", "recycle:short", "enhancement"},
-			wantMatched:  []Route{{Label: "recycle:short", InputFormat: "auto", OutputFormat: "short"}},
+			wantMatched:  []Route{{Label: "recycle:short", InputFormat: "auto", OutputFormat: "short", Skill: "content-writer", ActorTemplate: "content"}},
 			wantUnmapped: nil,
 		},
 		{
@@ -49,20 +52,30 @@ func TestResolve(t *testing.T) {
 			name:   "multiple routes plus one unmapped",
 			labels: []string{"recycle:blog", "recycle:teleprompter", "recycle:carrier-pigeon"},
 			wantMatched: []Route{
-				{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog"},
-				{Label: "recycle:teleprompter", InputFormat: "auto", OutputFormat: "teleprompter"},
+				{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog", Skill: "content-writer", ActorTemplate: "content"},
+				{Label: "recycle:teleprompter", InputFormat: "auto", OutputFormat: "teleprompter", Skill: "teleprompter", ActorTemplate: "content"},
 			},
 			wantUnmapped: []string{"recycle:carrier-pigeon"},
 		},
 		{
 			name:        "empty inputFormat defaults to auto",
 			labels:      []string{"recycle:teleprompter"},
-			wantMatched: []Route{{Label: "recycle:teleprompter", InputFormat: "auto", OutputFormat: "teleprompter"}},
+			wantMatched: []Route{{Label: "recycle:teleprompter", InputFormat: "auto", OutputFormat: "teleprompter", Skill: "teleprompter", ActorTemplate: "content"}},
 		},
 		{
 			name:        "duplicate label routes once",
 			labels:      []string{"recycle:blog", "recycle:blog"},
-			wantMatched: []Route{{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog"}},
+			wantMatched: []Route{{Label: "recycle:blog", InputFormat: "auto", OutputFormat: "blog", Skill: "content-writer", ActorTemplate: "content"}},
+		},
+		{
+			name:        "media format derives media template and demo-recorder skill",
+			labels:      []string{"recycle:demo"},
+			wantMatched: []Route{{Label: "recycle:demo", InputFormat: "auto", OutputFormat: "demo", Skill: "demo-recorder", ActorTemplate: "media"}},
+		},
+		{
+			name:        "explicit skill/actorTemplate override the derived defaults",
+			labels:      []string{"recycle:custom"},
+			wantMatched: []Route{{Label: "recycle:custom", InputFormat: "auto", OutputFormat: "video", Skill: "my-pinned-skill", ActorTemplate: "media"}},
 		},
 		{
 			name:   "no recycle labels at all",

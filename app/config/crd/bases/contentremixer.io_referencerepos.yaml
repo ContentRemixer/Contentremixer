@@ -62,6 +62,17 @@ spec:
                 items:
                   description: LabelRoute maps an exact GitHub label to a format transformation.
                   properties:
+                    actorTemplate:
+                      description: |-
+                        ActorTemplate selects the runtime footprint the WorkOrder dispatches to
+                        (ADR-3): "content" (lean LLM call, inline) or "media" (fat Chromium +
+                        ffmpeg, k8s-Job/substrate). Optional: derived from OutputFormat via
+                        DefaultActorTemplate when omitted (demo|video => media, else content).
+                        An explicit value overrides the default.
+                      enum:
+                      - content
+                      - media
+                      type: string
                     inputFormat:
                       default: auto
                       description: |-
@@ -84,12 +95,25 @@ spec:
                     outputFormat:
                       description: |-
                         OutputFormat selects the writer style guide styles/<outputFormat>.md:
-                        blog | short | tutorial | teleprompter.
+                        blog | short | tutorial | teleprompter | demo | video.
+                        demo|video are media formats (fat runtime: Chromium + ffmpeg) routed to
+                        the "media" actor template (ADR-1/ADR-3); the rest are lean content
+                        formats routed to "content".
                       enum:
                       - blog
                       - short
                       - tutorial
                       - teleprompter
+                      - demo
+                      - video
+                      type: string
+                    skill:
+                      description: |-
+                        Skill names the skill pack the route loads (e.g. content-writer,
+                        demo-recorder, video-designer). Optional: derived from OutputFormat via
+                        DefaultSkill when omitted (ADR-3 — "derivable from outputFormat"). An
+                        explicit value overrides the default.
+                      minLength: 1
                       type: string
                   required:
                   - label

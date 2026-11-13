@@ -24,6 +24,12 @@ func route(label, out string) contentremixerv1alpha1.LabelRoute {
 	return contentremixerv1alpha1.LabelRoute{Label: label, InputFormat: "auto", OutputFormat: out}
 }
 
+func mediaRoute(label, out, tmpl string) contentremixerv1alpha1.LabelRoute {
+	r := route(label, out)
+	r.ActorTemplate = tmpl
+	return r
+}
+
 func TestValidateReferenceRepo(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -46,6 +52,22 @@ func TestValidateReferenceRepo(t *testing.T) {
 			in:       refRepo(route("recycle:blog", "blog"), route("recycle:blog", "short")),
 			wantErr:  true,
 			contains: "appears more than once in spec.labelRoutes",
+		},
+		{
+			name:     "media outputFormat pinned to the content template is rejected",
+			in:       refRepo(mediaRoute("recycle:demo", "demo", contentremixerv1alpha1.ActorTemplateContent)),
+			wantErr:  true,
+			contains: "cannot run on the \"content\" actor template",
+		},
+		{
+			name:    "media outputFormat on the media template is valid",
+			in:      refRepo(mediaRoute("recycle:video", "video", contentremixerv1alpha1.ActorTemplateMedia)),
+			wantErr: false,
+		},
+		{
+			name:    "media outputFormat with derived template (omitted) is valid",
+			in:      refRepo(route("recycle:demo", "demo")),
+			wantErr: false,
 		},
 	}
 

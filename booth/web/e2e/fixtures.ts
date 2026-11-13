@@ -25,6 +25,8 @@ export interface MockData {
   bootstrap: { firstRun: boolean; adminUsername: string } | null;
   /** login outcome: the session to establish, or null → 401 invalid creds. */
   loginAs: Session | null;
+  /** onboarding-status (D5); null → default "already onboarded" for the session. */
+  onboarding: Record<string, unknown> | null;
   scrapedSources: Record<string, unknown>[];
   content: Record<string, unknown>[];
   contentDetail: Record<
@@ -47,6 +49,7 @@ export function defaults(overrides: Partial<MockData> = {}): MockData {
     session: null,
     bootstrap: null,
     loginAs: null,
+    onboarding: null,
     scrapedSources: [],
     content: [],
     contentDetail: {},
@@ -82,6 +85,24 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
     }
     if (p === "/v1/auth/bootstrap-status" && method === "GET") {
       return data.bootstrap ? json(route, 200, data.bootstrap) : json(route, 404, { error: "not found" });
+    }
+    // DevRel first-run probe (ISI-7360 D5). The onboarding gate (D6) probes this
+    // for a DevRel session. Default to "already onboarded" so existing specs land
+    // on the normal shell; an onboarding-wizard spec can override via its own
+    // route or by setting data.onboarding before installApi.
+    if (p === "/v1/onboarding-status" && method === "GET") {
+      if (!data.session) return json(route, 401, { error: "unauthorized" });
+      return json(
+        route,
+        200,
+        data.onboarding ?? {
+          subject: data.session.sub,
+          role: data.session.role,
+          hasPersona: true,
+          hasValidatedPersona: true,
+          needsOnboarding: false,
+        },
+      );
     }
     if (p === "/v1/auth/login" && method === "POST") {
       if (!data.loginAs) return json(route, 401, { error: "invalid credentials" });

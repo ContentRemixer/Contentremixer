@@ -12,6 +12,8 @@ import { AdminPage } from "./pages/AdminPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { StatesPage } from "./pages/StatesPage";
+import { OnboardingGate } from "./pages/onboarding/gate";
+import { OnboardingWizard } from "./pages/OnboardingWizard";
 
 // Route table. Server-side authz is authoritative (§4); client routing is
 // cosmetic — RequireAuth only gates on session presence, and the admin branch is
@@ -27,21 +29,29 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
 
+      {/* Authenticated area. OnboardingGate runs the D5 first-run probe and, for
+          a DevRel without a validated persona, routes to the /onboarding wizard
+          (ISI-7361 D6) before the normal shell. */}
       <Route
         element={
           <RequireAuth>
-            <AppShell />
+            <OnboardingGate />
           </RequireAuth>
         }
       >
-        <Route index element={<HomePage />} />
-        <Route path="content/*" element={<ContentPage />} />
-        <Route path="personas/*" element={<PersonaPage />} />
-        <Route path="scraper-review/*" element={<ScraperReviewPage />} />
-        <Route path="admin/*" element={<RequireAuth role="Admin"><AdminPage /></RequireAuth>} />
-        <Route path="states" element={<StatesPage />} />
-        <Route path="403" element={<ForbiddenPage />} />
-        <Route path="*" element={<NotFoundPage />} />
+        {/* First-run wizard: full-screen, outside the AppShell chrome. */}
+        <Route path="onboarding" element={<OnboardingWizard />} />
+
+        <Route element={<AppShell />}>
+          <Route index element={<HomePage />} />
+          <Route path="content/*" element={<ContentPage />} />
+          <Route path="personas/*" element={<PersonaPage />} />
+          <Route path="scraper-review/*" element={<ScraperReviewPage />} />
+          <Route path="admin/*" element={<RequireAuth role="Admin"><AdminPage /></RequireAuth>} />
+          <Route path="states" element={<StatesPage />} />
+          <Route path="403" element={<ForbiddenPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

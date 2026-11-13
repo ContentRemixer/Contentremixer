@@ -20,6 +20,28 @@ func (s *Server) mountContentTest(mux *http.ServeMux) {
 	mux.Handle("POST /v1/content-test", s.protect(s.runContentTest))
 	mux.Handle("GET /v1/devrelpersonas/{name}/style-profile", s.protect(s.getStyleProfile))
 	mux.Handle("POST /v1/devrelpersonas/{name}/validate", s.protect(s.validatePersona))
+
+	// Style-profile synthesis (ISI-7361 D6, O6→O7). Mounted only when a LiteLLM
+	// gateway is wired (CanSynthesize); the GET read route above is always
+	// available so a previously-synthesized profile stays reviewable even on a
+	// Booth built without the gateway.
+	if s.contentTest.CanSynthesize() {
+		mux.Handle("POST /v1/devrelpersonas/{name}/style-profile/synthesize", s.protect(s.synthesizeStyleProfile))
+	}
+}
+
+func (s *Server) synthesizeStyleProfile(w http.ResponseWriter, r *http.Request) {
+	sess, ok := session(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sp, err := s.contentTest.Synthesize(r.Context(), sess, r.PathValue("name"))
+	if err != nil {
+		s.writeContentTestErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sp)
 }
 
 func (s *Server) getStyleProfile(w http.ResponseWriter, r *http.Request) {
@@ -78,8 +100,12 @@ func (s *Server) writeContentTestErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, contenttest.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, contenttest.ErrNoExemplars):
+		writeError(w, http.StatusConflict, "no accepted exemplars to synthesize a style from yet")
+	case errors.Is(err, contenttest.ErrUpstream):
+		writeError(w, http.StatusBadGateway, "style synthesis upstream error; try again shortly")
 	case contenttest.IsRateLimited(err):
-		writeError(w, http.StatusTooManyRequests, "content-test rate limit exceeded; try again shortly")
+		writeError(w, http.StatusTooManyRequests, "rate limit exceeded; try again shortly")
 	case contenttest.IsBadRequest(err):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:

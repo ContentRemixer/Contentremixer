@@ -66,6 +66,15 @@ type ctDenyLimiter struct{}
 
 func (ctDenyLimiter) Allow(string) bool { return false }
 
+type ctFakeSynth struct {
+	profile review.StyleProfile
+	err     error
+}
+
+func (f ctFakeSynth) Synthesize(_ context.Context, _ review.SynthesizeRequest) (review.StyleProfile, error) {
+	return f.profile, f.err
+}
+
 // newContentTestServer builds a Server whose content-test surface is wired to
 // the supplied gating store, reusing the auth harness from server_test.go.
 func newCTServer(t *testing.T, ct *contenttest.Store) (http.Handler, *auth.TokenCodec) {
@@ -99,9 +108,15 @@ func newCTServer(t *testing.T, ct *contenttest.Store) (http.Handler, *auth.Token
 // params structurally, so no exported interface is needed here.
 func ctStore(p ctFakeProfiles, pe ctFakePersonas, r ctFakeRunner, lim interface{ Allow(string) bool }) *contenttest.Store {
 	if lim == nil {
-		return contenttest.New(p, pe, r, nil, audit.NewSlogLogger(nil))
+		return contenttest.New(p, pe, r, nil, nil, audit.NewSlogLogger(nil))
 	}
-	return contenttest.New(p, pe, r, lim, audit.NewSlogLogger(nil))
+	return contenttest.New(p, pe, r, nil, lim, audit.NewSlogLogger(nil))
+}
+
+// ctStoreSynth builds a content-test gating store with a synthesizer wired, so
+// the O6 style-profile synthesize route (ISI-7361 D6) is mounted.
+func ctStoreSynth(p ctFakeProfiles, pe ctFakePersonas, synth ctFakeSynth) *contenttest.Store {
+	return contenttest.New(p, pe, ctFakeRunner{}, synth, nil, audit.NewSlogLogger(nil))
 }
 
 func TestContentTestRoutesUnmountedWhenNil(t *testing.T) {
@@ -291,5 +306,52 @@ func TestStyleProfileForbidden(t *testing.T) {
 	tok := tokenFor(t, codec, "sub-bob", auth.RoleDevRel)
 	if w := do(t, h, "GET", "/v1/devrelpersonas/ada/style-profile", tok, ""); w.Code != http.StatusForbidden {
 		t.Fatalf("forbidden persona = %d, want 403", w.Code)
+	}
+}
+
+// --- style-profile synthesize route (ISI-7361 D6, O6) ---
+
+func TestSynthesizeHappyPath(t *testing.T) {
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice", PrimaryContentKind: "blog", SelfDescription: "warm, concrete"}}
+	synth := ctFakeSynth{profile: review.StyleProfile{OwnerSubject: "sub-alice", PersonaName: "ada", Traits: "dry wit", Sample: "x", SourceCount: 3}}
+	ct := ctStoreSynth(ctFakeProfiles{}, pe, synth)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+	w := do(t, h, "POST", "/v1/devrelpersonas/ada/style-profile/synthesize", tok, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("synthesize = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestSynthesizeGeneratorErrorIs500(t *testing.T) {
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice"}}
+	synth := ctFakeSynth{err: context.DeadlineExceeded}
+	ct := ctStoreSynth(ctFakeProfiles{}, pe, synth)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+	if w := do(t, h, "POST", "/v1/devrelpersonas/ada/style-profile/synthesize", tok, ""); w.Code != http.StatusInternalServerError {
+		t.Fatalf("synth error = %d, want 500", w.Code)
+	}
+}
+
+func TestSynthesizeForbidden(t *testing.T) {
+	pe := ctFakePersonas{condErr: store.ErrForbidden}
+	ct := ctStoreSynth(ctFakeProfiles{}, pe, ctFakeSynth{})
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-bob", auth.RoleDevRel)
+	if w := do(t, h, "POST", "/v1/devrelpersonas/ada/style-profile/synthesize", tok, ""); w.Code != http.StatusForbidden {
+		t.Fatalf("forbidden = %d, want 403", w.Code)
+	}
+}
+
+func TestSynthesizeRouteUnmountedWithoutSynth(t *testing.T) {
+	// A store built without a synthesizer (no LiteLLM gateway) must NOT mount the
+	// synthesize route — the request falls through to the SPA catch-all, so an
+	// unauthenticated POST is not 401'd by our protected handler.
+	ct := ctStore(ctFakeProfiles{}, ctFakePersonas{}, ctFakeRunner{}, nil)
+	h, _ := newCTServer(t, ct)
+	w := do(t, h, "POST", "/v1/devrelpersonas/ada/style-profile/synthesize", "", "")
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("synthesize route appears mounted despite a nil synthesizer (got 401)")
 	}
 }

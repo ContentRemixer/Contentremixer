@@ -30,7 +30,9 @@ const outMp4 = join(workDir, 'smoke.mp4');
 let context;
 let browser;
 try {
-  browser = await chromium.launch({ headless: true });
+  // --no-sandbox: the container runs as root (docker run in CI), where Chromium
+  // refuses to start its sandbox. Safe for this throwaway local-page probe.
+  browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   // recordVideo.size === viewport — the #1 DR footgun.
   context = await browser.newContext({
     viewport: VIEWPORT,

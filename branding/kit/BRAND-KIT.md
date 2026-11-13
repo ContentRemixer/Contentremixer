@@ -50,9 +50,13 @@ See [`VOICE-AND-TONE.md`](VOICE-AND-TONE.md). In one line: *talk like a DevRel w
 clear, a little playful, never hype.* Product lexicon: Crate · Sample · Mix · Mastering ·
 Sample clearance · The Booth · The Drop · The Weekly Remix.
 
-## 5. README badges & banner
+## 5. README badges, banner & diagrams
 See [`README-BADGES.md`](README-BADGES.md). flat-square badges, ink label + brand-token value,
 banner at the top full-width. ![badges](png/badge_strip.png)
+- **License:** ContentRemixer ships under **Apache License 2.0** — the license badge reads
+  `Apache_2.0` and links to the repo `LICENSE`.
+- **Diagrams:** use **Mermaid** fenced blocks (GitHub renders them natively) with the brand
+  `%%{init}%%` theme in `README-BADGES.md` — ink/violet palette, product-lexicon node labels.
 
 ## 6. Rebuilding assets
 ```bash

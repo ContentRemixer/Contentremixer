@@ -110,11 +110,18 @@ jobs:
         run: |
           set -euo pipefail
           if kubectl apply -f deploy/overlays/kind-e2e/fixtures/referencerepo-invalid.yaml 2>err.txt; then
-            echo "::error::admission webhook ADMITTED an invalid outputFormat (fail-open)"; cat err.txt; exit 1
+            echo "::error::admission webhook ADMITTED a duplicate labelRoute (fail-open)"; cat err.txt; exit 1
           fi
           cat err.txt
-          grep -q "unknown outputFormat" err.txt || {
-            echo "::error::ReferenceRepo was rejected, but not by the route validator"; exit 1; }
+          # The fixture is schema-valid, so the CRD enum does NOT reject it — the
+          # duplicate label is a cross-field rule only the validating webhook
+          # enforces. "admission webhook ... denied the request" proves the call
+          # reached the webhook over cert-manager TLS; the duplicate message
+          # proves it was our ReferenceRepoCustomValidator (ISI-7371).
+          grep -q "admission webhook" err.txt || {
+            echo "::error::ReferenceRepo was rejected, but not by the validating webhook (the CRD schema, not TLS admission?)"; exit 1; }
+          grep -q "appears more than once in spec.labelRoutes" err.txt || {
+            echo "::error::webhook rejected, but not by the duplicate-labelRoute validator"; exit 1; }
           echo "OK: invalid ReferenceRepo rejected by the validating webhook over cert-manager TLS"
 
       - name: apply fixture ReferenceRepo + secrets

@@ -1,9 +1,17 @@
-# Negative admission fixture (ISI-7117). outputFormat "podcast" is not in the
-# Phase-1 KnownOutputFormats set, so the ReferenceRepo validating webhook
-# (opwebhook.ReferenceRepoCustomValidator, wired in cmd/main.go) MUST reject
-# this CREATE. The kind job applies it expecting a NON-ZERO kubectl exit — that
-# is the proof the admission webhook is actually serving over the
-# cert-manager-issued TLS, not merely installed.
+# Negative admission fixture (ISI-7117, reworked ISI-7371). Every field here is
+# individually valid against the CRD OpenAPI schema (both outputFormats are in
+# the enum blog;short;tutorial;teleprompter) so structural validation ADMITS the
+# object and the request reaches the validating webhook. The two labelRoutes
+# share the SAME label ("recycle:blog"), which only the webhook can catch —
+# ReferenceRepoCustomValidator.validateReferenceRepo rejects duplicate labels
+# with a field.Duplicate error. The kind job applies this expecting a NON-ZERO
+# kubectl exit whose message names the duplicate — that is the proof the
+# admission webhook is actually serving over the cert-manager-issued TLS, not
+# merely installed.
+#
+# Why not a bad outputFormat: the CRD enum rejects an unknown outputFormat
+# during structural validation, BEFORE any validating webhook runs, so such a
+# fixture never exercises the webhook path (it was the original bug — ISI-7371).
 apiVersion: contentremixer.io/v1alpha1
 kind: ReferenceRepo
 metadata:
@@ -22,6 +30,9 @@ spec:
     branchPrefix: recycle/
     draft: true
   labelRoutes:
-    - label: "recycle:podcast"
+    - label: "recycle:blog"
       inputFormat: auto
-      outputFormat: podcast
+      outputFormat: blog
+    - label: "recycle:blog"
+      inputFormat: auto
+      outputFormat: short

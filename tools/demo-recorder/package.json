@@ -9,7 +9,8 @@
   },
   "scripts": {
     "record": "node record.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "smoke": "node smoke.mjs"
   },
   "engines": {
     "node": ">=20"

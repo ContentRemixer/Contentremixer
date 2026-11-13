@@ -1,0 +1,40 @@
+{
+  // demo-recorder devcontainer (ISI-7388 / DR-2, ISI-7400).
+  //
+  // The dev-loop twin of tools/demo-recorder/Dockerfile.demo-recorder: same
+  // Playwright base image (browsers + system deps baked, PINNED to playwright
+  // 1.64.0 == the npm pin in package.json), the devcontainers Node feature for a
+  // managed toolchain, and ffmpeg added in postCreateCommand (the one system dep
+  // the recorder needs beyond the base). An agent can open this and run
+  // `node record.mjs` / `npm run smoke` with no extra setup.
+  //
+  // Open with: "Dev Containers: Open Folder in Container" pointed at
+  // tools/demo-recorder (or reference this config explicitly).
+  "name": "demo-recorder",
+  "image": "mcr.microsoft.com/playwright:v1.64.0-noble",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    }
+  },
+
+  "containerEnv": {
+    // Trust the browsers baked into the base image — never re-download.
+    "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+    "PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright"
+  },
+
+  "workspaceFolder": "/workspaces/demo-recorder",
+
+  // ffmpeg = the only system dep over the base; then install the pinned npm deps.
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg && sudo rm -rf /var/lib/apt/lists/* && cd tools/demo-recorder && npm ci --no-audit --no-fund",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-playwright.playwright"
+      ]
+    }
+  }
+}

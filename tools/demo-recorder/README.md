@@ -63,18 +63,33 @@ cleanup-only-after-MP4-verified.
 `playwright` is pinned to `1.64.0` in `package.json`. The DR-2 runtime image
 ([ISI-7400](/ISI/issues/ISI-7400)) **must** use `mcr.microsoft.com/playwright:v1.64.0-noble`
 so the npm client matches the baked-in browsers exactly. If DR-2 lands on a
-different patch, bump this pin to match in the same change.
+different patch, bump this pin to match in the same change (Dockerfile `FROM`,
+`package.json`, `package-lock.json`, and `.devcontainer/demo-recorder/devcontainer.json`).
 
-## demowright evaluation (R2)
+## Runtime image & cold start (DR-2, ISI-7400)
 
-The plan asked us to evaluate [`demowright`](https://www.npmjs.com/package/demowright)
-(SVG cursor + click ripples + keystroke HUD + optional SRT, wrapping the
-Playwright config in one line) against the dependency-free injected cursor.
+`Dockerfile.demo-recorder` packages this wrapper so an agent (or the DR-3 E2E)
+runs `node record.mjs` with **cold start < 2 min** — nothing is installed at
+container start:
 
-Decision for DR-1: **ship the lean, auditable init-script cursor** (`lib/cursor.mjs`)
-— zero added dependency, fully inspectable, and it already covers the realism
-floor (visible cursor following `page.mouse`, click ripple, survives navigation
-via `addInitScript`). `demowright` remains a documented upgrade path: adopt it in
-a later iteration if we want the keystroke HUD or burned-in SRT captions, since
-those are additive and not required for the acceptance bar (watchable clip, no
-secrets on screen).
+- base `mcr.microsoft.com/playwright:v1.64.0-noble` bakes Node, the browsers, and
+  every system dep; we add only `ffmpeg` (apt). `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
+  makes `npm ci` trust the baked browsers (no re-download, no `playwright install`).
+- `COPY package*.json` + `npm ci` land before source so the dep layer stays warm.
+
+Published multi-arch (amd64, arm64) as `ghcr.io/contentremixer/demo-recorder` by
+`.github/workflows/demo-recorder-image-publish.yml` — cosign keyless-signed with
+SBOM + max provenance, the scrape-job lane ([ISI-7343]) shape. The `sha-<12>` tag
+is the hand-off contract.
+
+Cold start is **cold image pull + a trivial record**. The publish workflow's
+`cold-start` job proves it on a fresh runner: timed `docker pull`, an arch guard
+(pulled arch == runner arch — guards the "tag briefly publishes arm64-only"
+footgun), then `docker run <img> node smoke.mjs` (timed), asserting
+`pull + record < 120s`; the measured split is written to the job summary.
+`smoke.mjs` is a self-contained probe (launch → record → ffmpeg MP4) that does
+not depend on a scenario. Locally: `npm ci && npm run smoke` (needs ffmpeg +
+browsers on PATH).
+
+[ISI-7388]: https://github.com/ContentRemixer/Contentremixer
+[ISI-7343]: https://github.com/ContentRemixer/Contentremixer

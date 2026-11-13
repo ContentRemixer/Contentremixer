@@ -16,6 +16,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
@@ -28,18 +29,19 @@ type Server struct {
 	scrape      *scrapejobs.Store
 	content     *content.Store
 	contentTest *contenttest.Store
+	promote     *promote.Store
 	log         *slog.Logger
 }
 
 // New builds a Server. If log is nil, slog.Default() is used. scrape, content,
-// and contentTest may each be nil (Postgres / LiteLLM not configured), in which
-// case the corresponding scraper-review / content-collaboration / content-test
-// routes are not mounted.
-func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, log *slog.Logger) *Server {
+// contentTest, and promote may each be nil (Postgres / LiteLLM not configured),
+// in which case the corresponding scraper-review / content-collaboration /
+// content-test / promote routes are not mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, promote *promote.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, promote: promote, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -91,6 +93,9 @@ func (s *Server) Handler() http.Handler {
 	// Interactive content-test + persona-validate surface (ISI-7359, plan §5),
 	// gated by contenttest.Store.
 	s.mountContentTest(mux)
+	// Promotion-suggestion surface (ISI-7369, plan §5 O8b/P4): validated content
+	// → suggested LinkedIn post, gated by promote.Store.
+	s.mountPromote(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

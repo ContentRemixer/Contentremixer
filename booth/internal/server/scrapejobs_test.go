@@ -109,7 +109,7 @@ func newScrapeServer(t *testing.T) (http.Handler, *auth.TokenCodec, *fakeReviewD
 	// Seed a pending source owned by alice.
 	db.sources["s1"] = review.ScrapedSource{ID: "s1", OwnerSubject: "alice", SourceURL: "u", SourceKind: "article", PersonaName: "p", Status: review.SourcePending}
 	scrape := scrapejobs.New(db, noopLauncher{}, audit.NewSlogLogger(nil))
-	return New(prov, nil, scrape, nil, nil, nil).Handler(), prov.Codec, db
+	return New(prov, nil, scrape, nil, nil, nil, nil).Handler(), prov.Codec, db
 }
 
 func TestScrapeJob_CreateAndGet(t *testing.T) {

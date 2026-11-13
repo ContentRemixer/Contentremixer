@@ -24,6 +24,7 @@ import (
 	appv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 	appcontent "github.com/ContentRemixer/Contentremixer/app/content"
 	apptest "github.com/ContentRemixer/Contentremixer/app/contenttest"
+	apppromote "github.com/ContentRemixer/Contentremixer/app/promote"
 
 	"github.com/ContentRemixer/Contentremixer/app/review"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
@@ -106,7 +108,11 @@ func run() error {
 	// configured. Without either, the routes are absent.
 	contentTestStore := buildContentTestStore(reviewStore, st, auditor, log)
 
-	srv := server.New(prov, st, scrape, contentStore, contentTestStore, log)
+	// Promotion-suggestion surface (ISI-7369): validated content → suggested
+	// LinkedIn post. Same enablement gate as content-test (review store + LiteLLM).
+	promoteStore := buildPromoteStore(reviewStore, st, auditor, log)
+
+	srv := server.New(prov, st, scrape, contentStore, contentTestStore, promoteStore, log)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -176,6 +182,25 @@ func buildContentTestStore(reviewStore *review.Store, st *store.Store, auditor a
 	limiter := contenttest.NewLimiter(envIntOr("BOOTH_CONTENT_TEST_RATE_PER_MIN", 10), time.Minute)
 	log.Info("content-test enabled")
 	return contenttest.New(reviewStore, st, runner, limiter, auditor)
+}
+
+// buildPromoteStore wires the promotion-suggestion gating store (ISI-7369). Like
+// content-test it needs the review store (StyleProfile persistence) AND a LiteLLM
+// gateway (the generator); with either absent the route is unmounted. The
+// per-subject rate guard caps BOOTH_PROMOTE_RATE_PER_MIN generations/minute
+// (default 10; <=0 disables) — it reuses contenttest.Limiter, the one in-memory
+// sliding-window guard. BOOTH_PROMOTE_MODEL pins the model alias (empty =
+// gateway default).
+func buildPromoteStore(reviewStore *review.Store, st *store.Store, auditor audit.Logger, log *slog.Logger) *promote.Store {
+	litellmURL := os.Getenv("BOOTH_LITELLM_URL")
+	if reviewStore == nil || litellmURL == "" {
+		log.Info("promote disabled: needs BOOTH_REVIEW_DSN and BOOTH_LITELLM_URL")
+		return nil
+	}
+	w := apppromote.NewWriter(litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_PROMOTE_MODEL"))
+	limiter := contenttest.NewLimiter(envIntOr("BOOTH_PROMOTE_RATE_PER_MIN", 10), time.Minute)
+	log.Info("promote enabled")
+	return promote.New(reviewStore, st, w, limiter, auditor)
 }
 
 // buildContentStore wires the content-collaboration gating store from a

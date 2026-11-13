@@ -15,6 +15,7 @@ import (
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
@@ -22,21 +23,23 @@ import (
 
 // Server wires the auth provider, the gating stores, and the route table.
 type Server struct {
-	auth    *auth.Provider
-	store   *store.Store
-	scrape  *scrapejobs.Store
-	content *content.Store
-	log     *slog.Logger
+	auth        *auth.Provider
+	store       *store.Store
+	scrape      *scrapejobs.Store
+	content     *content.Store
+	contentTest *contenttest.Store
+	log         *slog.Logger
 }
 
-// New builds a Server. If log is nil, slog.Default() is used. scrape and
-// content may each be nil (Postgres not configured), in which case the
-// corresponding scraper-review / content-collaboration routes are not mounted.
-func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, log *slog.Logger) *Server {
+// New builds a Server. If log is nil, slog.Default() is used. scrape, content,
+// and contentTest may each be nil (Postgres / LiteLLM not configured), in which
+// case the corresponding scraper-review / content-collaboration / content-test
+// routes are not mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, scrape: scrape, content: content, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -80,6 +83,9 @@ func (s *Server) Handler() http.Handler {
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by
 	// content.Store.
 	s.mountContent(mux)
+	// Interactive content-test + persona-validate surface (ISI-7359, plan §5),
+	// gated by contenttest.Store.
+	s.mountContentTest(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

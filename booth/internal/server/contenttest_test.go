@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -238,5 +239,57 @@ func TestValidatePersonaUnauthenticated(t *testing.T) {
 	h, _ := newCTServer(t, ct)
 	if w := do(t, h, "POST", "/v1/devrelpersonas/ada/validate", "", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("no token = %d, want 401", w.Code)
+	}
+}
+
+func TestStyleProfileHappyPath(t *testing.T) {
+	p := ctFakeProfiles{profile: review.StyleProfile{OwnerSubject: "sub-alice", PersonaName: "ada", Traits: "dry wit", Sample: "a sample"}}
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice"}}
+	ct := ctStore(p, pe, ctFakeRunner{}, nil)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+
+	w := do(t, h, "GET", "/v1/devrelpersonas/ada/style-profile", tok, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("style-profile = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var sp review.StyleProfile
+	if err := json.Unmarshal(w.Body.Bytes(), &sp); err != nil {
+		t.Fatalf("bad JSON profile: %v", err)
+	}
+	if sp.PersonaName != "ada" || sp.Traits != "dry wit" {
+		t.Fatalf("profile = %+v, want ada/dry wit", sp)
+	}
+}
+
+func TestStyleProfileNotFoundYet(t *testing.T) {
+	p := ctFakeProfiles{getErr: review.ErrNotFound}
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice"}}
+	ct := ctStore(p, pe, ctFakeRunner{}, nil)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+
+	// Pre-synthesis (O7) state: the profile does not exist yet → 404, the UI's
+	// "awaiting synthesis" empty state, not an internal error.
+	if w := do(t, h, "GET", "/v1/devrelpersonas/ada/style-profile", tok, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("no profile = %d, want 404", w.Code)
+	}
+}
+
+func TestStyleProfileUnauthenticated(t *testing.T) {
+	ct := ctStore(ctFakeProfiles{}, ctFakePersonas{}, ctFakeRunner{}, nil)
+	h, _ := newCTServer(t, ct)
+	if w := do(t, h, "GET", "/v1/devrelpersonas/ada/style-profile", "", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("no token = %d, want 401", w.Code)
+	}
+}
+
+func TestStyleProfileForbidden(t *testing.T) {
+	pe := ctFakePersonas{condErr: store.ErrForbidden}
+	ct := ctStore(ctFakeProfiles{}, pe, ctFakeRunner{}, nil)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-bob", auth.RoleDevRel)
+	if w := do(t, h, "GET", "/v1/devrelpersonas/ada/style-profile", tok, ""); w.Code != http.StatusForbidden {
+		t.Fatalf("forbidden persona = %d, want 403", w.Code)
 	}
 }

@@ -154,6 +154,30 @@ func (s *Store) RunTest(ctx context.Context, sess auth.Session, req TestRequest)
 	}, nil
 }
 
+// GetProfile is the read-only §6.3-gated style-profile fetch the persona-management
+// surface renders (ISI-7362 D7, plan §6 P1/O7): the same authorization path as
+// RunTest/Validate, but no generation, no write, no rate guard (it costs nothing).
+// A persona with no synthesized profile yet is ErrNotFound (the 404 the plan's
+// error table reserves for the pre-synthesis O7 state), NOT an error the UI should
+// treat as a failure.
+func (s *Store) GetProfile(ctx context.Context, sess auth.Session, personaName string) (review.StyleProfile, error) {
+	if personaName == "" {
+		return review.StyleProfile{}, fmt.Errorf("%w: personaName is required", ErrBadRequest)
+	}
+	pc, err := s.personas.GetPersonaConditioning(ctx, sess, personaName)
+	if err != nil {
+		return review.StyleProfile{}, mapPersonaErr(err)
+	}
+	sp, err := s.profiles.GetStyleProfile(ctx, pc.OwnerSubject, personaName)
+	if err != nil {
+		if errors.Is(err, review.ErrNotFound) {
+			return review.StyleProfile{}, ErrNotFound
+		}
+		return review.StyleProfile{}, err
+	}
+	return sp, nil
+}
+
 // Validate flips the owner's accept decision for a persona's style profile. It
 // writes Postgres FIRST (the content source of truth) then mirrors to the CRD
 // `Validated` condition (the cheap declarative gate the writer-conditioner

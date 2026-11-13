@@ -6,6 +6,7 @@ import { useAuth } from "./app/auth";
 import { LoginPage } from "./pages/LoginPage";
 import { HomePage } from "./pages/HomePage";
 import { ContentPage } from "./pages/ContentPage";
+import { PersonaPage } from "./pages/personas/PersonaPage";
 import { ScraperReviewPage } from "./pages/ScraperReviewPage";
 import { AdminPage } from "./pages/AdminPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -35,6 +36,7 @@ export default function App() {
       >
         <Route index element={<HomePage />} />
         <Route path="content/*" element={<ContentPage />} />
+        <Route path="personas/*" element={<PersonaPage />} />
         <Route path="scraper-review/*" element={<ScraperReviewPage />} />
         <Route path="admin/*" element={<RequireAuth role="Admin"><AdminPage /></RequireAuth>} />
         <Route path="states" element={<StatesPage />} />

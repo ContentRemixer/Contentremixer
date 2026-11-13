@@ -258,3 +258,68 @@ func TestValidate_CRDFailureAfterPostgresReturnsError(t *testing.T) {
 		t.Fatalf("expected the Postgres-validated profile to be returned")
 	}
 }
+
+// --- GetProfile (read mirror for the persona-management UI, ISI-7362 D7) ---
+
+func TestGetProfile_OwnerScopedFetch(t *testing.T) {
+	p := &fakeProfiles{profile: review.StyleProfile{OwnerSubject: aliceSub, PersonaName: "ada", Traits: "dry wit", Sample: "a sample"}}
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub, SelfDescription: "deep dives"}}
+	s, _ := newStore(p, pe, &fakeRunner{}, nil)
+	sp, err := s.GetProfile(context.Background(), alice, "ada")
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if sp.PersonaName != "ada" || sp.Traits != "dry wit" {
+		t.Fatalf("profile = %+v, want persona ada with traits", sp)
+	}
+}
+
+func TestGetProfile_EmptyNameIsBadRequest(t *testing.T) {
+	s, _ := newStore(&fakeProfiles{}, &fakePersonas{}, &fakeRunner{}, nil)
+	if _, err := s.GetProfile(context.Background(), alice, ""); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("want ErrBadRequest, got %v", err)
+	}
+}
+
+func TestGetProfile_ForbiddenPersonaDenies(t *testing.T) {
+	pe := &fakePersonas{condErr: bstore.ErrForbidden}
+	s, _ := newStore(&fakeProfiles{}, pe, &fakeRunner{}, nil)
+	if _, err := s.GetProfile(context.Background(), alice, "bob-persona"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+}
+
+func TestGetProfile_MissingPersonaIsNotFound(t *testing.T) {
+	pe := &fakePersonas{condErr: bstore.ErrNotFound}
+	s, _ := newStore(&fakeProfiles{}, pe, &fakeRunner{}, nil)
+	if _, err := s.GetProfile(context.Background(), alice, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+// No profile yet is 404 for a read (the O7 pre-synthesis state), unlike a test
+// run where it is a 400 — the UI must distinguish "nothing to show yet".
+func TestGetProfile_NoProfileYetIsNotFound(t *testing.T) {
+	p := &fakeProfiles{getErr: review.ErrNotFound}
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub}}
+	s, _ := newStore(p, pe, &fakeRunner{}, nil)
+	if _, err := s.GetProfile(context.Background(), alice, "ada"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+// A read must never flip validation state.
+func TestGetProfile_DoesNotValidateOrAudit(t *testing.T) {
+	p := &fakeProfiles{profile: review.StyleProfile{OwnerSubject: aliceSub}}
+	pe := &fakePersonas{conditioning: bstore.PersonaConditioning{OwnerSubject: aliceSub}}
+	s, a := newStore(p, pe, &fakeRunner{}, nil)
+	if _, err := s.GetProfile(context.Background(), alice, "ada"); err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if pe.setCalls != 0 {
+		t.Fatalf("read must not write the Validated condition (setCalls=%d)", pe.setCalls)
+	}
+	if len(a.entries) != 0 {
+		t.Fatalf("read must not audit (got %d entries)", len(a.entries))
+	}
+}

@@ -27,6 +27,17 @@ export const REFERENCE_KIND_META: Record<ReferenceKind, { label: string; hint: s
   "talk-recording": { label: "Talk recording", hint: "A captioned talk recording URL" },
 };
 
+// Kinds offered in the "add a source" picker. This is REFERENCE_KINDS minus the
+// no-fetch "teleprompter-script" kind: that kind ingests an inline script BODY
+// (SCRAPE_SOURCE_TEXT), not a URL, and the scrape-job fails closed without it
+// (ISI-7435). The persona UI only captures a URL per reference, so offering it
+// here would enqueue a job that errors at ingestion. teleprompter-script stays
+// in REFERENCE_KINDS (it remains a valid stored kind — existing CR references
+// must still validate and display) until sourceText capture is designed.
+export const SELECTABLE_REFERENCE_KINDS = REFERENCE_KINDS.filter(
+  (k) => k !== "teleprompter-script",
+);
+
 // PersonaReference is one style-exemplar source row.
 export interface PersonaReference {
   url: string;

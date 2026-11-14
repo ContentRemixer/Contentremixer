@@ -16,7 +16,13 @@ import {
 } from "../../ui";
 import { ApiError } from "../../app/api";
 import { createScrapeJob, getPersona, getScrapeJob, updatePersona } from "./api";
-import { REFERENCE_KINDS, REFERENCE_KIND_META, type DevRelPersona, type ReferenceKind } from "./types";
+import {
+  REFERENCE_KINDS,
+  REFERENCE_KIND_META,
+  SELECTABLE_REFERENCE_KINDS,
+  type DevRelPersona,
+  type ReferenceKind,
+} from "./types";
 import type { JobStatus, ScrapeJob } from "../scraper/types";
 
 // P2 — Edit sources / re-ingest (ISI-7362 D7, plan §6 from the D0 mocks):
@@ -233,7 +239,7 @@ export function PersonaSourcesPanel() {
                   <Select value={r.kind} onValueChange={(v) => setRow(i, { kind: v as ReferenceKind })}>
                     <SelectTrigger id={`kind-${i}`} className="mt-1" />
                     <SelectContent>
-                      {REFERENCE_KINDS.map((k) => (
+                      {SELECTABLE_REFERENCE_KINDS.map((k) => (
                         <SelectItem key={k} value={k}>
                           {REFERENCE_KIND_META[k].label}
                         </SelectItem>

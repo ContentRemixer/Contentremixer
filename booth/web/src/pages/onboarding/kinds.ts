@@ -10,9 +10,9 @@ export interface SourceKindMeta {
   // What the card tells the DevRel to paste.
   hint: string;
   placeholder: string;
-  // teleprompter-script is a no-fetch inline kind; everything else fetches a URL.
-  // We still collect a URL/identifier for all kinds (the scrape job requires a
-  // sourceUrl), but the hint tells the user what to put there.
+  // Every kind here fetches from a URL/identifier (the scrape job requires a
+  // sourceUrl); the hint tells the user what to put there. The no-fetch
+  // teleprompter-script kind is deliberately NOT offered — see below.
 }
 
 export const SOURCE_KINDS: SourceKindMeta[] = [
@@ -40,12 +40,13 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     hint: "A GitHub repository; its markdown files are read as writing samples.",
     placeholder: "https://github.com/you/your-tutorial",
   },
-  {
-    kind: "teleprompter-script",
-    label: "Teleprompter script",
-    hint: "A talk/teleprompter script page. Paste a URL pointing to the script text.",
-    placeholder: "https://…/my-talk-script.txt",
-  },
+  // NOTE (ISI-7435): "teleprompter-script" is a no-fetch kind — the scraper
+  // ingests an inline script BODY (SCRAPE_SOURCE_TEXT), not a URL, and the
+  // scrape-job fails closed without it. The wizard only captures a sourceUrl
+  // per source (no paste-the-script textarea yet), so offering this kind here
+  // would enqueue a job that errors at ingestion. It is intentionally omitted
+  // until sourceText capture is designed; the backend keeps full support so an
+  // API client can still ingest a script directly. Follow-up: ISI-7438.
 ];
 
 export function sourceKindLabel(kind: string): string {

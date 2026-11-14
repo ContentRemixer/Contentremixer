@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -58,6 +59,21 @@ func TestGetPersonaConditioning_OwnerAndAdmin(t *testing.T) {
 	pcAdmin, err := s.GetPersonaConditioning(context.Background(), admin, "ada")
 	if err != nil || pcAdmin.OwnerSubject != aliceSub {
 		t.Fatalf("admin lookup = %+v err=%v", pcAdmin, err)
+	}
+}
+
+func TestGetPersonaConditioning_CarriesContentKinds(t *testing.T) {
+	p := persona("ada", aliceSub)
+	p.Spec.ContentKinds = []v1alpha1.PrimaryContentKind{v1alpha1.PrimaryContentBlog, v1alpha1.PrimaryContentVideo}
+	s, _, _ := newPersonaStore(t, p)
+
+	pc, err := s.GetPersonaConditioning(context.Background(), alice, "ada")
+	if err != nil {
+		t.Fatalf("owner lookup: %v", err)
+	}
+	want := []string{"blog", "video"}
+	if !reflect.DeepEqual(pc.ContentKinds, want) {
+		t.Fatalf("ContentKinds = %v, want %v", pc.ContentKinds, want)
 	}
 }
 

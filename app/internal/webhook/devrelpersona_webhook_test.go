@@ -26,6 +26,13 @@ func personaWithTargets(subject string, targets ...contentremixerv1alpha1.Conten
 	return p
 }
 
+func personaWithKinds(subject string, primary contentremixerv1alpha1.PrimaryContentKind, kinds ...contentremixerv1alpha1.PrimaryContentKind) *contentremixerv1alpha1.DevRelPersona {
+	p := persona(subject)
+	p.Spec.PrimaryContentKind = primary
+	p.Spec.ContentKinds = kinds
+	return p
+}
+
 func TestValidateDevRelPersona(t *testing.T) {
 	ok := contentremixerv1alpha1.PersonaReference{URL: "https://youtu.be/abc", Kind: "youtube"}
 	art := contentremixerv1alpha1.PersonaReference{URL: "https://example.com/post", Kind: "article"}
@@ -60,6 +67,33 @@ func TestValidateDevRelPersona(t *testing.T) {
 			in:       personaWithTargets("alice", contentremixerv1alpha1.ContentFormatTarget{ContentType: "tiktok", LengthSpec: "≤1min"}),
 			wantErr:  true,
 			contains: "contentFormatTargets",
+		},
+		{
+			name:    "valid contentKinds set with primary in set",
+			in:      personaWithKinds("alice", contentremixerv1alpha1.PrimaryContentBlog, contentremixerv1alpha1.PrimaryContentBlog, contentremixerv1alpha1.PrimaryContentVideo),
+			wantErr: false,
+		},
+		{
+			name:    "empty contentKinds with primary is backward compatible",
+			in:      personaWithKinds("alice", contentremixerv1alpha1.PrimaryContentBlog),
+			wantErr: false,
+		},
+		{
+			name:    "contentKinds set, primary unset is allowed",
+			in:      personaWithKinds("alice", "", contentremixerv1alpha1.PrimaryContentBlog),
+			wantErr: false,
+		},
+		{
+			name:     "unknown contentKinds item",
+			in:       personaWithKinds("alice", contentremixerv1alpha1.PrimaryContentBlog, contentremixerv1alpha1.PrimaryContentBlog, "podcast"),
+			wantErr:  true,
+			contains: "contentKinds",
+		},
+		{
+			name:     "primary not in contentKinds set",
+			in:       personaWithKinds("alice", contentremixerv1alpha1.PrimaryContentTalk, contentremixerv1alpha1.PrimaryContentBlog, contentremixerv1alpha1.PrimaryContentVideo),
+			wantErr:  true,
+			contains: "primaryContentKind",
 		},
 	}
 

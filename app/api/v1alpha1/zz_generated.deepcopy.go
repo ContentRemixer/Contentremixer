@@ -103,6 +103,11 @@ func (in *DevRelPersonaList) DeepCopyObject() runtime.Object {
 func (in *DevRelPersonaSpec) DeepCopyInto(out *DevRelPersonaSpec) {
 	*out = *in
 	out.Owner = in.Owner
+	if in.ContentKinds != nil {
+		in, out := &in.ContentKinds, &out.ContentKinds
+		*out = make([]PrimaryContentKind, len(*in))
+		copy(*out, *in)
+	}
 	if in.References != nil {
 		in, out := &in.References, &out.References
 		*out = make([]PersonaReference, len(*in))

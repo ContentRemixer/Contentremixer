@@ -22,6 +22,12 @@ type PersonaConditioning struct {
 	OwnerSubject       string
 	SelfDescription    string
 	PrimaryContentKind string
+	// ContentKinds is the full multi-select set of mediums the DevRel produces
+	// (ISI-7424); PrimaryContentKind is its derived dominant. Plumbed here now so
+	// the projection carries it; downstream *use* (threading the full set through
+	// style/content-test/promote conditioning) is Phase 2 (ISI-7429). Empty when
+	// the persona predates multi-select or only set a single primary.
+	ContentKinds []string
 }
 
 // GetPersonaConditioning resolves a persona's conditioning inputs through the
@@ -38,10 +44,15 @@ func (s *Store) GetPersonaConditioning(ctx context.Context, sess auth.Session, n
 	if !ok {
 		return PersonaConditioning{}, fmt.Errorf("store: persona %q is not a DevRelPersona", name)
 	}
+	var kinds []string
+	for _, k := range p.Spec.ContentKinds {
+		kinds = append(kinds, string(k))
+	}
 	return PersonaConditioning{
 		OwnerSubject:       p.Spec.Owner.Subject,
 		SelfDescription:    p.Spec.SelfDescription,
 		PrimaryContentKind: string(p.Spec.PrimaryContentKind),
+		ContentKinds:       kinds,
 	}, nil
 }
 

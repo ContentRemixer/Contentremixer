@@ -2,11 +2,15 @@
 # runtime image (ISI-7400), produce demo.mp4 + meta.yaml for the Crate, and push a
 # Sample branch (+ open a PR when allowed) for the Graphic Designer realism gate.
 #
-# Triggers:
+# Three triggers, same job:
 #   - workflow_dispatch   : humans, with form inputs.
-#   - repository_dispatch  : agents (type `record-demo`) — params via client_payload.
-#     Agents post it with a contents:write token; no actions:write is required,
-#     which workflow_dispatch-via-API would need.
+#   - repository_dispatch : agents (type `record-demo`), params via client_payload.
+#                           Agents post it with a contents:write token; no
+#                           actions:write is required (workflow_dispatch-via-API
+#                           would need it).
+#   - push to this branch : the agent fallback when no actions:write token exists —
+#                           pushing `ci/record-demo-otelt` runs this file as-is with
+#                           the defaults below. The branch is CI-trigger only.
 #
 # The plan's canonical `demo.otelt.io` is NXDOMAIN, so the target defaults to the
 # public Grafana play ground (https://play.grafana.org). Recording runs via
@@ -43,6 +47,8 @@ on:
         required: true
   repository_dispatch:
     types: [record-demo]
+  push:
+    branches: [ci/record-demo-otelt]
 
 permissions:
   contents: write # push the Sample branch

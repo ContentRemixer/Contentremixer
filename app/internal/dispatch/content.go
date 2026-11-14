@@ -47,6 +47,13 @@ func runContext(wo WorkOrder) pipeline.RunContext {
 		Notes:        wo.Inputs.Notes,
 		Owner:        wo.MemoryRef.Owner,
 		PersonaName:  wo.MemoryRef.Persona,
+		// Skill threads the route's EffectiveSkill() to the writer registry
+		// (ISI-7421), so an explicit route.skill drives skill-pack selection
+		// regardless of output format. Safe because DefaultSkill and the
+		// writer's defaultSkillForFormat agree on every content format: a
+		// default blog route still resolves "content-writer" (recycle:blog
+		// byte-for-byte), and a default short route resolves "" (style-only).
+		Skill: wo.Skill,
 		// ModelName intentionally empty: the LiteLLM gateway default resolves
 		// it (unchanged from the pre-seam path).
 	}

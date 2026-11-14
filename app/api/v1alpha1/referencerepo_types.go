@@ -117,18 +117,27 @@ func DefaultActorTemplate(outputFormat string) string {
 
 // DefaultSkill returns the skill pack an outputFormat loads when a LabelRoute
 // omits skill (ADR-3 defaults; an explicit route.skill overrides it).
+//
+// short is style-only by default (empty skill): it carries no skill pack,
+// preserving its pre-ISI-7394 behavior. This is the single source of truth the
+// writer's defaultSkillForFormat mirrors for the content formats (guarded by a
+// lock-step test in the writer package); the two MUST agree so threading
+// WorkOrder.Skill through the dispatcher seam (ISI-7421) does not regress short
+// into loading the content-writer stack.
 func DefaultSkill(outputFormat string) string {
 	switch outputFormat {
 	case "demo":
 		return "demo-recorder"
 	case "video":
 		return "video-designer"
+	case "blog":
+		return "content-writer"
 	case "tutorial":
 		return "tutorial"
 	case "teleprompter":
 		return "teleprompter"
-	default: // blog, short
-		return "content-writer"
+	default: // short, and any format that is style-only by default
+		return ""
 	}
 }
 

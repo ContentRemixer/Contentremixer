@@ -1,0 +1,190 @@
+# DR-3 E2E demo recording (ISI-7401) — run a demo-recorder scenario in the DR-2
+# runtime image (ISI-7400), produce demo.mp4 + meta.yaml for the Crate, and push a
+# Sample branch (+ open a PR when allowed) for the Graphic Designer realism gate.
+#
+# Three triggers, same job:
+#   - workflow_dispatch   : humans, with form inputs.
+#   - repository_dispatch : agents (type `record-demo`), params via client_payload.
+#                           Agents post it with a contents:write token; no
+#                           actions:write is required (workflow_dispatch-via-API
+#                           would need it).
+#   - push to this branch : the agent fallback when no actions:write token exists —
+#                           pushing `ci/record-demo-otelt` runs this file as-is with
+#                           the defaults below. The branch is CI-trigger only.
+#
+# The plan's canonical `demo.otelt.io` is NXDOMAIN, so the target defaults to the
+# public Grafana play ground (https://play.grafana.org). Recording runs via
+# `docker run` of ghcr.io/contentremixer/demo-recorder on the host runner so host
+# tooling (git, gh) stays available for the artifact + PR steps.
+name: demo-record-e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario module (relative to tools/demo-recorder/)"
+        default: "scenarios/demo-otelt.mjs"
+        required: true
+      slug:
+        description: "Crate slug → content/demos/YYYY/<slug>/"
+        default: "otelt-overview"
+        required: true
+      orientation:
+        description: "landscape (1920x1080) or shorts (1080x1920)"
+        default: "landscape"
+        required: true
+      url:
+        description: "Target URL (feeds DEMO_URL_OVERRIDE; blank = scenario meta.url)"
+        default: "https://play.grafana.org"
+        required: false
+      image:
+        description: "demo-recorder runtime image ref"
+        default: "ghcr.io/contentremixer/demo-recorder:sha-e2c1ad26b19b"
+        required: true
+      open_pr:
+        description: "Open a Sample PR with the recorded MP4"
+        default: "true"
+        required: true
+  repository_dispatch:
+    types: [record-demo]
+  push:
+    branches: [ci/record-demo-otelt]
+
+permissions:
+  contents: write # push the Sample branch
+  pull-requests: write # open the Sample PR (when org policy allows)
+  packages: read # pull the demo-recorder image from GHCR
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve params (dispatch inputs | client_payload | defaults)
+        id: p
+        env:
+          IN_URL: ${{ github.event.inputs.url }}
+          CP_URL: ${{ github.event.client_payload.url }}
+          IN_SCENARIO: ${{ github.event.inputs.scenario }}
+          CP_SCENARIO: ${{ github.event.client_payload.scenario }}
+          IN_SLUG: ${{ github.event.inputs.slug }}
+          CP_SLUG: ${{ github.event.client_payload.slug }}
+          IN_ORIENT: ${{ github.event.inputs.orientation }}
+          CP_ORIENT: ${{ github.event.client_payload.orientation }}
+          IN_IMAGE: ${{ github.event.inputs.image }}
+          CP_IMAGE: ${{ github.event.client_payload.image }}
+          IN_OPENPR: ${{ github.event.inputs.open_pr }}
+          CP_OPENPR: ${{ github.event.client_payload.open_pr }}
+        run: |
+          set -euo pipefail
+          {
+            echo "url=${IN_URL:-${CP_URL:-https://play.grafana.org}}"
+            echo "scenario=${IN_SCENARIO:-${CP_SCENARIO:-scenarios/demo-otelt.mjs}}"
+            echo "slug=${IN_SLUG:-${CP_SLUG:-otelt-overview}}"
+            echo "orientation=${IN_ORIENT:-${CP_ORIENT:-landscape}}"
+            echo "image=${IN_IMAGE:-${CP_IMAGE:-ghcr.io/contentremixer/demo-recorder:sha-e2c1ad26b19b}}"
+            echo "open_pr=${IN_OPENPR:-${CP_OPENPR:-true}}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Record demo → MP4 (in the DR-2 image)
+        id: rec
+        env:
+          URL: ${{ steps.p.outputs.url }}
+          IMAGE: ${{ steps.p.outputs.image }}
+          SCENARIO: ${{ steps.p.outputs.scenario }}
+          SLUG: ${{ steps.p.outputs.slug }}
+          ORIENT: ${{ steps.p.outputs.orientation }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          docker run --rm \
+            -e DEMO_URL_OVERRIDE="$URL" \
+            -e PW_NO_SANDBOX=1 \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work/tools/demo-recorder \
+            "$IMAGE" \
+            bash -lc "npm ci --no-audit --no-fund && node record.mjs '$SCENARIO' --slug '$SLUG' --orientation '$ORIENT' --content-root /work"
+          end=$(date +%s)
+          echo "duration_sec=$((end - start))" >> "$GITHUB_OUTPUT"
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/content" || true
+
+      - name: Locate artifacts + summary
+        id: loc
+        env:
+          SLUG: ${{ steps.p.outputs.slug }}
+          URL: ${{ steps.p.outputs.url }}
+          SCENARIO: ${{ steps.p.outputs.scenario }}
+          ORIENT: ${{ steps.p.outputs.orientation }}
+        run: |
+          set -euo pipefail
+          dir=$(find content/demos -type d -name "$SLUG" | head -1)
+          test -s "$dir/demo.mp4" || { echo "no MP4 produced"; exit 1; }
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          ls -la "$dir"
+          bytes=$(stat -c%s "$dir/demo.mp4")
+          {
+            echo "### DR-3 recording"
+            echo ""
+            echo "- scenario: \`$SCENARIO\` → \`$URL\`"
+            echo "- slug: \`$SLUG\` · orientation: \`$ORIENT\`"
+            echo "- MP4 size: $((bytes / 1024)) KiB · pipeline wall time: ${{ steps.rec.outputs.duration_sec }}s"
+            echo ""
+            echo '```'
+            cat "$dir/meta.yaml"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload MP4 + meta
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ steps.p.outputs.slug }}
+          path: |
+            ${{ steps.loc.outputs.dir }}/demo.mp4
+            ${{ steps.loc.outputs.dir }}/meta.yaml
+          if-no-files-found: error
+
+      - name: Push Sample branch + open PR (best-effort)
+        if: ${{ steps.p.outputs.open_pr == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIR: ${{ steps.loc.outputs.dir }}
+          URL: ${{ steps.p.outputs.url }}
+          SLUG: ${{ steps.p.outputs.slug }}
+          SCENARIO: ${{ steps.p.outputs.scenario }}
+          DUR: ${{ steps.rec.outputs.duration_sec }}
+        run: |
+          set -euo pipefail
+          branch="sample/dr3-${SLUG}-${GITHUB_RUN_ID}"
+          git config user.name "demo-recorder[bot]"
+          git config user.email "noreply@paperclip.ing"
+          git checkout -b "$branch"
+          git add "$DIR/demo.mp4" "$DIR/meta.yaml"
+          git commit \
+            -m "feat(ISI-7401): DR-3 recorded demo Sample ($SLUG)" \
+            -m "Recorded $URL via tools/demo-recorder on the DR-2 image. For the Graphic Designer realism gate (plan §5): pacing, visible cursor + click highlight, on-screen scrub (no secrets)." \
+            -m "Co-Authored-By: Paperclip <noreply@paperclip.ing>"
+          git push origin "$branch"
+          compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+          body=$(printf '%s\n' \
+            "DR-3 recorded Sample — closes the ISI-7401 acceptance once reviewed." \
+            "" \
+            "- Source: \`$URL\` · scenario \`$SCENARIO\`" \
+            "- Delivered: \`$DIR/demo.mp4\` + \`meta.yaml\` · wall time ${DUR}s" \
+            "" \
+            "**Realism gate (Graphic Designer, plan §5):** confirm pacing, a visible cursor + click highlight, and that NO tenant IDs / tokens / real emails / internal hostnames are on screen. A secret on screen is a hard reject.")
+          # GitHub Actions may be barred from opening PRs (org policy); never fail
+          # the job on that — the branch is pushed, print the compare URL to finish.
+          if gh pr create --base main --head "$branch" \
+               --title "feat(ISI-7401): DR-3 demo Sample — $SLUG" --body "$body"; then
+            echo "Opened Sample PR for $branch."
+          else
+            echo "::notice::Could not open PR automatically (org policy). Branch pushed — open it here: $compare"
+            echo "### Sample branch pushed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Open the PR: $compare" >> "$GITHUB_STEP_SUMMARY"
+          fi

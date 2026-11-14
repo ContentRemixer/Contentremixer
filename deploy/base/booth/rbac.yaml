@@ -29,6 +29,14 @@ rules:
   - apiGroups: ["contentremixer.io"]
     resources: ["modelprofiles", "referencerepos", "devrelpersonas"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # devrelpersonas/status: the persona-validate action (ISI-7359) writes the
+  # `Validated` status condition — the cheap declarative mirror of the
+  # StyleProfile.Validated Postgres flag (ISI-7356 §4). Status subresource is a
+  # distinct RBAC resource; Booth sets ONLY this condition via Status().Update
+  # (apimeta merge-by-type), the ingestion reconciler owns the rest.
+  - apiGroups: ["contentremixer.io"]
+    resources: ["devrelpersonas/status"]
+    verbs: ["get", "update", "patch"]
   # scraper-review job launcher (booth/internal/scrapejobs.K8sLauncher).
   # trivy:ignore:KSV-0048 — create on batch Jobs IS this component's designed,
   #   audited capability (the §6.3 authz predicate + audit record precede every

@@ -26,6 +26,13 @@ type Route struct {
 	InputFormat string
 	// OutputFormat is the route's resolved writer style (styles/<fmt>.md).
 	OutputFormat string
+	// Skill is the resolved skill pack (explicit route.skill or the
+	// OutputFormat default — ADR-3).
+	Skill string
+	// ActorTemplate is the resolved runtime template the Dispatcher selects a
+	// strategy by (explicit route.actorTemplate or the OutputFormat default):
+	// "content" | "media" (ADR-3).
+	ActorTemplate string
 }
 
 // Resolve maps an issue's labels to pipeline routes using the repo CR's
@@ -56,7 +63,16 @@ func Resolve(repoCR *contentremixerv1alpha1.ReferenceRepo, issueLabels []string)
 			if input == "" {
 				input = "auto" // mirrors the CRD server-side default.
 			}
-			matched = append(matched, Route{Label: label, InputFormat: input, OutputFormat: rt.OutputFormat})
+			// skill/actorTemplate stay a pure config lookup: explicit on the
+			// route, else derived from outputFormat (ADR-3). The label string
+			// is still never parsed for any of it.
+			matched = append(matched, Route{
+				Label:         label,
+				InputFormat:   input,
+				OutputFormat:  rt.OutputFormat,
+				Skill:         rt.EffectiveSkill(),
+				ActorTemplate: rt.EffectiveActorTemplate(),
+			})
 		} else {
 			unmapped = append(unmapped, label)
 		}

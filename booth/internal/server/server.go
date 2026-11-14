@@ -15,6 +15,8 @@ import (
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
@@ -22,21 +24,24 @@ import (
 
 // Server wires the auth provider, the gating stores, and the route table.
 type Server struct {
-	auth    *auth.Provider
-	store   *store.Store
-	scrape  *scrapejobs.Store
-	content *content.Store
-	log     *slog.Logger
+	auth        *auth.Provider
+	store       *store.Store
+	scrape      *scrapejobs.Store
+	content     *content.Store
+	contentTest *contenttest.Store
+	promote     *promote.Store
+	log         *slog.Logger
 }
 
-// New builds a Server. If log is nil, slog.Default() is used. scrape and
-// content may each be nil (Postgres not configured), in which case the
-// corresponding scraper-review / content-collaboration routes are not mounted.
-func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, log *slog.Logger) *Server {
+// New builds a Server. If log is nil, slog.Default() is used. scrape, content,
+// contentTest, and promote may each be nil (Postgres / LiteLLM not configured),
+// in which case the corresponding scraper-review / content-collaboration /
+// content-test / promote routes are not mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, promote *promote.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, scrape: scrape, content: content, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, promote: promote, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -60,6 +65,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/auth/logout", s.auth.Handlers.Logout)
 	mux.Handle("GET /v1/auth/whoami", s.auth.Middleware.Wrap(http.HandlerFunc(s.auth.Handlers.WhoAmI)))
 
+	// DevRel self-service first-run detection (ISI-7360 D5): the SPA probes this
+	// after login to decide whether to launch the onboarding wizard. Behind the
+	// session Middleware; the answer is scoped to the caller's own subject.
+	mux.Handle("GET /v1/onboarding-status", s.protect(s.onboardingStatusHandler))
+
 	// CRUD over the registered kinds, each wrapped by the auth Middleware so the
 	// session is resolved (or the request 401'd) before the handler runs.
 	for _, kind := range []store.ResourceKind{store.DevRelPersonaKind, store.ModelProfileKind, store.ReferenceRepoKind} {
@@ -80,6 +90,12 @@ func (s *Server) Handler() http.Handler {
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by
 	// content.Store.
 	s.mountContent(mux)
+	// Interactive content-test + persona-validate surface (ISI-7359, plan §5),
+	// gated by contenttest.Store.
+	s.mountContentTest(mux)
+	// Promotion-suggestion surface (ISI-7369, plan §5 O8b/P4): validated content
+	// → suggested LinkedIn post, gated by promote.Store.
+	s.mountPromote(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the
@@ -150,6 +166,15 @@ func (s *Server) createHandler(kind store.ResourceKind) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(obj); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
+		}
+		// Self-service owner stamping (ISI-7360 D5): for owner-scoped kinds
+		// (DevRelPersona), an OMITTED owner defaults to the caller's subject so a
+		// DevRel owns what they create without having to know/send their own
+		// subject. An explicitly-supplied owner is left intact and still runs the
+		// full §6.3 gate — so a DevRel naming someone else's subject is denied
+		// (403), not silently re-homed; an Admin may create on a DevRel's behalf.
+		if kind.OwnerStampable() && kind.OwnerSubject(obj) == "" {
+			kind.SetOwnerSubject(obj, sess.Subject)
 		}
 		if err := s.store.Create(r.Context(), sess, kind, obj); err != nil {
 			s.writeStoreErr(w, err)

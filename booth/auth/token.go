@@ -26,7 +26,8 @@ const MinSessionKeyLen = 32
 // configured. Sessions are deliberately short-lived (§6.4).
 const DefaultSessionTTL = time.Hour
 
-// claims is the signed token payload. subject == username (§6.2).
+// claims is the signed token payload. subject is the user's stable owner key
+// (booth:local:<username> until OIDC, see auth.User.Subject) (§6.2).
 type claims struct {
 	Subject string `json:"sub"`
 	Role    Role   `json:"role"`

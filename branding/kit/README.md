@@ -1,5 +1,9 @@
 # ContentRemixer — Brand Kit
 
+> **Start here:** [`BRAND-KIT.md`](BRAND-KIT.md) is the single entry point (logo · palette ·
+> type · [voice & tone](VOICE-AND-TONE.md) · [README badges & banner](README-BADGES.md)).
+> This file documents the asset/build details.
+
 Production brand kit, iterated from the locked crossfader direction (`branding/logo/`,
 locked by Henrik 2026-11-04). **Concept:** the crossfader *is* the product — blog lines
 (left channel) and a play button (right channel), knob mid-mix. *Create once. Publish everywhere.*

@@ -24,7 +24,12 @@ test.describe("B6 scraper review", () => {
     await installApi(page, defaults({ session: DEVREL, scrapedSources: [source()] }));
     await page.goto("/scraper-review");
     await page.getByRole("button", { name: "Accept" }).click();
-    await expect(page.getByText("accepted — chunks queued for the corpus")).toBeVisible();
+    // `exact` keeps this from also matching Radix Toast's sr-only announce
+    // region, whose aria-live text concatenates the title + this description
+    // (strict-mode violation otherwise — ISI-7371).
+    await expect(
+      page.getByText("accepted — chunks queued for the corpus", { exact: true }),
+    ).toBeVisible();
     // The source moved out of `pending`; the reloaded pending view is now empty.
     await expect(page.getByText("No sources are waiting for review.")).toBeVisible();
   });

@@ -1,7 +1,7 @@
 package scrape
 
 import (
-	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -28,18 +28,23 @@ func TestByKindCoversKnownKinds(t *testing.T) {
 	}
 }
 
-// TestUnimplementedKindsFailClosed documents the D1→D2 contract boundary: the
-// three DevRel-onboarding kinds admit against the CRD but, until D2 wires their
-// fetchers, return a clear "not yet implemented" error (not "unsupported kind").
-func TestUnimplementedKindsFailClosed(t *testing.T) {
+// TestDevRelKindsAreWired asserts the three DevRel-onboarding kinds now dispatch
+// to a real fetcher (D2, ISI-7357) rather than the retired "not yet implemented"
+// placeholder: each resolves to a non-placeholder scraper type in byKind.
+func TestDevRelKindsAreWired(t *testing.T) {
 	s := New(nil)
-	for _, kind := range []string{KindGitHubRepo, KindTeleprompterScript, KindTalkRecording} {
-		_, err := s.Scrape(context.Background(), v1alpha1.PersonaReference{URL: "https://example.com/x", Kind: kind})
-		if err == nil {
-			t.Fatalf("kind %q: expected a not-implemented error, got nil", kind)
+	wantType := map[string]string{
+		KindGitHubRepo:         "*scrape.githubRepoScraper",
+		KindTeleprompterScript: "*scrape.teleprompterScraper",
+		KindTalkRecording:      "*scrape.talkRecordingScraper",
+	}
+	for kind, want := range wantType {
+		ks, ok := s.byKind[kind]
+		if !ok {
+			t.Fatalf("kind %q not registered in byKind", kind)
 		}
-		if !strings.Contains(err.Error(), "not yet implemented") {
-			t.Fatalf("kind %q: want 'not yet implemented' error, got %v", kind, err)
+		if got := fmt.Sprintf("%T", ks); got != want {
+			t.Errorf("kind %q dispatches to %s, want %s", kind, got, want)
 		}
 	}
 }

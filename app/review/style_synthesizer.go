@@ -49,6 +49,12 @@ type SynthesizeRequest struct {
 	// PrimaryContentKind orients the sample (spec.primaryContentKind).
 	// Optional; empty = medium-agnostic.
 	PrimaryContentKind string
+	// ContentKinds is the persona's full multi-select repertoire
+	// (spec.contentKinds, ISI-7424); PrimaryContentKind is its dominant. The D3
+	// synthesis composes across it so the named traits capture the author's
+	// cross-medium voice (ISI-7429). Optional; empty or single-valued → the
+	// synthesis behaves exactly as primary-only (graceful degradation).
+	ContentKinds []string
 }
 
 // NewSynthesizer builds the live synthesizer over an already-open review
@@ -121,6 +127,7 @@ func (s *Synthesizer) Synthesize(ctx context.Context, req SynthesizeRequest) (St
 		PersonaName:        req.PersonaName,
 		SelfDescription:    req.SelfDescription,
 		PrimaryContentKind: req.PrimaryContentKind,
+		ContentKinds:       req.ContentKinds,
 		Exemplars:          exemplars,
 	})
 	if err != nil {
@@ -151,4 +158,45 @@ func (s *Synthesizer) Synthesize(ctx context.Context, req SynthesizeRequest) (St
 		return StyleProfile{}, err
 	}
 	return stored, nil
+}
+
+// NewDefaultSynthesizer builds a Synthesizer with the rate/cost guard expressed
+// as primitives (a duration + two counts) instead of a style.Guard. It exists
+// so a caller OUTSIDE this module — Booth, which cannot import
+// app/internal/pipeline/style and therefore cannot name a style.Guard — can
+// still wire the D3 synthesizer behind its §6.3 route (ISI-7361 D6). A zero
+// value for any parameter selects the package default for that knob.
+func NewDefaultSynthesizer(db *Store, litellmBaseURL, apiKey, model string, minInterval time.Duration, maxExemplars, maxChars int) *Synthesizer {
+	return NewSynthesizer(db, litellmBaseURL, apiKey, model, style.Guard{
+		MinInterval:  minInterval,
+		MaxExemplars: maxExemplars,
+		MaxChars:     maxChars,
+	})
+}
+
+// The Synthesize error contract (style.ErrNoExemplars / ErrRateLimited /
+// ErrMalformed) is defined in app/internal/pipeline/style, which the Booth
+// module cannot import. These public classifiers let the Booth route map those
+// outcomes to HTTP status codes (409 / 429 / 502) without crossing the module
+// boundary — the same seam rationale as NewSynthesizer itself.
+
+// IsNoExemplars reports whether a synthesis failed because the persona has no
+// accepted exemplars yet (→ 409: nothing to recognize a style from).
+func IsNoExemplars(err error) bool { return errors.Is(err, style.ErrNoExemplars) }
+
+// SynthesisRateLimited reports whether a re-synthesis was refused by the guard
+// interval, and if so how long until it may run again (→ 429).
+func SynthesisRateLimited(err error) (time.Duration, bool) {
+	var rl style.ErrRateLimited
+	if errors.As(err, &rl) {
+		return rl.RetryAfter, true
+	}
+	return 0, false
+}
+
+// IsMalformed reports whether synthesis produced a completion that broke the
+// section contract (→ 502: an upstream/model fault, not a caller error).
+func IsMalformed(err error) bool {
+	var m style.ErrMalformed
+	return errors.As(err, &m)
 }

@@ -147,7 +147,7 @@ func TestAuthenticator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	if sess.Subject != "alice" || sess.Role != RoleAdmin {
+	if sess.Subject != LocalSubject("alice") || sess.Role != RoleAdmin {
 		t.Fatalf("unexpected session %+v", sess)
 	}
 	if _, err := a.Authenticate("alice", "wrong"); err != ErrInvalidCredentials {
@@ -155,6 +155,41 @@ func TestAuthenticator(t *testing.T) {
 	}
 	if _, err := a.Authenticate("ghost", "pw"); err != ErrInvalidCredentials {
 		t.Fatalf("unknown user: got %v", err)
+	}
+}
+
+func TestCreateMintsStableSubject(t *testing.T) {
+	store := NewMemoryStore()
+	// Caller leaves Subject unset — Create mints booth:local:<username>.
+	if err := store.Create(User{Username: "dana", BcryptHash: mustHash(t, "pw"), Role: RoleDevRel}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := store.Get("dana")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if want := LocalSubject("dana"); got.Subject != want {
+		t.Fatalf("Subject = %q, want %q", got.Subject, want)
+	}
+	if got.Subject == got.Username {
+		t.Fatal("Subject must be distinct from Username (survives rename)")
+	}
+	// Distinct users get distinct, deterministic subjects (uniqueness invariant).
+	if err := store.Create(User{Username: "erin", BcryptHash: mustHash(t, "pw"), Role: RoleDevRel}); err != nil {
+		t.Fatalf("Create erin: %v", err)
+	}
+	erin, _ := store.Get("erin")
+	if erin.Subject == got.Subject {
+		t.Fatal("two users must not share a subject")
+	}
+	// Authenticate surfaces the minted subject, not the username.
+	a := NewBcryptAuthenticator(store)
+	sess, err := a.Authenticate("dana", "pw")
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if sess.Subject != LocalSubject("dana") {
+		t.Fatalf("session subject = %q, want %q", sess.Subject, LocalSubject("dana"))
 	}
 }
 
@@ -257,7 +292,7 @@ func TestLoginLogoutFlow(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &sess); err != nil {
 		t.Fatal(err)
 	}
-	if sess.Subject != "boss" || sess.Role != RoleAdmin {
+	if sess.Subject != LocalSubject("boss") || sess.Role != RoleAdmin {
 		t.Fatalf("unexpected session %+v", sess)
 	}
 	cookies := rec.Result().Cookies()

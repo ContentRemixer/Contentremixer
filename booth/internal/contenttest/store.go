@@ -1,0 +1,320 @@
+// Package contenttest is the Booth API's §6.3-gating front door to the
+// interactive persona content-test + persona-validate actions (ISI-7359, plan
+// §5). It mirrors the scraper-review and content-collaboration gating stores:
+// every action resolves the caller's authorization against the persona's owner
+// (via the CRD store's §6.3 gate) and writes an audit record BEFORE it runs an
+// LLM generation or flips a validation flag. HTTP handlers reach these actions
+// ONLY through this type.
+//
+// Two actions, both owner-scoped (a DevRel acts on their OWN persona; an Admin
+// on any — §6.3 clause 1/2):
+//
+//   - RunTest: load the persona's synthesized StyleProfile (D3) + spec
+//     conditioning, run a PR-less writer-conditioning generation, return the
+//     sample. Guarded by a per-subject rate/cost limiter because each call is an
+//     LLM generation.
+//   - Validate: flip StyleProfile.Validated in Postgres (source of truth) AND the
+//     DevRelPersona `Validated` status condition (its declarative mirror) in one
+//     operation (ISI-7356 §4).
+package contenttest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	apptest "github.com/ContentRemixer/Contentremixer/app/contenttest"
+	"github.com/ContentRemixer/Contentremixer/app/review"
+	"github.com/ContentRemixer/Contentremixer/booth/auth"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
+	bstore "github.com/ContentRemixer/Contentremixer/booth/internal/store"
+)
+
+// Sentinel errors the HTTP layer maps to status codes.
+var (
+	// ErrForbidden is the §6.3 denial (→ 403). It aliases the CRD store's
+	// ErrForbidden so a denial surfaced by the persona gate maps uniformly.
+	ErrForbidden = errors.New("contenttest: forbidden")
+	// ErrNotFound means the persona does not exist (→ 404).
+	ErrNotFound = errors.New("contenttest: not found")
+	// ErrBadRequest is a request-validation failure (→ 400).
+	ErrBadRequest = errors.New("contenttest: bad request")
+	// ErrRateLimited means the caller exceeded the content-test rate guard, or a
+	// re-synthesis was refused inside the style guard interval (→ 429).
+	ErrRateLimited = errors.New("contenttest: rate limit exceeded")
+	// ErrNoExemplars means a style synthesis was requested for a persona with no
+	// accepted exemplars yet — nothing to recognize a style from (→ 409).
+	ErrNoExemplars = errors.New("contenttest: no accepted exemplars to synthesize from")
+	// ErrUpstream is a fault in the synthesis model/gateway (e.g. a completion
+	// that broke the section contract) — not a caller error (→ 502).
+	ErrUpstream = errors.New("contenttest: style synthesis upstream error")
+)
+
+// Audit verbs (mirror the other gating stores' vocabulary).
+const (
+	verbTest       = "content-test"
+	verbValidate   = "validate"
+	verbSynthesize = "style-synthesize"
+	kindPersona    = "DevRelPersona"
+)
+
+// profiles is the slice of app/review.Store the gate needs — the StyleProfile
+// read + validate. Declared as an interface so the store is unit-testable
+// without Postgres. *review.Store satisfies it.
+type profiles interface {
+	GetStyleProfile(ctx context.Context, owner, persona string) (review.StyleProfile, error)
+	ValidateStyleProfile(ctx context.Context, owner, persona string) (review.StyleProfile, error)
+}
+
+// personas is the slice of the CRD store the gate needs: the §6.3-gated persona
+// conditioning read and the Validated-condition write. *store.Store satisfies it.
+type personas interface {
+	GetPersonaConditioning(ctx context.Context, sess auth.Session, name string) (bstore.PersonaConditioning, error)
+	SetPersonaValidated(ctx context.Context, sess auth.Session, name string, validated bool) error
+}
+
+// runner runs the writer-conditioning generation. *app/contenttest.Runner
+// satisfies it; tests inject a stub.
+type runner interface {
+	Run(ctx context.Context, req apptest.Request) (apptest.Result, error)
+}
+
+// synthesizer runs the D3 style-recognition synthesis for a persona and returns
+// the stored StyleProfile. *app/review.Synthesizer satisfies it; tests inject a
+// stub. It is nil when the Booth binary was built without a LiteLLM gateway, in
+// which case the synthesize route is left unmounted (GetProfile still works).
+type synthesizer interface {
+	Synthesize(ctx context.Context, req review.SynthesizeRequest) (review.StyleProfile, error)
+}
+
+// rateGuard caps per-subject content-test calls. *Limiter satisfies it.
+type rateGuard interface {
+	Allow(subject string) bool
+}
+
+// Store gates the content-test + validate + style-profile actions behind §6.3 +
+// audit.
+type Store struct {
+	profiles profiles
+	personas personas
+	runner   runner
+	synth    synthesizer
+	limiter  rateGuard
+	auditor  audit.Logger
+}
+
+// New builds a gating Store. limiter may be nil (no rate guard); synth may be
+// nil (the synthesize route is then left unmounted, but GetProfile still serves
+// a previously-synthesized profile).
+func New(p profiles, persona personas, r runner, synth synthesizer, limiter rateGuard, auditor audit.Logger) *Store {
+	return &Store{profiles: p, personas: persona, runner: r, synth: synth, limiter: limiter, auditor: auditor}
+}
+
+// CanSynthesize reports whether a synthesizer was wired (a LiteLLM gateway is
+// configured). The server consults it to decide whether to mount the synthesize
+// route.
+func (s *Store) CanSynthesize() bool { return s.synth != nil }
+
+// TestRequest is the POST /v1/content-test payload.
+type TestRequest struct {
+	PersonaName string `json:"personaName"`
+	Topic       string `json:"topic"`
+}
+
+// TestResult is the content-test response: the generated sample plus the context
+// the onboarding surface renders alongside it.
+type TestResult struct {
+	PersonaName string `json:"personaName"`
+	Sample      string `json:"sample"`
+	ModelUsed   string `json:"modelUsed"`
+	// Validated echoes whether the profile the test conditioned on is already
+	// owner-validated (so the UI can show "validate" vs "already validated").
+	Validated bool `json:"validated"`
+}
+
+// RunTest runs an interactive content test for the caller's persona. Order:
+// validate the request, resolve + §6.3-gate the persona (which also yields its
+// real owner and conditioning inputs), apply the rate/cost guard, load the
+// synthesized StyleProfile, then generate. A persona with no synthesized profile
+// yet is a 400 (synthesis D3 must run first), not a 500.
+func (s *Store) RunTest(ctx context.Context, sess auth.Session, req TestRequest) (TestResult, error) {
+	if req.PersonaName == "" || req.Topic == "" {
+		return TestResult{}, fmt.Errorf("%w: personaName and topic are required", ErrBadRequest)
+	}
+	pc, err := s.personas.GetPersonaConditioning(ctx, sess, req.PersonaName)
+	if err != nil {
+		return TestResult{}, mapPersonaErr(err)
+	}
+	// Rate/cost guard AFTER the §6.3 gate (so an unauthorized caller cannot burn
+	// another subject's budget) but BEFORE the LLM call.
+	if s.limiter != nil && !s.limiter.Allow(sess.Subject) {
+		s.audit(ctx, sess, verbTest, req.PersonaName, false)
+		return TestResult{}, ErrRateLimited
+	}
+	sp, err := s.profiles.GetStyleProfile(ctx, pc.OwnerSubject, req.PersonaName)
+	if errors.Is(err, review.ErrNotFound) {
+		s.audit(ctx, sess, verbTest, req.PersonaName, false)
+		return TestResult{}, fmt.Errorf("%w: persona %q has no synthesized style profile yet", ErrBadRequest, req.PersonaName)
+	}
+	if err != nil {
+		return TestResult{}, err
+	}
+	out, err := s.runner.Run(ctx, apptest.Request{
+		PersonaName:        req.PersonaName,
+		Topic:              req.Topic,
+		PrimaryContentKind: pc.PrimaryContentKind,
+		StyleTraits:        sp.Traits,
+		SelfDescription:    pc.SelfDescription,
+	})
+	if err != nil {
+		s.audit(ctx, sess, verbTest, req.PersonaName, false)
+		return TestResult{}, err
+	}
+	s.audit(ctx, sess, verbTest, req.PersonaName, true)
+	return TestResult{
+		PersonaName: req.PersonaName,
+		Sample:      out.Sample,
+		ModelUsed:   out.ModelUsed,
+		Validated:   sp.Validated,
+	}, nil
+}
+
+// GetProfile is the read-only §6.3-gated style-profile fetch the persona-management
+// surface renders (ISI-7362 D7, plan §6 P1/O7): the same authorization path as
+// RunTest/Validate, but no generation, no write, no rate guard (it costs nothing).
+// A persona with no synthesized profile yet is ErrNotFound (the 404 the plan's
+// error table reserves for the pre-synthesis O7 state), NOT an error the UI should
+// treat as a failure.
+func (s *Store) GetProfile(ctx context.Context, sess auth.Session, personaName string) (review.StyleProfile, error) {
+	if personaName == "" {
+		return review.StyleProfile{}, fmt.Errorf("%w: personaName is required", ErrBadRequest)
+	}
+	pc, err := s.personas.GetPersonaConditioning(ctx, sess, personaName)
+	if err != nil {
+		return review.StyleProfile{}, mapPersonaErr(err)
+	}
+	sp, err := s.profiles.GetStyleProfile(ctx, pc.OwnerSubject, personaName)
+	if err != nil {
+		if errors.Is(err, review.ErrNotFound) {
+			return review.StyleProfile{}, ErrNotFound
+		}
+		return review.StyleProfile{}, err
+	}
+	return sp, nil
+}
+
+// Validate flips the owner's accept decision for a persona's style profile. It
+// writes Postgres FIRST (the content source of truth) then mirrors to the CRD
+// `Validated` condition (the cheap declarative gate the writer-conditioner
+// reads). If the CRD write fails after the Postgres flip, the error is returned;
+// the operation is idempotent, so a retry re-sets both. A persona with no
+// profile to validate is a 400. Authorization is enforced by the persona gate.
+func (s *Store) Validate(ctx context.Context, sess auth.Session, personaName string) (review.StyleProfile, error) {
+	if personaName == "" {
+		return review.StyleProfile{}, fmt.Errorf("%w: personaName is required", ErrBadRequest)
+	}
+	pc, err := s.personas.GetPersonaConditioning(ctx, sess, personaName)
+	if err != nil {
+		return review.StyleProfile{}, mapPersonaErr(err)
+	}
+	sp, err := s.profiles.ValidateStyleProfile(ctx, pc.OwnerSubject, personaName)
+	if errors.Is(err, review.ErrNotFound) {
+		s.audit(ctx, sess, verbValidate, personaName, false)
+		return review.StyleProfile{}, fmt.Errorf("%w: persona %q has no style profile to validate", ErrBadRequest, personaName)
+	}
+	if err != nil {
+		return review.StyleProfile{}, err
+	}
+	// Mirror to the CRD condition (ISI-7356 §4). This re-gates §6.3 and audits
+	// under verbValidate; a failure here leaves the Postgres flag set but the
+	// declarative gate unflipped (safe: the writer-conditioner refuses to serve
+	// until the condition is True), and a retry is idempotent.
+	if err := s.personas.SetPersonaValidated(ctx, sess, personaName, true); err != nil {
+		return sp, mapPersonaErr(err)
+	}
+	s.audit(ctx, sess, verbValidate, personaName, true)
+	return sp, nil
+}
+
+// Synthesize runs the D3 style-recognition synthesis for the caller's persona
+// (the O6→O7 "synthesize" step, ISI-7361 D6) and returns the freshly stored,
+// UNVALIDATED profile for review. Order mirrors RunTest: validate the request,
+// resolve + §6.3-gate the persona (yielding its real owner + conditioning
+// inputs), then run the ONE bounded LLM call through the public D3 seam. The
+// synthesizer owns the rate/cost guard (its guard interval vs the stored
+// profile's synthesized_at), so there is no separate per-subject limiter here.
+// A persona with no accepted exemplars is a 409 (ErrNoExemplars); a guard-refused
+// re-synthesis is a 429; a malformed completion is a 502 (ErrUpstream).
+func (s *Store) Synthesize(ctx context.Context, sess auth.Session, personaName string) (review.StyleProfile, error) {
+	if personaName == "" {
+		return review.StyleProfile{}, fmt.Errorf("%w: personaName is required", ErrBadRequest)
+	}
+	if s.synth == nil {
+		return review.StyleProfile{}, fmt.Errorf("%w: style synthesis is not configured", ErrBadRequest)
+	}
+	pc, err := s.personas.GetPersonaConditioning(ctx, sess, personaName)
+	if err != nil {
+		return review.StyleProfile{}, mapPersonaErr(err)
+	}
+	sp, err := s.synth.Synthesize(ctx, review.SynthesizeRequest{
+		OwnerSubject:       pc.OwnerSubject,
+		PersonaName:        personaName,
+		SelfDescription:    pc.SelfDescription,
+		PrimaryContentKind: pc.PrimaryContentKind,
+		ContentKinds:       pc.ContentKinds,
+	})
+	if err != nil {
+		s.audit(ctx, sess, verbSynthesize, personaName, false)
+		return review.StyleProfile{}, mapSynthErr(err)
+	}
+	s.audit(ctx, sess, verbSynthesize, personaName, true)
+	return sp, nil
+}
+
+// mapSynthErr translates the D3 synthesizer's public error classifiers (which
+// Booth reads without importing app/internal/pipeline/style) into this
+// package's HTTP-mappable sentinels.
+func mapSynthErr(err error) error {
+	if review.IsNoExemplars(err) {
+		return ErrNoExemplars
+	}
+	if _, ok := review.SynthesisRateLimited(err); ok {
+		return ErrRateLimited
+	}
+	if review.IsMalformed(err) {
+		return fmt.Errorf("%w: %v", ErrUpstream, err)
+	}
+	return err
+}
+
+// mapPersonaErr translates the CRD store's sentinels into this package's.
+func mapPersonaErr(err error) error {
+	switch {
+	case errors.Is(err, bstore.ErrForbidden):
+		return ErrForbidden
+	case errors.Is(err, bstore.ErrNotFound):
+		return ErrNotFound
+	default:
+		return err
+	}
+}
+
+// IsBadRequest / IsRateLimited let the HTTP layer map sentinels without importing
+// the error values directly in a switch on wrapped errors.
+func IsBadRequest(err error) bool  { return errors.Is(err, ErrBadRequest) }
+func IsRateLimited(err error) bool { return errors.Is(err, ErrRateLimited) }
+
+func (s *Store) audit(ctx context.Context, sess auth.Session, verb, name string, allowed bool) {
+	decision := audit.DecisionDeny
+	if allowed {
+		decision = audit.DecisionAllow
+	}
+	s.auditor.Log(ctx, audit.Entry{
+		Subject:      sess.Subject,
+		Role:         string(sess.Role),
+		Verb:         verb,
+		ResourceKind: kindPersona,
+		ResourceName: name,
+		Decision:     decision,
+	})
+}

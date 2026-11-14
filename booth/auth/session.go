@@ -21,7 +21,8 @@ func (r Role) Valid() bool {
 }
 
 // Session is the frozen contract P3-1 consumes. It carries the authenticated
-// subject (== username) and role; the Booth API evaluates §6.3 against it.
+// subject (the user's stable owner key — booth:local:<username> until OIDC, see
+// auth.User.Subject) and role; the Booth API evaluates §6.3 against it.
 type Session struct {
 	Subject string `json:"sub"`
 	Role    Role   `json:"role"`

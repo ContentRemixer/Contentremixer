@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +95,14 @@ func (noopLauncher) Launch(_ context.Context, spec scrapejobs.JobSpec) (string, 
 	return "scrape-" + spec.JobID[:4], nil
 }
 
+// unavailableLauncher mimics an unconfigured/unreachable launcher (e.g.
+// BOOTH_SCRAPER_IMAGE unset) by returning a wrapped ErrLauncherUnavailable.
+type unavailableLauncher struct{}
+
+func (unavailableLauncher) Launch(_ context.Context, _ scrapejobs.JobSpec) (string, error) {
+	return "", fmt.Errorf("%w: no scrape-job image configured (set BOOTH_SCRAPER_IMAGE)", scrapejobs.ErrLauncherUnavailable)
+}
+
 func newScrapeServer(t *testing.T) (http.Handler, *auth.TokenCodec, *fakeReviewDB) {
 	t.Helper()
 	adminHash, err := auth.HashPassword("admin-pw")
@@ -109,7 +119,7 @@ func newScrapeServer(t *testing.T) (http.Handler, *auth.TokenCodec, *fakeReviewD
 	// Seed a pending source owned by alice.
 	db.sources["s1"] = review.ScrapedSource{ID: "s1", OwnerSubject: "alice", SourceURL: "u", SourceKind: "article", PersonaName: "p", Status: review.SourcePending}
 	scrape := scrapejobs.New(db, noopLauncher{}, audit.NewSlogLogger(nil))
-	return New(prov, nil, scrape, nil, nil).Handler(), prov.Codec, db
+	return New(prov, nil, scrape, nil, nil, nil, nil).Handler(), prov.Codec, db
 }
 
 func TestScrapeJob_CreateAndGet(t *testing.T) {
@@ -207,6 +217,34 @@ func TestScrapedSources_ReviewActions(t *testing.T) {
 	admin := tokenFor(t, codec, "root", auth.RoleAdmin)
 	if w := do(t, h, "POST", "/v1/scraped-sources/s2/accept", admin, ""); w.Code != http.StatusOK {
 		t.Fatalf("admin accept = %d, want 200", w.Code)
+	}
+}
+
+// TestScrapeJob_LauncherUnavailable503 is the ISI-7425/ISI-7434 regression: a
+// misconfigured launcher must surface an actionable 503 (with detail), NOT the
+// bare 500 "internal error" that hid the real cause.
+func TestScrapeJob_LauncherUnavailable503(t *testing.T) {
+	adminHash, err := auth.HashPassword("admin-pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov, err := auth.Bootstrap(auth.Config{
+		SessionKey: testKey, SessionTTL: time.Hour, AdminUsername: "admin", AdminHash: adminHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &fakeReviewDB{jobs: map[string]review.ScrapeJob{}, sources: map[string]review.ScrapedSource{}}
+	scrape := scrapejobs.New(db, unavailableLauncher{}, audit.NewSlogLogger(nil))
+	h := New(prov, nil, scrape, nil, nil, nil, nil).Handler()
+	alice := tokenFor(t, prov.Codec, "alice", auth.RoleDevRel)
+
+	w := do(t, h, "POST", "/v1/scrape-jobs", alice, `{"personaName":"p","sourceUrl":"https://x/a","sourceKind":"article"}`)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("launcher-unavailable create = %d, want 503; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "BOOTH_SCRAPER_IMAGE") {
+		t.Errorf("503 body not actionable, missing the config hint: %s", w.Body.String())
 	}
 }
 

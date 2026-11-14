@@ -110,6 +110,72 @@ func TestPromptKindGuidance(t *testing.T) {
 	}
 }
 
+// TestPromptComposesContentKinds covers the ISI-7429 multi-kind composition:
+// with a repertoire beyond the primary, the prompt keeps the dominant-medium
+// sample guidance AND names the other media (as human plurals, primary omitted)
+// with a cross-medium-voice instruction.
+func TestPromptComposesContentKinds(t *testing.T) {
+	sys := prompt(Request{
+		PrimaryContentKind: "blog",
+		ContentKinds:       []string{"blog", "talk", "tutorial"},
+	})
+	// Dominant medium still drives the sample paragraph.
+	if !strings.Contains(sys, "technical blog post") {
+		t.Errorf("dominant (blog) sample guidance missing: %q", sys)
+	}
+	// The other kinds are named as human plurals; the primary is NOT repeated.
+	for _, want := range []string{"talks", "tutorials", "and", "ACROSS these media"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("repertoire sentence missing %q: %q", want, sys)
+		}
+	}
+	if strings.Contains(sys, "also produces blog posts") {
+		t.Errorf("primary medium should not appear in the repertoire list: %q", sys)
+	}
+}
+
+// TestPromptContentKindsGracefulDegradation guards that an empty or
+// single-valued ContentKinds yields a prompt byte-identical to primary-only —
+// no behavior change for personas that predate multi-select.
+func TestPromptContentKindsGracefulDegradation(t *testing.T) {
+	base := prompt(Request{PrimaryContentKind: "video"})
+	cases := [][]string{
+		nil,               // unset
+		{},                // empty
+		{"video"},         // only the primary
+		{"VIDEO"},         // only the primary, different case
+		{"  video  ", ""}, // primary + blank noise
+	}
+	for _, kinds := range cases {
+		if got := prompt(Request{PrimaryContentKind: "video", ContentKinds: kinds}); got != base {
+			t.Errorf("ContentKinds %v changed the prompt vs primary-only:\n got=%q\nwant=%q", kinds, got, base)
+		}
+	}
+	if strings.Contains(base, "also produces") {
+		t.Errorf("primary-only prompt should carry no repertoire sentence: %q", base)
+	}
+}
+
+func TestRepertoireAndHumanList(t *testing.T) {
+	got := repertoire("blog", []string{"blog", "Talk", "talk", "video", ""})
+	want := []string{"talks", "videos"} // primary dropped, deduped, mapped, order kept
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("repertoire = %v, want %v", got, want)
+	}
+	if humanList(nil) != "" {
+		t.Errorf("humanList(nil) should be empty")
+	}
+	if got := humanList([]string{"a"}); got != "a" {
+		t.Errorf("humanList one = %q", got)
+	}
+	if got := humanList([]string{"a", "b"}); got != "a and b" {
+		t.Errorf("humanList two = %q", got)
+	}
+	if got := humanList([]string{"a", "b", "c"}); got != "a, b, and c" {
+		t.Errorf("humanList three = %q", got)
+	}
+}
+
 func TestSynthesizeEndToEnd(t *testing.T) {
 	fc := &fakeCompleter{reply: "## Style traits\n- **Tone**: warm.\n\n## Sample paragraph\nIn this post we dig in."}
 	s := New(fc, "writer", Guard{})

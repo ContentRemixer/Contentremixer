@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,12 +23,16 @@ import (
 
 	appv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 	appcontent "github.com/ContentRemixer/Contentremixer/app/content"
+	apptest "github.com/ContentRemixer/Contentremixer/app/contenttest"
+	apppromote "github.com/ContentRemixer/Contentremixer/app/promote"
 
 	"github.com/ContentRemixer/Contentremixer/app/review"
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
@@ -79,8 +84,10 @@ func run() error {
 
 	// Scraper-review surface (ISI-7207): wired only when a Postgres DSN is
 	// configured (the live pgvector PG, ISI-7148). Without it, Booth boots as the
-	// CR-only API and the scrape routes are simply absent.
-	scrape, cleanup, err := buildScrapeStore(k8s, namespace, auditor, log)
+	// CR-only API and the scrape routes are simply absent. The raw review store is
+	// returned too so the content-test surface shares it (StyleProfile rows live
+	// in the same review DB).
+	scrape, reviewStore, cleanup, err := buildScrapeStore(k8s, namespace, auditor, log)
 	if err != nil {
 		return err
 	}
@@ -96,7 +103,16 @@ func run() error {
 		return err
 	}
 
-	srv := server.New(prov, st, scrape, contentStore, log)
+	// Interactive content-test + persona-validate surface (ISI-7359): wired only
+	// when the review store (StyleProfile rows) AND a LiteLLM gateway are both
+	// configured. Without either, the routes are absent.
+	contentTestStore := buildContentTestStore(reviewStore, st, auditor, log)
+
+	// Promotion-suggestion surface (ISI-7369): validated content → suggested
+	// LinkedIn post. Same enablement gate as content-test (review store + LiteLLM).
+	promoteStore := buildPromoteStore(reviewStore, st, auditor, log)
+
+	srv := server.New(prov, st, scrape, contentStore, contentTestStore, promoteStore, log)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -109,13 +125,15 @@ func run() error {
 }
 
 // buildScrapeStore wires the scraper-review gating store from env, or returns
-// (nil, nil, nil) when BOOTH_REVIEW_DSN is unset (feature off). The returned
-// cleanup closes the DB pools on shutdown.
-func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger, log *slog.Logger) (*scrapejobs.Store, func(), error) {
+// (nil, nil, nil, nil) when BOOTH_REVIEW_DSN is unset (feature off). It also
+// returns the raw review store so the content-test surface can share it (the
+// StyleProfile rows live in the same review DB); the returned cleanup closes the
+// DB pools on shutdown.
+func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger, log *slog.Logger) (*scrapejobs.Store, *review.Store, func(), error) {
 	dsn := os.Getenv("BOOTH_REVIEW_DSN")
 	if dsn == "" {
 		log.Info("scraper-review disabled: BOOTH_REVIEW_DSN not set")
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	ctx := context.Background()
 
@@ -124,12 +142,12 @@ func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger,
 	corpus, err := review.NewCorpus(ctx, dsn,
 		os.Getenv("BOOTH_LITELLM_URL"), os.Getenv("LITELLM_API_KEY"))
 	if err != nil {
-		return nil, nil, fmt.Errorf("open accept corpus: %w", err)
+		return nil, nil, nil, fmt.Errorf("open accept corpus: %w", err)
 	}
 	reviewStore, err := review.Open(ctx, dsn, review.WithCorpus(corpus))
 	if err != nil {
 		corpus.Close()
-		return nil, nil, fmt.Errorf("open review store: %w", err)
+		return nil, nil, nil, fmt.Errorf("open review store: %w", err)
 	}
 
 	launcher := &scrapejobs.K8sLauncher{
@@ -145,7 +163,55 @@ func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger,
 		corpus.Close()
 	}
 	log.Info("scraper-review enabled")
-	return scrapejobs.New(reviewStore, launcher, auditor), cleanup, nil
+	return scrapejobs.New(reviewStore, launcher, auditor), reviewStore, cleanup, nil
+}
+
+// buildContentTestStore wires the interactive content-test + persona-validate
+// gating store (ISI-7359). It needs the review store (StyleProfile persistence)
+// AND a LiteLLM gateway (the generator); with either absent the routes are
+// unmounted. The per-subject rate guard caps BOOTH_CONTENT_TEST_RATE_PER_MIN
+// generations/minute (default 10; <=0 disables). BOOTH_CONTENT_TEST_MODEL pins
+// the model alias (empty = gateway default).
+func buildContentTestStore(reviewStore *review.Store, st *store.Store, auditor audit.Logger, log *slog.Logger) *contenttest.Store {
+	litellmURL := os.Getenv("BOOTH_LITELLM_URL")
+	if reviewStore == nil || litellmURL == "" {
+		log.Info("content-test disabled: needs BOOTH_REVIEW_DSN and BOOTH_LITELLM_URL")
+		return nil
+	}
+	runner := apptest.NewRunner(litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_CONTENT_TEST_MODEL"))
+	limiter := contenttest.NewLimiter(envIntOr("BOOTH_CONTENT_TEST_RATE_PER_MIN", 10), time.Minute)
+	// D3 style-recognition synthesizer (ISI-7358) wired behind the same gateway
+	// so the onboarding wizard (O6→O7, ISI-7361 D6) can synthesize + review a
+	// style profile over HTTP. NewDefaultSynthesizer expresses the rate/cost
+	// guard as primitives (0 = package defaults) so Booth need not import
+	// app/internal/pipeline/style. BOOTH_STYLE_SYNTH_MODEL pins the model alias
+	// (empty = gateway default); BOOTH_STYLE_SYNTH_MIN_INTERVAL_SEC overrides the
+	// re-synthesis guard interval (0 = default).
+	synth := review.NewDefaultSynthesizer(
+		reviewStore, litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_STYLE_SYNTH_MODEL"),
+		time.Duration(envIntOr("BOOTH_STYLE_SYNTH_MIN_INTERVAL_SEC", 0))*time.Second, 0, 0,
+	)
+	log.Info("content-test + style synthesis enabled")
+	return contenttest.New(reviewStore, st, runner, synth, limiter, auditor)
+}
+
+// buildPromoteStore wires the promotion-suggestion gating store (ISI-7369). Like
+// content-test it needs the review store (StyleProfile persistence) AND a LiteLLM
+// gateway (the generator); with either absent the route is unmounted. The
+// per-subject rate guard caps BOOTH_PROMOTE_RATE_PER_MIN generations/minute
+// (default 10; <=0 disables) — it reuses contenttest.Limiter, the one in-memory
+// sliding-window guard. BOOTH_PROMOTE_MODEL pins the model alias (empty =
+// gateway default).
+func buildPromoteStore(reviewStore *review.Store, st *store.Store, auditor audit.Logger, log *slog.Logger) *promote.Store {
+	litellmURL := os.Getenv("BOOTH_LITELLM_URL")
+	if reviewStore == nil || litellmURL == "" {
+		log.Info("promote disabled: needs BOOTH_REVIEW_DSN and BOOTH_LITELLM_URL")
+		return nil
+	}
+	w := apppromote.NewWriter(litellmURL, os.Getenv("LITELLM_API_KEY"), os.Getenv("BOOTH_PROMOTE_MODEL"))
+	limiter := contenttest.NewLimiter(envIntOr("BOOTH_PROMOTE_RATE_PER_MIN", 10), time.Minute)
+	log.Info("promote enabled")
+	return promote.New(reviewStore, st, w, limiter, auditor)
 }
 
 // buildContentStore wires the content-collaboration gating store from a
@@ -165,6 +231,16 @@ func buildContentStore(dsn string, auditor audit.Logger, log *slog.Logger) (*con
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+// envIntOr parses key as an int, falling back to def when unset or malformed.
+func envIntOr(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

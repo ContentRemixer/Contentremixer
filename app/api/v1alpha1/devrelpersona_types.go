@@ -52,6 +52,12 @@ var KnownReferenceKinds = []string{
 // is talks is synthesized and tested differently from one who primarily blogs.
 // It is distinct from a reference Kind — references are style *exemplar sources*;
 // PrimaryContentKind is the *output medium* the persona targets.
+//
+// The enum marker lives on the type (not the field) so it lands on BOTH the
+// scalar spec.primaryContentKind and each item of the spec.contentKinds slice
+// (ISI-7424) — a field-level Enum marker on a slice is emitted on the array
+// itself, which is not a valid item constraint.
+// +kubebuilder:validation:Enum=blog;video;talk;tutorial
 type PrimaryContentKind string
 
 const (
@@ -148,15 +154,49 @@ type DevRelPersonaSpec struct {
 	// during onboarding (plan O2): blog | video | talk | tutorial. It conditions
 	// style synthesis (D3) and the content test (D4). Optional; unset means
 	// "unspecified" and the synthesizer falls back to a medium-agnostic profile.
-	// +kubebuilder:validation:Enum=blog;video;talk;tutorial
+	//
+	// When ContentKinds is set, PrimaryContentKind is its derived dominant (= the
+	// first selected kind, auto-derived in onboarding v1 but editable later in
+	// persona management, ISI-7424). The four single-value downstream consumers
+	// (style-synth, content-test, promote, store projection) keep reading this
+	// scalar unchanged; the validating webhook requires it to be a member of a
+	// non-empty ContentKinds so the derived dominant can never drift out of the set.
+	// The blog|video|talk|tutorial enum is carried on the PrimaryContentKind type.
 	// +optional
 	PrimaryContentKind PrimaryContentKind `json:"primaryContentKind,omitempty"`
+
+	// ContentKinds is the full set of mediums this DevRel produces, captured as a
+	// multi-select during onboarding (plan O2, ISI-7424): any of blog | video |
+	// talk | tutorial. PrimaryContentKind is the derived dominant of this set.
+	// Optional and backward compatible: an empty ContentKinds behaves exactly as
+	// before (only PrimaryContentKind matters). When non-empty, the validating
+	// webhook requires PrimaryContentKind to be one of its members. Phase-2 work
+	// (ISI-7429) threads the full set through style/content-test/promote
+	// conditioning; v1 consumers still read only the scalar PrimaryContentKind.
+	// The per-item blog|video|talk|tutorial enum is carried on the item type.
+	// +optional
+	// +listType=set
+	ContentKinds []PrimaryContentKind `json:"contentKinds,omitempty"`
 
 	// References are the style exemplars to ingest (talks, posts). A change to
 	// this list is what the reconciler turns into scrape→embed work.
 	// +optional
 	// +listType=atomic
 	References []PersonaReference `json:"references,omitempty"`
+
+	// ContentFormatTargets are per-content-type OUTPUT length/format targets the
+	// DevRel aims for, captured during onboarding (plan §4/§9, decision 6; O3b,
+	// ISI-7361) and editable later (D7, ISI-7362), e.g. youtube-short→"≤3min",
+	// blog→"~1500 words", linkedin-post→"~1300 chars". These are SOFT writer
+	// guidance (aim-for length/format, NOT hard truncation — decision 6): the
+	// content test (D4, ISI-7359) and LinkedIn promote (D9, ISI-7369) read them to
+	// steer and score generated content, they never clip it. Distinct from the
+	// INPUT References kinds (style exemplar *sources*). ContentType is a closed
+	// set (KnownContentFormatTypes); at most one target per content type.
+	// +optional
+	// +listType=map
+	// +listMapKey=contentType
+	ContentFormatTargets []ContentFormatTarget `json:"contentFormatTargets,omitempty"`
 
 	// Retrieval tunes top-k owner-scoped exemplar retrieval at write time
 	// (design §5). Optional; defaults apply when unset. Read by the P2-D writer
@@ -178,6 +218,26 @@ type PersonaReference struct {
 	// ReferenceKind* constants.
 	// +kubebuilder:validation:Enum=youtube;article;github-repo;teleprompter-script;talk-recording
 	Kind string `json:"kind"`
+}
+
+// ContentFormatTarget is a single per-content-type output length/format target.
+// It is SOFT writer guidance (decision 6): consumers aim for it, they do not
+// hard-truncate. See DevRelPersonaSpec.ContentFormatTargets.
+type ContentFormatTarget struct {
+	// ContentType is the output deliverable this target applies to: blog |
+	// youtube-short | youtube-video | linkedin-post. The closed set mirrors
+	// KnownContentFormatTypes; the validating webhook rejects anything else with a
+	// message naming the allowed types. Keep this enum in lock-step with the
+	// ContentFormat* constants.
+	// +kubebuilder:validation:Enum=blog;youtube-short;youtube-video;linkedin-post
+	ContentType ContentFormatType `json:"contentType"`
+
+	// LengthSpec is the free-text aim-for length/format for this content type,
+	// e.g. "≤3min", "~25min", "~1500 words", "~1300 chars". It is intentionally
+	// unstructured — a human-readable hint the writer and content test interpret,
+	// not a parsed limit (decision 6: soft guidance, never hard truncation).
+	// +kubebuilder:validation:MinLength=1
+	LengthSpec string `json:"lengthSpec"`
 }
 
 // DevRelPersonaStatus defines the observed state of a DevRelPersona.

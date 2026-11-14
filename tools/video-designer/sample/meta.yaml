@@ -1,0 +1,10 @@
+# content/videos/2026/otel-quickstart/
+title: "OpenTelemetry in 5 Minutes"
+platform: youtube-video
+assembled_date: "2026-11-14"
+has_audio: true
+captions: burn
+files:
+  video: video.mp4
+  poster: poster.jpg
+  captions: captions.srt

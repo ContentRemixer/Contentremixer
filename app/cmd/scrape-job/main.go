@@ -42,7 +42,14 @@ type jobEnv struct {
 	personaName   string
 	sourceURL     string
 	sourceKind    string
-	dsn           string
+	// sourceText carries the inline body for the no-fetch teleprompter-script
+	// kind (plan §5): the DevRel pastes a script, Booth stores it, and the
+	// launcher passes it here as SCRAPE_SOURCE_TEXT. Empty for fetch kinds.
+	sourceText string
+	// githubToken optionally authenticates github-repo fetches (lifts the 60-
+	// req/hr anonymous rate limit). Optional; anonymous works for public repos.
+	githubToken string
+	dsn         string
 }
 
 func readEnv() (jobEnv, error) {
@@ -53,6 +60,8 @@ func readEnv() (jobEnv, error) {
 		personaName:   os.Getenv("SCRAPE_PERSONA_NAME"),
 		sourceURL:     os.Getenv("SCRAPE_SOURCE_URL"),
 		sourceKind:    os.Getenv("SCRAPE_SOURCE_KIND"),
+		sourceText:    os.Getenv("SCRAPE_SOURCE_TEXT"),
+		githubToken:   os.Getenv("SCRAPE_GITHUB_TOKEN"),
 		dsn:           os.Getenv("REVIEW_DSN"),
 	}
 	var missing []string
@@ -70,6 +79,10 @@ func readEnv() (jobEnv, error) {
 	}
 	if !review.ValidSourceKind(e.sourceKind) {
 		return e, fmt.Errorf("scrape-job: unsupported source kind %q", e.sourceKind)
+	}
+	// The no-fetch kind has no URL to fall back on: its body must be supplied.
+	if e.sourceKind == v1alpha1.ReferenceKindTeleprompterScript && strings.TrimSpace(e.sourceText) == "" {
+		return e, fmt.Errorf("scrape-job: source kind %q requires SCRAPE_SOURCE_TEXT (the inline script body)", e.sourceKind)
 	}
 	return e, nil
 }
@@ -106,7 +119,10 @@ func run(log *slog.Logger) error {
 }
 
 func doScrape(ctx context.Context, st *review.Store, env jobEnv, log *slog.Logger) error {
-	scraper := scrape.New(nil)
+	scraper := scrape.New(&scrape.Options{
+		SourceText:  env.sourceText,
+		GitHubToken: env.githubToken,
+	})
 	chunker := chunk.New()
 
 	docs, err := scraper.Scrape(ctx, v1alpha1.PersonaReference{URL: env.sourceURL, Kind: env.sourceKind})

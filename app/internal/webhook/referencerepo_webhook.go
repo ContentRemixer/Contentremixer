@@ -72,6 +72,23 @@ func validateReferenceRepo(rr *contentremixerv1alpha1.ReferenceRepo) error {
 			continue
 		}
 		seenLabels[rt.Label] = true
+
+		// ADR-3: skill/actorTemplate are optional and derivable. The CRD enum
+		// already bounds actorTemplate to content|media; the cross-field rule
+		// the webhook adds is that a media-only output format (demo|video) may
+		// not be pinned to the content template — the inline content runtime
+		// physically cannot produce a demo/video artifact, so that route would
+		// always fail closed. (content formats on the media template are
+		// allowed: media is a runtime superset.)
+		if rt.ActorTemplate == contentremixerv1alpha1.ActorTemplateContent &&
+			contentremixerv1alpha1.DefaultActorTemplate(rt.OutputFormat) == contentremixerv1alpha1.ActorTemplateMedia {
+			errs = append(errs, field.Invalid(
+				field.NewPath("spec", "labelRoutes").Index(i).Child("actorTemplate"),
+				rt.ActorTemplate,
+				fmt.Sprintf("outputFormat %q is a media format and cannot run on the %q actor template; use %q or omit actorTemplate",
+					rt.OutputFormat, contentremixerv1alpha1.ActorTemplateContent, contentremixerv1alpha1.ActorTemplateMedia),
+			))
+		}
 	}
 
 	if len(errs) > 0 {

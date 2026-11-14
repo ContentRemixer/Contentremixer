@@ -2,6 +2,7 @@ package scrapejobs
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -71,17 +72,62 @@ func TestK8sLauncher_CreatesHardenedJob(t *testing.T) {
 	}
 }
 
+func TestK8sLauncher_TeleprompterInlineText(t *testing.T) {
+	c := newFakeClient(t)
+	l := &K8sLauncher{
+		Client: c, Namespace: "content-remixer", Image: "img",
+		ServiceAccount: "booth-scraper", DSNSecretName: "s", DSNSecretKey: "k",
+	}
+	// Fetch kinds carry no SCRAPE_SOURCE_TEXT; the teleprompter kind does.
+	fetchName, err := l.Launch(context.Background(), JobSpec{
+		JobID: "fetchjob", PersonaName: "p", SourceURL: "https://x/a", SourceKind: "article",
+	})
+	if err != nil {
+		t.Fatalf("Launch fetch: %v", err)
+	}
+	if _, ok := envOf(t, c, fetchName)["SCRAPE_SOURCE_TEXT"]; ok {
+		t.Error("fetch-kind Job must not carry SCRAPE_SOURCE_TEXT")
+	}
+
+	teleName, err := l.Launch(context.Background(), JobSpec{
+		JobID: "telejob", PersonaName: "p", SourceURL: "teleprompter://p-talk",
+		SourceKind: "teleprompter-script", SourceText: "My talk script body.",
+	})
+	if err != nil {
+		t.Fatalf("Launch teleprompter: %v", err)
+	}
+	if got := envOf(t, c, teleName)["SCRAPE_SOURCE_TEXT"]; got != "My talk script body." {
+		t.Errorf("SCRAPE_SOURCE_TEXT = %q", got)
+	}
+}
+
+// envOf reads a created Job's container env into a name→value map.
+func envOf(t *testing.T, c client.Client, name string) map[string]string {
+	t.Helper()
+	var job batchv1.Job
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "content-remixer", Name: name}, &job); err != nil {
+		t.Fatalf("get job %s: %v", name, err)
+	}
+	env := map[string]string{}
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	return env
+}
+
 func TestK8sLauncher_ConfigGuards(t *testing.T) {
 	c := newFakeClient(t)
-	// No image → error.
-	if _, err := (&K8sLauncher{Client: c, DSNSecretName: "s", DSNSecretKey: "k"}).
-		Launch(context.Background(), JobSpec{JobID: "j"}); err == nil {
-		t.Error("want error when image unset")
+	// No image → ErrLauncherUnavailable (handler maps it to 503, not a bare 500).
+	_, err := (&K8sLauncher{Client: c, DSNSecretName: "s", DSNSecretKey: "k"}).
+		Launch(context.Background(), JobSpec{JobID: "j"})
+	if !errors.Is(err, ErrLauncherUnavailable) {
+		t.Errorf("image unset err = %v, want ErrLauncherUnavailable", err)
 	}
-	// No DSN secret → error.
-	if _, err := (&K8sLauncher{Client: c, Image: "img"}).
-		Launch(context.Background(), JobSpec{JobID: "j"}); err == nil {
-		t.Error("want error when DSN secret unset")
+	// No DSN secret → ErrLauncherUnavailable.
+	_, err = (&K8sLauncher{Client: c, Image: "img"}).
+		Launch(context.Background(), JobSpec{JobID: "j"})
+	if !errors.Is(err, ErrLauncherUnavailable) {
+		t.Errorf("DSN unset err = %v, want ErrLauncherUnavailable", err)
 	}
 }
 

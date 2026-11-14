@@ -138,6 +138,13 @@ type Request struct {
 	// dominant output medium (blog|video|talk|tutorial). Empty =
 	// medium-agnostic.
 	PrimaryContentKind string
+	// ContentKinds is the persona's full multi-select repertoire
+	// (spec.contentKinds, ISI-7424); PrimaryContentKind is its derived dominant.
+	// When it names media beyond the primary, the prompt tells the analyst to
+	// capture the voice the author shares ACROSS those media while the sample
+	// stays in the dominant medium (ISI-7429). Empty or single-valued → the
+	// prompt is byte-identical to primary-only behavior (graceful degradation).
+	ContentKinds []string
 	// Exemplars are the accepted owner-scoped chunks; the guard caps what
 	// actually reaches the prompt.
 	Exemplars []Exemplar
@@ -260,12 +267,67 @@ func prompt(req Request) string {
 	b.WriteString(sampleHeader + "\n")
 	b.WriteString("One short paragraph (3-6 sentences) written IN this author's voice, on a neutral technical topic (observability, containers, PostgreSQL, developer workflows). Do not imitate a specific excerpt's subject — imitate the voice. ")
 	b.WriteString(sampleGuidance)
+	if others := repertoire(req.PrimaryContentKind, req.ContentKinds); len(others) > 0 {
+		b.WriteString(" This author also produces ")
+		b.WriteString(humanList(others))
+		b.WriteString("; let the named traits capture the voice they carry ACROSS these media, and keep the sample in the dominant medium above.")
+	}
 	if strings.TrimSpace(req.SelfDescription) != "" {
 		b.WriteString("\n\nThe author describes themselves as:\n")
 		b.WriteString(req.SelfDescription)
 		b.WriteString("\nHonor this as context, but where it disagrees with the excerpts, the excerpts win.")
 	}
 	return b.String()
+}
+
+// repertoire returns the content kinds BEYOND the dominant one, as human plural
+// nouns, in input order, deduped case-insensitively. It is how the prompt names
+// the author's full range (ISI-7429) without repeating the primary medium. The
+// primary (and any empty/unknown entry) is dropped, so an empty or single-valued
+// ContentKinds yields no extra prompt text — identical to primary-only behavior.
+func repertoire(primary string, all []string) []string {
+	seen := map[string]bool{strings.ToLower(strings.TrimSpace(primary)): true}
+	var out []string
+	for _, k := range all {
+		key := strings.ToLower(strings.TrimSpace(k))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, kindNoun(key))
+	}
+	return out
+}
+
+// kindNoun maps a content kind to a human plural for the repertoire sentence.
+// An unknown kind is returned trimmed and lower-cased (it still reads naturally).
+func kindNoun(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "blog":
+		return "blog posts"
+	case "video":
+		return "videos"
+	case "talk":
+		return "talks"
+	case "tutorial":
+		return "tutorials"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
+	}
+}
+
+// humanList joins items as an English list ("a", "a and b", "a, b, and c").
+func humanList(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " and " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
+	}
 }
 
 // exemplarBlock renders the user message from the exemplars, in order and

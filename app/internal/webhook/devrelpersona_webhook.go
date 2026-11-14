@@ -23,7 +23,13 @@ import (
 //   - require owner: spec.owner.subject must be non-empty (unlike the
 //     Admin-owned Phase-1 CRDs, a persona is always owned by a DevRel);
 //   - reject unknown reference kind: a defence-in-depth re-check of the
-//     CRD enum so the error message names the allowed kinds.
+//     CRD enum so the error message names the allowed kinds;
+//   - reject unknown content-format-target content type: the same
+//     defence-in-depth re-check for spec.contentFormatTargets (D1b, ISI-7370);
+//   - reject unknown contentKinds item, and require primaryContentKind to be a
+//     member of a non-empty contentKinds so the derived dominant can never
+//     drift out of the multi-select set (ISI-7424). Empty contentKinds is
+//     backward compatible — only primaryContentKind is considered, as before.
 type DevRelPersonaCustomValidator struct{}
 
 var _ admission.CustomValidator = &DevRelPersonaCustomValidator{}
@@ -83,6 +89,37 @@ func validateDevRelPersona(p *contentremixerv1alpha1.DevRelPersona) error {
 		}
 	}
 
+	for i, t := range p.Spec.ContentFormatTargets {
+		if !knownContentFormatType(t.ContentType) {
+			errs = append(errs, field.NotSupported(
+				field.NewPath("spec", "contentFormatTargets").Index(i).Child("contentType"),
+				t.ContentType,
+				contentremixerv1alpha1.KnownContentFormatTypes,
+			))
+		}
+	}
+
+	for i, k := range p.Spec.ContentKinds {
+		if !knownPrimaryContentKind(k) {
+			errs = append(errs, field.NotSupported(
+				field.NewPath("spec", "contentKinds").Index(i),
+				k,
+				contentremixerv1alpha1.KnownPrimaryContentKinds,
+			))
+		}
+	}
+	// When the multi-select set is provided, the derived dominant must live in it
+	// (ISI-7424 auto-derive primary = first selected). Empty contentKinds stays
+	// backward compatible: primaryContentKind is validated by the CRD enum alone.
+	if len(p.Spec.ContentKinds) > 0 && p.Spec.PrimaryContentKind != "" &&
+		!containsPrimaryContentKind(p.Spec.ContentKinds, p.Spec.PrimaryContentKind) {
+		errs = append(errs, field.Invalid(
+			field.NewPath("spec", "primaryContentKind"),
+			p.Spec.PrimaryContentKind,
+			"primaryContentKind must be one of spec.contentKinds when contentKinds is set",
+		))
+	}
+
 	if len(errs) > 0 {
 		return apierrors.NewInvalid(
 			contentremixerv1alpha1.GroupVersion.WithKind("DevRelPersona").GroupKind(),
@@ -94,6 +131,28 @@ func validateDevRelPersona(p *contentremixerv1alpha1.DevRelPersona) error {
 func knownReferenceKind(kind string) bool {
 	for _, k := range contentremixerv1alpha1.KnownReferenceKinds {
 		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func knownContentFormatType(t contentremixerv1alpha1.ContentFormatType) bool {
+	for _, k := range contentremixerv1alpha1.KnownContentFormatTypes {
+		if k == t {
+			return true
+		}
+	}
+	return false
+}
+
+func knownPrimaryContentKind(k contentremixerv1alpha1.PrimaryContentKind) bool {
+	return containsPrimaryContentKind(contentremixerv1alpha1.KnownPrimaryContentKinds, k)
+}
+
+func containsPrimaryContentKind(set []contentremixerv1alpha1.PrimaryContentKind, k contentremixerv1alpha1.PrimaryContentKind) bool {
+	for _, v := range set {
+		if v == k {
 			return true
 		}
 	}

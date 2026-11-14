@@ -1,0 +1,17 @@
+{
+  "name": "@contentremixer/video-designer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Assemble finished, captioned, brand-titled videos from demo-recorder clips in one ffmpeg pass.",
+  "type": "module",
+  "bin": {
+    "video-designer": "./assemble.mjs"
+  },
+  "scripts": {
+    "assemble": "node assemble.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

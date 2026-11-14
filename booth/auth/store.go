@@ -17,10 +17,33 @@ var ErrUserExists = errors.New("auth: user already exists")
 // always at least one Admin).
 var ErrLastAdmin = errors.New("auth: operation would remove the last admin")
 
-// User is one row of the minimal built-in user table: (username, bcrypt_hash,
-// role). The hash is a bcrypt digest — never a plaintext password (§8).
+// LocalSubjectPrefix namespaces the stable local subject Booth mints per user
+// until real OIDC lands (ISI-7360 D5, contract isi-7356-devrel-model-contract §6).
+// The form is booth:local:<username>; the prefix keeps a locally-minted subject
+// visibly distinct from a future IdP `sub` so the eventual OIDC cutover is
+// greppable and can backfill rather than collide.
+const LocalSubjectPrefix = "booth:local:"
+
+// LocalSubject derives the stable local subject for username. It is deterministic
+// (a persona created in one session is still owned after a Booth restart) and
+// unique (usernames are the user table's primary key, so the derived subjects are
+// too). This is the Subject every user row carries until OIDC replaces it with the
+// IdP `sub` claim.
+func LocalSubject(username string) string { return LocalSubjectPrefix + username }
+
+// User is one row of the minimal built-in user table: (username, subject,
+// bcrypt_hash, role). The hash is a bcrypt digest — never a plaintext
+// password (§8).
 type User struct {
-	Username   string
+	// Username is the login handle and the table's primary key.
+	Username string
+	// Subject is the stable owner key a DevRel's personas (and scrape jobs,
+	// content threads) are keyed on — the join for "resources owned by the
+	// logged-in user" (contract §6). It is non-empty, stable, and unique for
+	// every user; Create mints it from Username via LocalSubject when unset, so
+	// it is distinct from Username and survives a rename (CRDs outlive renames).
+	// With OIDC it becomes the IdP `sub` claim; the predicate (§6.3) is unchanged.
+	Subject    string
 	BcryptHash []byte
 	Role       Role
 }
@@ -68,12 +91,18 @@ func (s *MemoryStore) Get(username string) (User, error) {
 	return u, nil
 }
 
-// Create implements UserStore.
+// Create implements UserStore. It mints the stable local Subject from the
+// username when the caller leaves it unset (the normal path — no caller chooses
+// a subject), so every row satisfies the non-empty/stable/unique Subject
+// invariant (contract §6) without a separate backfill step.
 func (s *MemoryStore) Create(u User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.users[u.Username]; ok {
 		return ErrUserExists
+	}
+	if u.Subject == "" {
+		u.Subject = LocalSubject(u.Username)
 	}
 	s.users[u.Username] = u
 	return nil

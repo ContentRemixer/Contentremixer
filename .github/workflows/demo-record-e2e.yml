@@ -1,10 +1,13 @@
 # DR-3 E2E demo recording (ISI-7401) — run a demo-recorder scenario in the DR-2
-# runtime image (ISI-7400), produce demo.mp4 + meta.yaml for the Crate, and open a
-# Sample PR for the Graphic Designer realism gate (plan §5).
+# runtime image (ISI-7400), produce demo.mp4 + meta.yaml for the Crate, and push a
+# Sample branch (+ open a PR when allowed) for the Graphic Designer realism gate.
 #
 # Three triggers, same job:
 #   - workflow_dispatch   : humans, with form inputs.
 #   - repository_dispatch : agents (type `record-demo`), params via client_payload.
+#                           Agents post it with a contents:write token; no
+#                           actions:write is required (workflow_dispatch-via-API
+#                           would need it).
 #   - push to this branch : the agent fallback when no actions:write token exists —
 #                           pushing `ci/record-demo-otelt` runs this file as-is with
 #                           the defaults below. The branch is CI-trigger only.
@@ -49,7 +52,7 @@ on:
 
 permissions:
   contents: write # push the Sample branch
-  pull-requests: write # open the Sample PR
+  pull-requests: write # open the Sample PR (when org policy allows)
   packages: read # pull the demo-recorder image from GHCR
 
 jobs:
@@ -146,7 +149,7 @@ jobs:
             ${{ steps.loc.outputs.dir }}/meta.yaml
           if-no-files-found: error
 
-      - name: Open Sample PR
+      - name: Push Sample branch + open PR (best-effort)
         if: ${{ steps.p.outputs.open_pr == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -167,16 +170,21 @@ jobs:
             -m "Recorded $URL via tools/demo-recorder on the DR-2 image. For the Graphic Designer realism gate (plan §5): pacing, visible cursor + click highlight, on-screen scrub (no secrets)." \
             -m "Co-Authored-By: Paperclip <noreply@paperclip.ing>"
           git push origin "$branch"
+          compare="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
           body=$(printf '%s\n' \
             "DR-3 recorded Sample — closes the ISI-7401 acceptance once reviewed." \
             "" \
             "- Source: \`$URL\` · scenario \`$SCENARIO\`" \
-            "- Delivered: \`$DIR/demo.mp4\` + \`meta.yaml\`" \
-            "- Pipeline wall time: ${DUR}s" \
+            "- Delivered: \`$DIR/demo.mp4\` + \`meta.yaml\` · wall time ${DUR}s" \
             "" \
-            "**Realism gate (Graphic Designer, plan §5):** confirm pacing, a visible cursor + click highlight, and that NO tenant IDs / tokens / real emails / internal hostnames are on screen. A secret on screen is a hard reject." \
-            "" \
-            "Dispatched from workflow run \`${GITHUB_RUN_ID}\`.")
-          gh pr create --base main --head "$branch" \
-            --title "feat(ISI-7401): DR-3 demo Sample — $SLUG" \
-            --body "$body"
+            "**Realism gate (Graphic Designer, plan §5):** confirm pacing, a visible cursor + click highlight, and that NO tenant IDs / tokens / real emails / internal hostnames are on screen. A secret on screen is a hard reject.")
+          # GitHub Actions may be barred from opening PRs (org policy); never fail
+          # the job on that — the branch is pushed, print the compare URL to finish.
+          if gh pr create --base main --head "$branch" \
+               --title "feat(ISI-7401): DR-3 demo Sample — $SLUG" --body "$body"; then
+            echo "Opened Sample PR for $branch."
+          else
+            echo "::notice::Could not open PR automatically (org policy). Branch pushed — open it here: $compare"
+            echo "### Sample branch pushed" >> "$GITHUB_STEP_SUMMARY"
+            echo "Open the PR: $compare" >> "$GITHUB_STEP_SUMMARY"
+          fi

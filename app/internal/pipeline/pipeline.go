@@ -35,6 +35,12 @@ type RunContext struct {
 	// OutputFormat is the resolved route output format selecting
 	// styles/<outputFormat>.md for the writer.
 	OutputFormat string
+	// Skill is the resolved skill pack name (route.EffectiveSkill() /
+	// WorkOrder.Skill, ISI-7394). It selects the writer's skill packs via the
+	// dynamic registry (writer/skills.go) independently of OutputFormat. Empty
+	// => the writer derives a default skill from OutputFormat (the pre-seam
+	// path), so an unset Skill is byte-for-byte unchanged.
+	Skill string
 	// Notes is the free-text angle/audience guidance from the issue form.
 	Notes string
 	// ModelName is the LiteLLM alias to use (system default unless overridden).

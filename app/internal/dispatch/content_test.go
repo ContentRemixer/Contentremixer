@@ -65,8 +65,11 @@ func TestContentStrategy_MapsWorkOrderToRunContext(t *testing.T) {
 		InputFormat:  "teleprompter",
 		OutputFormat: "blog",
 		Notes:        "punchy, for platform engineers",
-		// ModelName, Owner, PersonaName stay zero — identical to the pre-seam
-		// path, so recycle:blog is byte-for-byte unchanged.
+		Skill:        "content-writer",
+		// ModelName, Owner, PersonaName stay zero. Skill now threads the route's
+		// EffectiveSkill() (ISI-7421); for blog it is "content-writer", exactly
+		// what the writer previously derived from the format, so recycle:blog is
+		// byte-for-byte unchanged at the writer output.
 	}
 	if fp.gotRC != want {
 		t.Fatalf("RunContext mismatch:\n got  %+v\n want %+v", fp.gotRC, want)
@@ -76,5 +79,65 @@ func TestContentStrategy_MapsWorkOrderToRunContext(t *testing.T) {
 	}
 	if fp.gotToken != "ghp_secret" {
 		t.Fatalf("token = %q, want %q", fp.gotToken, "ghp_secret")
+	}
+}
+
+// TestContentStrategy_ThreadsExplicitSkill proves ISI-7421: an explicit
+// (non-default) route skill reaches the writer's RunContext.Skill regardless of
+// output format, so route.EffectiveSkill() actually drives skill-pack selection
+// instead of the writer always falling back to the format default. Here a short
+// run is pinned to "human-voice-review" and must arrive as-is.
+func TestContentStrategy_ThreadsExplicitSkill(t *testing.T) {
+	fp := &fakePipeline{}
+	s := ContentStrategy{Pipeline: fp}
+
+	wo := WorkOrder{
+		Repo:        "ContentRemixer/Contentremixer",
+		IssueNumber: 7,
+		Inputs: Inputs{
+			SourcePath:   "content/snippet",
+			InputFormat:  "auto",
+			OutputFormat: "short",
+			Token:        "ghp_secret",
+		},
+		Skill:         "human-voice-review",
+		ActorTemplate: contentremixerv1alpha1.ActorTemplateContent,
+	}
+
+	if err := s.Run(context.Background(), wo); err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if fp.gotRC.Skill != "human-voice-review" {
+		t.Fatalf("explicit route skill did not thread to RunContext: got %q, want %q",
+			fp.gotRC.Skill, "human-voice-review")
+	}
+}
+
+// TestContentStrategy_ShortDefaultStaysStyleOnly guards the regression hazard
+// ISI-7421 calls out: a default short route carries the empty skill
+// (DefaultSkill("short") == ""), so threading it leaves RunContext.Skill empty
+// and the writer stays style-only — it must NOT become "content-writer".
+func TestContentStrategy_ShortDefaultStaysStyleOnly(t *testing.T) {
+	fp := &fakePipeline{}
+	s := ContentStrategy{Pipeline: fp}
+
+	wo := WorkOrder{
+		Repo:        "ContentRemixer/Contentremixer",
+		IssueNumber: 8,
+		Inputs: Inputs{
+			SourcePath:   "content/snippet",
+			InputFormat:  "auto",
+			OutputFormat: "short",
+			Token:        "ghp_secret",
+		},
+		Skill:         contentremixerv1alpha1.DefaultSkill("short"), // "" — the route default
+		ActorTemplate: contentremixerv1alpha1.ActorTemplateContent,
+	}
+
+	if err := s.Run(context.Background(), wo); err != nil {
+		t.Fatalf("Run: unexpected error: %v", err)
+	}
+	if fp.gotRC.Skill != "" {
+		t.Fatalf("default short route must stay style-only, got RunContext.Skill = %q", fp.gotRC.Skill)
 	}
 }

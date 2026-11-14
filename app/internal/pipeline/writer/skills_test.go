@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
 )
 
 // allContentPacks is a fixture tree with styles/blog.md plus every pack the
@@ -100,6 +102,30 @@ func TestDefaultSkillForFormat(t *testing.T) {
 		if got := defaultSkillForFormat(format); got != want {
 			t.Fatalf("defaultSkillForFormat(%q) = %q, want %q", format, got, want)
 		}
+	}
+}
+
+// TestDefaultSkillLockstepWithV1alpha1 is the ISI-7421 regression guard: the
+// writer's defaultSkillForFormat and the CRD-level v1alpha1.DefaultSkill MUST
+// agree on every content output format. They are two tables for the same
+// decision ("default skill for a format"); once WorkOrder.Skill threads through
+// the dispatcher seam into RunContext.Skill, a disagreement would silently
+// change a run's loaded skill packs. The known hazard is short: DefaultSkill
+// used to return "content-writer" while the writer returns "" (style-only);
+// this test fails if they drift apart again.
+func TestDefaultSkillLockstepWithV1alpha1(t *testing.T) {
+	for _, format := range []string{FormatBlog, FormatShort, FormatTutorial, FormatTeleprompter} {
+		writer := defaultSkillForFormat(format)
+		crd := contentremixerv1alpha1.DefaultSkill(format)
+		if writer != crd {
+			t.Fatalf("default-skill table drift for %q: writer defaultSkillForFormat = %q, v1alpha1.DefaultSkill = %q (they must agree — ISI-7421)",
+				format, writer, crd)
+		}
+	}
+	// Pin short explicitly: it is the format that regressed, and the whole point
+	// of the guard is that it stays style-only (empty skill) end to end.
+	if got := contentremixerv1alpha1.DefaultSkill(FormatShort); got != "" {
+		t.Fatalf("short must default to the empty (style-only) skill, got %q", got)
 	}
 }
 

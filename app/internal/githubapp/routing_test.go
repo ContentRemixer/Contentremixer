@@ -40,7 +40,7 @@ func TestResolve(t *testing.T) {
 		{
 			name:         "non-recycle labels are dropped, not reported",
 			labels:       []string{"bug", "recycle:short", "enhancement"},
-			wantMatched:  []Route{{Label: "recycle:short", InputFormat: "auto", OutputFormat: "short", Skill: "content-writer", ActorTemplate: "content"}},
+			wantMatched:  []Route{{Label: "recycle:short", InputFormat: "auto", OutputFormat: "short", Skill: "", ActorTemplate: "content"}},
 			wantUnmapped: nil,
 		},
 		{

@@ -36,7 +36,14 @@ export interface PersonaReference {
 export interface DevRelPersonaSpec {
   owner?: { subject?: string };
   selfDescription?: string;
+  // Derived dominant medium = contentKinds[0] (ISI-7424 auto-derive). Sent
+  // alongside contentKinds because the CRD's listType=set drops slice order, so
+  // the primary cannot be recovered from the stored set — it is carried
+  // explicitly. The webhook requires it to be a member of a non-empty set.
   primaryContentKind?: PrimaryContentKind;
+  // Full multi-select set of mediums the DevRel produces (O2, ISI-7424). Empty
+  // or absent is backward compatible (only primaryContentKind matters).
+  contentKinds?: PrimaryContentKind[];
   references?: PersonaReference[];
 }
 

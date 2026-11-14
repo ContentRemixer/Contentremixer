@@ -288,6 +288,13 @@ function PersonaDetail({
               {persona.spec.primaryContentKind ? (
                 <Badge tone="primary">Primary: {persona.spec.primaryContentKind}</Badge>
               ) : null}
+              {/* Secondary mediums (ISI-7424 multi-select): the non-primary members
+                  of contentKinds, shown as neutral badges beside the primary. */}
+              {(persona.spec.contentKinds ?? [])
+                .filter((k) => k !== persona.spec.primaryContentKind)
+                .map((k) => (
+                  <Badge key={k}>{k}</Badge>
+                ))}
               {targets.map((t) => (
                 <Badge key={t.contentType}>
                   {t.contentType}: {t.lengthSpec}

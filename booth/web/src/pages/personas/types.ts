@@ -75,7 +75,12 @@ export interface DevRelPersona {
   spec: {
     owner: { subject: string };
     selfDescription?: string;
+    // Derived dominant medium = contentKinds[0] (ISI-7424). Carried explicitly
+    // because the CRD's contentKinds is listType=set and drops slice order.
     primaryContentKind?: PrimaryContentKind | "";
+    // Full multi-select set of mediums (O2, ISI-7424). Empty/absent = legacy
+    // single-primary personas; the UI falls back to primaryContentKind alone.
+    contentKinds?: PrimaryContentKind[];
     references?: PersonaReference[];
     contentFormatTargets?: ContentFormatTarget[];
   };

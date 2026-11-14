@@ -65,9 +65,16 @@ WORKDIR /opt/media
 # merges over it rather than removing it).
 COPY --chown=pwuser:pwuser demo-recorder/ demo-recorder/
 
+# --- video-designer skill (ISI-7396) ---------------------------------------
+# The ffmpeg assembly pipeline. Pure Node + the ffmpeg/git we already added over
+# the base — NO npm deps, so there is no package*.json / npm ci layer to cache;
+# just vendor the source. The launcher runs `node video-designer/assemble.mjs
+# <edit.mjs> --content-root /artifacts`. sample/ + tests are .dockerignore'd.
+COPY --chown=pwuser:pwuser video-designer/ video-designer/
+
 # OpenContainers image metadata (org.opencontainers.image.*).
 LABEL org.opencontainers.image.title="media-actor" \
-      org.opencontainers.image.description="Fat media runtime template: headless Chromium (Playwright) + ffmpeg + git + Node, hosting the demo-recorder and (next) video-designer skills" \
+      org.opencontainers.image.description="Fat media runtime template: headless Chromium (Playwright) + ffmpeg + git + Node, hosting the demo-recorder and video-designer skills" \
       org.opencontainers.image.source="https://github.com/ContentRemixer/Contentremixer" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.base.name="mcr.microsoft.com/playwright:v1.64.0-noble"

@@ -1,0 +1,4 @@
+node_modules/
+*.log
+# local Sample-generation scratch (ffmpeg-static, synthesized inputs)
+.sample/

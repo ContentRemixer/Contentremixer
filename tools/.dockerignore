@@ -10,6 +10,10 @@
 **/out
 **/output
 **/dist
+# Acceptance-evidence samples + local scratch + tests (not needed at runtime)
+**/sample
+**/.sample
+**/*.test.mjs
 # VCS / editor / CI noise
 .git
 .gitignore

@@ -1,15 +1,16 @@
 # media-actor image build & publish (ISI-7395, parent ISI-7389 ADR-1/§7) — the
 # fat media runtime template (tools/media-actor/Dockerfile.media) the mediajob
 # launcher runs as a hardened k8s Job for every `template=media` WorkOrder
-# (demo-recorder now, video-designer next).
+# (demo-recorder + video-designer).
 #
 # Mirrors demo-recorder-image-publish.yml (ISI-7400) / scrape-job-image-publish
 # (ISI-7343), but:
 #   - package = ghcr.io/contentremixer/media-actor.
 #   - file = tools/media-actor/Dockerfile.media, context `tools/` (so the image
-#     can bake sibling skill tools — demo-recorder today).
+#     can bake sibling skill tools — demo-recorder + video-designer).
 #   - the functional smoke + cold-start gate exercise the baked demo-recorder
-#     (`node demo-recorder/smoke.mjs`): Chromium + ffmpeg wired end-to-end.
+#     (`node demo-recorder/smoke.mjs`): Chromium + ffmpeg wired end-to-end; the
+#     PR smoke also runs `node video-designer/smoke.mjs` (ffmpeg assembly).
 #
 #   PRs / design branches : build-only, both arches, GHA cache, NO push, NO creds
 #                           + a functional smoke (build amd64, load, run smoke).
@@ -24,12 +25,14 @@ on:
     paths:
       - "tools/media-actor/**"
       - "tools/demo-recorder/**"
+      - "tools/video-designer/**"
       - "tools/.dockerignore"
       - ".github/workflows/media-actor-image-publish.yml"
   pull_request:
     paths:
       - "tools/media-actor/**"
       - "tools/demo-recorder/**"
+      - "tools/video-designer/**"
       - "tools/.dockerignore"
       - ".github/workflows/media-actor-image-publish.yml"
 
@@ -142,6 +145,15 @@ jobs:
           t1=$(date +%s)
           echo "functional smoke: $((t1 - t0))s (warm layers; cold-start gate runs on main)" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run video-designer smoke
+        run: |
+          set -euo pipefail
+          # Assembles a generated two-sting + title-card cut with the baked ffmpeg
+          # (concat + drawtext + CFR H.264 master + poster). No external assets.
+          t0=$(date +%s)
+          docker run --rm media-actor:pr node video-designer/smoke.mjs
+          t1=$(date +%s)
+          echo "video-designer smoke: $((t1 - t0))s" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Cold-start gate: a FRESH runner with no warm layers cold-pulls the just-
   # published image and runs the baked demo-recorder smoke. Asserts the whole

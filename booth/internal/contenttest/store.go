@@ -261,6 +261,7 @@ func (s *Store) Synthesize(ctx context.Context, sess auth.Session, personaName s
 		PersonaName:        personaName,
 		SelfDescription:    pc.SelfDescription,
 		PrimaryContentKind: pc.PrimaryContentKind,
+		ContentKinds:       pc.ContentKinds,
 	})
 	if err != nil {
 		s.audit(ctx, sess, verbSynthesize, personaName, false)

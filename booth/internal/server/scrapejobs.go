@@ -148,6 +148,12 @@ func (s *Server) writeScrapeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, invalid.Error())
 	case scrapejobs.IsBadRequest(err):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, scrapejobs.ErrLauncherUnavailable):
+		// Service misconfiguration / infra failure launching the Job. 503 (not a
+		// bare 500) tells the DevRel it's not their request, and the detail tells
+		// operators what to fix — ISI-7425's "internal error" dead end.
+		s.log.Error("booth scrape launcher unavailable", slog.Any("err", err))
+		writeError(w, http.StatusServiceUnavailable, err.Error())
 	default:
 		s.log.Error("booth scrapejobs error", slog.Any("err", err))
 		writeError(w, http.StatusInternalServerError, "internal error")

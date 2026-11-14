@@ -2,6 +2,7 @@ package scrapejobs
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -116,15 +117,17 @@ func envOf(t *testing.T, c client.Client, name string) map[string]string {
 
 func TestK8sLauncher_ConfigGuards(t *testing.T) {
 	c := newFakeClient(t)
-	// No image → error.
-	if _, err := (&K8sLauncher{Client: c, DSNSecretName: "s", DSNSecretKey: "k"}).
-		Launch(context.Background(), JobSpec{JobID: "j"}); err == nil {
-		t.Error("want error when image unset")
+	// No image → ErrLauncherUnavailable (handler maps it to 503, not a bare 500).
+	_, err := (&K8sLauncher{Client: c, DSNSecretName: "s", DSNSecretKey: "k"}).
+		Launch(context.Background(), JobSpec{JobID: "j"})
+	if !errors.Is(err, ErrLauncherUnavailable) {
+		t.Errorf("image unset err = %v, want ErrLauncherUnavailable", err)
 	}
-	// No DSN secret → error.
-	if _, err := (&K8sLauncher{Client: c, Image: "img"}).
-		Launch(context.Background(), JobSpec{JobID: "j"}); err == nil {
-		t.Error("want error when DSN secret unset")
+	// No DSN secret → ErrLauncherUnavailable.
+	_, err = (&K8sLauncher{Client: c, Image: "img"}).
+		Launch(context.Background(), JobSpec{JobID: "j"})
+	if !errors.Is(err, ErrLauncherUnavailable) {
+		t.Errorf("DSN unset err = %v, want ErrLauncherUnavailable", err)
 	}
 }
 

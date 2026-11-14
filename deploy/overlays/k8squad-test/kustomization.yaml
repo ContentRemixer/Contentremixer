@@ -233,6 +233,28 @@ patches:
         value:
           name: BOOTH_INSECURE_COOKIE
           value: "true"
+      # ISI-7433 (fixes ISI-7425): wire the scrape-job image so the launcher
+      # stops refusing with the untyped error that collapsed to a bare HTTP 500
+      # ("internal error") on onboarding Step 5 "Start ingestion". The base
+      # (deploy/base/booth/deployment.yaml) intentionally left BOOTH_SCRAPER_IMAGE
+      # unset until app/cmd/scrape-job shipped a ghcr.io tag; it has
+      # (scrape-job-image-publish.yml, ISI-7343). Pinned to the sha-<12> tag of
+      # origin/main HEAD (3dde2a4, built 2026-11-14) — includes the ISI-7357
+      # github-repo / teleprompter-script / talk-recording fetchers the wizard
+      # emits. The `booth` SA already holds batch/jobs:create (rbac.yaml, verified
+      # live), and the `booth-scraper` SA (serviceaccount.yaml) runs the Job pods.
+      #
+      # PULL GATE: ghcr.io/contentremixer/scrape-job is PRIVATE and nodes pull
+      # anonymously (the in-cluster ghcr-pull secret has no read on this package),
+      # so the Job pods ImagePullBackOff until the package is made PUBLIC — the
+      # same durable fix applied to the booth package (see the node-pin note
+      # below). Tracked as an owner-gated unblock on ISI-7433; once public, a
+      # `kubectl apply -k` + `rollout restart deploy/booth` activates ingestion.
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: BOOTH_SCRAPER_IMAGE
+          value: ghcr.io/contentremixer/scrape-job:sha-3dde2a4dae19
   # ISI-7392: the ISI-7340 TEMP node pin is LIFTED. The pin existed because the
   # booth image had to be injected into a single worker's containerd (private
   # package + no in-cluster pull creds). ISI-7392 verified nodes DO reach

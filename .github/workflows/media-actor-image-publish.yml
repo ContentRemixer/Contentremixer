@@ -1,0 +1,205 @@
+# media-actor image build & publish (ISI-7395, parent ISI-7389 ADR-1/§7) — the
+# fat media runtime template (tools/media-actor/Dockerfile.media) the mediajob
+# launcher runs as a hardened k8s Job for every `template=media` WorkOrder
+# (demo-recorder now, video-designer next).
+#
+# Mirrors demo-recorder-image-publish.yml (ISI-7400) / scrape-job-image-publish
+# (ISI-7343), but:
+#   - package = ghcr.io/contentremixer/media-actor.
+#   - file = tools/media-actor/Dockerfile.media, context `tools/` (so the image
+#     can bake sibling skill tools — demo-recorder today).
+#   - the functional smoke + cold-start gate exercise the baked demo-recorder
+#     (`node demo-recorder/smoke.mjs`): Chromium + ffmpeg wired end-to-end.
+#
+#   PRs / design branches : build-only, both arches, GHA cache, NO push, NO creds
+#                           + a functional smoke (build amd64, load, run smoke).
+#   push to main          : build + push the `sha-<12>` tag + cold-start gate.
+#   push to v* tag        : build + push `vX.Y.Z` + `latest` + `sha-<12>`.
+name: media-actor-image-publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "tools/media-actor/**"
+      - "tools/demo-recorder/**"
+      - "tools/.dockerignore"
+      - ".github/workflows/media-actor-image-publish.yml"
+  pull_request:
+    paths:
+      - "tools/media-actor/**"
+      - "tools/demo-recorder/**"
+      - "tools/.dockerignore"
+      - ".github/workflows/media-actor-image-publish.yml"
+
+permissions:
+  contents: read
+  packages: write   # push to GHCR
+  id-token: write   # cosign keyless OIDC (Fulcio)
+
+concurrency:
+  group: media-actor-image-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE: ghcr.io/contentremixer/media-actor
+  COSIGN_VERSION: v2.4.1
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA12="${GITHUB_SHA::12}"
+          echo "sha_tag=sha-${SHA12}" >>"$GITHUB_OUTPUT"
+          TAGS="${IMAGE}:sha-${SHA12}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:latest"
+          fi
+          echo "tags=${TAGS}" >>"$GITHUB_OUTPUT"
+          {
+            echo "### media-actor-image-publish"
+            echo "- push: \`${{ github.event_name != 'pull_request' }}\`"
+            echo "- tags:"
+            echo "$TAGS" | tr ',' '\n' | sed 's/^/  - `/; s/$/`/'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: tools
+          file: tools/media-actor/Dockerfile.media
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Sign image (keyless)
+        if: github.event_name != 'pull_request'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          echo "signed ${IMAGE}@${DIGEST}" >>"$GITHUB_STEP_SUMMARY"
+
+  # PR functional smoke: build the amd64 image, load it, run the baked
+  # demo-recorder smoke (records a trivial clip, transcodes it with ffmpeg).
+  # Proves the fat runtime (Chromium + ffmpeg + Node) works end-to-end BEFORE
+  # merge. Warm-layer build, so NOT the cold-start timing (that runs on main).
+  functional-smoke:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (amd64, load)
+        uses: docker/build-push-action@v6
+        with:
+          context: tools
+          file: tools/media-actor/Dockerfile.media
+          platforms: linux/amd64
+          load: true
+          tags: media-actor:pr
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run demo-recorder smoke
+        run: |
+          set -euo pipefail
+          t0=$(date +%s)
+          docker run --rm media-actor:pr node demo-recorder/smoke.mjs
+          t1=$(date +%s)
+          echo "functional smoke: $((t1 - t0))s (warm layers; cold-start gate runs on main)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Cold-start gate: a FRESH runner with no warm layers cold-pulls the just-
+  # published image and runs the baked demo-recorder smoke. Asserts the whole
+  # cold pull -> completed record finishes under 3 minutes (the media image is
+  # fatter than demo-recorder — Chromium + ffmpeg + git — so the budget is 180s,
+  # vs 120s for the lean recorder), and that the pulled image is the runner's
+  # arch (guards the "tag briefly publishes arm64-only" footgun).
+  cold-start:
+    if: github.event_name != 'pull_request'
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Cold pull + demo-recorder smoke (< 3 min)
+        env:
+          TAG: ${{ needs.image.outputs.sha_tag }}
+        run: |
+          set -euo pipefail
+          REF="${IMAGE}:${TAG}"
+
+          # Ensure a true cold pull: drop any layer that a warm runner might carry.
+          docker image rm -f "$REF" >/dev/null 2>&1 || true
+
+          pull_start=$(date +%s)
+          docker pull "$REF"
+          pull_end=$(date +%s)
+
+          # Arch guard: the runner is amd64; a pulled arm64 image means the
+          # multi-arch manifest did not include amd64 yet (the publish footgun).
+          arch=$(docker image inspect --format '{{.Architecture}}' "$REF")
+          runner_arch=$(dpkg --print-architecture)
+          if [[ "$arch" != "$runner_arch" ]]; then
+            echo "::error::pulled image arch '$arch' != runner arch '$runner_arch' — arm64-only publish?"
+            exit 1
+          fi
+
+          run_start=$(date +%s)
+          docker run --rm "$REF" node demo-recorder/smoke.mjs
+          run_end=$(date +%s)
+
+          pull_s=$((pull_end - pull_start))
+          run_s=$((run_end - run_start))
+          total_s=$((run_end - pull_start))
+
+          {
+            echo "### media-actor cold start"
+            echo "- image: \`${REF}\` (${arch})"
+            echo "- cold pull: **${pull_s}s**"
+            echo "- demo-recorder smoke: **${run_s}s**"
+            echo "- total (cold pull -> completed record): **${total_s}s** (budget 180s)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$total_s" -ge 180 ]]; then
+            echo "::error::cold start ${total_s}s >= 180s budget"
+            exit 1
+          fi

@@ -72,25 +72,35 @@ export function StepWelcome({ onNext }: { onNext: () => void }) {
 }
 
 // --- O2 Primary content kind ---------------------------------------------
+// Multi-select (ISI-7424): the DevRel picks one or more mediums; the first
+// selected is the derived *primary* (auto-derive = first selected). The primary
+// badge + "Set primary" affordance only surface once >= 2 are selected — with a
+// single pick there is nothing to disambiguate. The toggle card and its
+// "Set primary" control are sibling buttons (never nested — a button inside a
+// button is invalid HTML and breaks keyboard/AT semantics).
 export function StepPrimaryKind({
-  value,
-  onChange,
+  selected,
+  onToggle,
+  onSetPrimary,
   onBack,
   onNext,
 }: {
-  value: PrimaryContentKind | null;
-  onChange: (k: PrimaryContentKind) => void;
+  selected: PrimaryContentKind[];
+  onToggle: (k: PrimaryContentKind) => void;
+  onSetPrimary: (k: PrimaryContentKind) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
+  const primary = selected[0] ?? null;
+  const showPrimary = selected.length >= 2;
   return (
     <StepScaffold
       title="What do you mostly create?"
-      lead="This orients how we synthesize your style and generate test content. You can refine it later."
+      lead="Pick everything you produce — we synthesize across all of them. Your first pick is treated as primary; you can re-designate it. You can refine this later."
       footer={
         <>
           {backBtn(onBack)}
-          <Button onClick={onNext} disabled={!value}>
+          <Button onClick={onNext} disabled={selected.length === 0}>
             Continue
           </Button>
         </>
@@ -98,26 +108,43 @@ export function StepPrimaryKind({
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {PRIMARY_KINDS.map((k) => {
-          const selected = value === k.kind;
+          const isSelected = selected.includes(k.kind);
+          const isPrimary = primary === k.kind;
           return (
-            <button
+            <div
               key={k.kind}
-              type="button"
-              onClick={() => onChange(k.kind)}
-              aria-pressed={selected}
               className={cx(
-                "rounded-lg border p-4 text-left transition-colors",
-                selected
+                "flex flex-col rounded-lg border transition-colors",
+                isSelected
                   ? "border-accent bg-surface-2 ring-1 ring-accent"
                   : "border-border bg-surface hover:border-border-strong",
               )}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-text">{k.label}</span>
-                {selected ? <CheckIcon width={16} height={16} /> : null}
-              </div>
-              <p className="mt-1 text-sm text-text-muted">{k.blurb}</p>
-            </button>
+              <button
+                type="button"
+                onClick={() => onToggle(k.kind)}
+                aria-pressed={isSelected}
+                className="rounded-lg p-4 text-left"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-text">{k.label}</span>
+                  <span className="flex items-center gap-2">
+                    {showPrimary && isPrimary ? <Badge tone="info">Primary</Badge> : null}
+                    {isSelected ? <CheckIcon width={16} height={16} /> : null}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-text-muted">{k.blurb}</p>
+              </button>
+              {showPrimary && isSelected && !isPrimary ? (
+                <button
+                  type="button"
+                  onClick={() => onSetPrimary(k.kind)}
+                  className="mx-4 mb-3 self-start text-xs text-text-muted hover:text-text"
+                >
+                  ☆ Set primary
+                </button>
+              ) : null}
+            </div>
           );
         })}
       </div>
@@ -264,7 +291,7 @@ export function StepBio({
 
 // --- O5 Review & start ----------------------------------------------------
 export function StepReview({
-  primaryKind,
+  contentKinds,
   sources,
   bio,
   starting,
@@ -272,7 +299,7 @@ export function StepReview({
   onBack,
   onStart,
 }: {
-  primaryKind: PrimaryContentKind | null;
+  contentKinds: PrimaryContentKind[];
   sources: SourceDraft[];
   bio: string;
   starting: boolean;
@@ -281,6 +308,7 @@ export function StepReview({
   onStart: () => void;
 }) {
   const valid = sources.filter((s) => s.url.trim() !== "");
+  const multi = contentKinds.length >= 2;
   return (
     <StepScaffold
       title="Review & start ingestion"
@@ -301,8 +329,21 @@ export function StepReview({
       }
     >
       <div className="space-y-4">
-        <SummaryRow label="Primary content">
-          {primaryKind ? <Badge tone="info">{PRIMARY_KINDS.find((k) => k.kind === primaryKind)?.label}</Badge> : "—"}
+        <SummaryRow label={`Content ${multi ? "kinds" : "kind"}`}>
+          {contentKinds.length > 0 ? (
+            <ul className="flex flex-wrap gap-2">
+              {contentKinds.map((k, i) => (
+                <li key={k} className="flex items-center gap-1">
+                  <Badge tone={i === 0 ? "info" : "neutral"}>
+                    {PRIMARY_KINDS.find((p) => p.kind === k)?.label ?? k}
+                  </Badge>
+                  {multi && i === 0 ? <span className="text-xs text-text-muted">primary</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            "—"
+          )}
         </SummaryRow>
         <SummaryRow label={`Sources (${valid.length})`}>
           <ul className="space-y-1">

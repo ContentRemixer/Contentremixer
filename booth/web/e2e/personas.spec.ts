@@ -104,6 +104,44 @@ test.describe("D7 P3 — extra context / bio", () => {
     await save.click();
     await expect(save).toBeDisabled();
   });
+
+  // ISI-7424 multi-select: the "Content mediums" card edits contentKinds. The
+  // legacy persona (primaryContentKind: "blog", no contentKinds) loads with blog
+  // selected; adding video makes it dirty and the PUT carries both the full set
+  // and the derived primary (= first).
+  test("edits content mediums and persists contentKinds + derived primary", async ({ page }) => {
+    await installApi(page, defaults({ session: DEVREL, personas: [persona()] }));
+    let putBody: Record<string, unknown> | null = null;
+    await page.route("**/v1/devrelpersonas/robin", async (route) => {
+      if (route.request().method() === "PUT") putBody = route.request().postDataJSON();
+      await route.fallback();
+    });
+
+    await page.goto("/personas");
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Extra context — robin" })).toBeVisible();
+
+    const save = page.getByRole("button", { name: "Save changes" });
+    await expect(save).toBeDisabled();
+
+    // blog is pre-selected (legacy single primary); with one kind no Primary badge.
+    const blog = page.getByRole("button", { name: /^blog/ });
+    const video = page.getByRole("button", { name: /^video/ });
+    await expect(blog).toHaveAttribute("aria-pressed", "true");
+
+    // Add video → dirty, and blog (first) is now the marked Primary.
+    await video.click();
+    await expect(video).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("Primary", { exact: true })).toHaveCount(1);
+    await expect(save).toBeEnabled();
+
+    await save.click();
+    await expect(save).toBeDisabled();
+    expect(putBody).not.toBeNull();
+    const spec = (putBody as { spec: Record<string, unknown> }).spec;
+    expect(spec.contentKinds).toEqual(["blog", "video"]);
+    expect(spec.primaryContentKind).toBe("blog");
+  });
 });
 
 test.describe("D7 P4 — content test → validate → promote", () => {

@@ -9,14 +9,13 @@ import {
   Field,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
   Textarea,
+  cx,
   useToast,
 } from "../../ui";
+import { CheckIcon } from "../../components/icons";
 import { ApiError } from "../../app/api";
+import { toggleKind, makePrimary } from "../onboarding/contentKinds";
 import { getPersona, updatePersona } from "./api";
 import {
   CONTENT_FORMAT_META,
@@ -26,6 +25,22 @@ import {
   type DevRelPersona,
   type PrimaryContentKind,
 } from "./types";
+
+// kindsOf derives the editable multi-select set from a persona: prefer the
+// stored contentKinds (ISI-7424), falling back to the legacy single primary so
+// personas created before the multi-select still populate the control.
+function kindsOf(spec: DevRelPersona["spec"]): PrimaryContentKind[] {
+  if (spec.contentKinds && spec.contentKinds.length > 0) {
+    const set = spec.contentKinds;
+    // Keep the stored primary first so "primary = first selected" holds on load.
+    const primary = spec.primaryContentKind;
+    if (primary && set.includes(primary)) {
+      return [primary, ...set.filter((k) => k !== primary)];
+    }
+    return set;
+  }
+  return spec.primaryContentKind ? [spec.primaryContentKind] : [];
+}
 
 // P3 — Edit extra context / bio (ISI-7362 D7, plan §6 from the D0 mocks): the
 // persona's free-text voice anchor (spec.selfDescription — the onboarding O4
@@ -40,7 +55,8 @@ export function PersonaBioPanel() {
   const [persona, setPersona] = useState<DevRelPersona | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bio, setBio] = useState("");
-  const [primary, setPrimary] = useState<PrimaryContentKind | "">("");
+  // Multi-select set (ISI-7424); kinds[0] is the derived primary.
+  const [kinds, setKinds] = useState<PrimaryContentKind[]>([]);
   // One lengthSpec per content type; empty = target omitted.
   const [specs, setSpecs] = useState<Record<ContentFormatType, string>>({
     blog: "",
@@ -56,7 +72,7 @@ export function PersonaBioPanel() {
       .then((p) => {
         setPersona(p);
         setBio(p.spec.selfDescription ?? "");
-        setPrimary(p.spec.primaryContentKind ?? "");
+        setKinds(kindsOf(p.spec));
         setSpecs({
           blog: "",
           "youtube-short": "",
@@ -77,7 +93,9 @@ export function PersonaBioPanel() {
   const dirty = useMemo(() => {
     if (!persona) return false;
     if (bio !== (persona.spec.selfDescription ?? "")) return true;
-    if (primary !== (persona.spec.primaryContentKind ?? "")) return true;
+    // Order-sensitive compare: re-designating the primary (reorder) is a change
+    // even when the set is identical.
+    if (JSON.stringify(kinds) !== JSON.stringify(kindsOf(persona.spec))) return true;
     const saved = (persona.spec.contentFormatTargets ?? [])
       .map((t) => `${t.contentType}=${t.lengthSpec}`)
       .sort();
@@ -86,7 +104,7 @@ export function PersonaBioPanel() {
       .map(([k, v]) => `${k}=${v.trim()}`)
       .sort();
     return JSON.stringify(saved) !== JSON.stringify(next);
-  }, [bio, persona, primary, specs]);
+  }, [bio, persona, kinds, specs]);
 
   async function save() {
     if (!persona) return;
@@ -102,7 +120,11 @@ export function PersonaBioPanel() {
         spec: {
           ...persona.spec,
           selfDescription: bio.trim() === "" ? undefined : bio,
-          primaryContentKind: primary === "" ? undefined : primary,
+          // Send BOTH: the full set and the derived primary (= first). The CRD
+          // drops set order, so the primary rides along explicitly; the webhook
+          // requires it to be a member of a non-empty contentKinds.
+          contentKinds: kinds.length === 0 ? undefined : kinds,
+          primaryContentKind: kinds[0] ?? undefined,
           contentFormatTargets: targets.length === 0 ? undefined : targets,
         },
       });
@@ -180,27 +202,53 @@ export function PersonaBioPanel() {
         <div className="flex flex-col gap-4">
           <Card>
             <CardHeader
-              title="Primary content medium"
-              subtitle="Your dominant output medium — conditions style synthesis and content tests."
+              title="Content mediums"
+              subtitle="Everything you produce — conditions style synthesis and content tests. Your first pick is primary; re-designate it any time."
             />
             <CardBody>
-              <div className="w-56">
-                <Label className="text-xs text-text-muted">Medium</Label>
-                <Select
-                  value={primary || "unspecified"}
-                  onValueChange={(v) => setPrimary(v === "unspecified" ? "" : (v as PrimaryContentKind))}
-                >
-                  <SelectTrigger className="mt-1" />
-                  <SelectContent>
-                    <SelectItem value="unspecified">Unspecified</SelectItem>
-                    {PRIMARY_CONTENT_KINDS.map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {k}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {PRIMARY_CONTENT_KINDS.map((k) => {
+                  const selected = kinds.includes(k);
+                  const isPrimary = kinds[0] === k;
+                  const showPrimary = kinds.length >= 2;
+                  return (
+                    <div
+                      key={k}
+                      className={cx(
+                        "flex flex-col rounded-md border transition-colors",
+                        selected
+                          ? "border-accent bg-surface-2 ring-1 ring-accent"
+                          : "border-border bg-surface hover:border-border-strong",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={selected}
+                        onClick={() => setKinds((prev) => toggleKind(prev, k))}
+                        className="flex items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm capitalize text-text"
+                      >
+                        <span className="flex items-center gap-2">
+                          {k}
+                          {showPrimary && isPrimary ? <Badge tone="primary">Primary</Badge> : null}
+                        </span>
+                        {selected ? <CheckIcon width={15} height={15} /> : null}
+                      </button>
+                      {showPrimary && selected && !isPrimary ? (
+                        <button
+                          type="button"
+                          onClick={() => setKinds((prev) => makePrimary(prev, k))}
+                          className="mx-3 mb-2 self-start text-xs text-text-muted hover:text-text"
+                        >
+                          ☆ Set primary
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
+              <p className="mt-3 text-xs text-text-muted">
+                {kinds.length === 0 ? "No mediums selected." : null}
+              </p>
             </CardBody>
           </Card>
 

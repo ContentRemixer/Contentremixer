@@ -34,6 +34,81 @@ test.describe("DevRel onboarding wizard", () => {
     await expect(cont).toBeEnabled();
   });
 
+  // O2 multi-select (ISI-7424): more than one kind can be picked. The primary
+  // badge + "Set primary" affordance only appear once >= 2 are selected, and the
+  // first pick is primary until re-designated.
+  test("O2 is a multi-select that auto-derives and re-designates the primary", async ({ page }) => {
+    await installApi(page, defaults({ session: DEVREL, onboarding: FIRST_RUN }));
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "Get started" }).click();
+    await expect(page.getByRole("heading", { name: /What do you mostly create/ })).toBeVisible();
+
+    const blog = page.getByRole("button", { name: /Blog posts/ });
+    const video = page.getByRole("button", { name: /^Video/ });
+
+    // First pick selects it; with one kind there is no Primary badge yet.
+    await blog.click();
+    await expect(blog).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("Primary", { exact: true })).toHaveCount(0);
+
+    // Second pick surfaces the Primary badge on the first (blog) and a
+    // "Set primary" control on the second (video).
+    await video.click();
+    await expect(video).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("Primary", { exact: true })).toHaveCount(1);
+    const setPrimary = page.getByRole("button", { name: /Set primary/ });
+    await expect(setPrimary).toHaveCount(1);
+
+    // Re-designate video as primary; blog keeps being selected but loses primary.
+    await setPrimary.click();
+    await expect(page.getByText("Primary", { exact: true })).toHaveCount(1);
+    // Now "Set primary" sits on blog (the non-primary selected card).
+    await expect(page.getByRole("button", { name: /Set primary/ })).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { name: /Add a few writing samples/ })).toBeVisible();
+  });
+
+  // O2 → O5: the full set + derived primary (= first selected) ride through to
+  // the persona upsert. Captures the PUT/POST body to assert the wire contract
+  // (ISI-7424: send BOTH contentKinds and primaryContentKind; CRD drops order).
+  test("O5 persists contentKinds + derived primaryContentKind on the persona", async ({ page }) => {
+    await installApi(page, defaults({ session: DEVREL, onboarding: FIRST_RUN }));
+    let upsertBody: Record<string, unknown> | null = null;
+    // Capture the create (POST) body; let it fall through to the mock handler.
+    await page.route("**/v1/devrelpersonas", async (route) => {
+      if (route.request().method() === "POST") {
+        upsertBody = route.request().postDataJSON();
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: "Get started" }).click();
+    // Pick video then blog; video is primary (first selected).
+    await page.getByRole("button", { name: /^Video/ }).click();
+    await page.getByRole("button", { name: /Blog posts/ }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // O3 sources.
+    await page.getByLabel("Source URL").fill("https://example.com/posts/scaling");
+    await page.getByRole("button", { name: /^Continue/ }).click();
+    // O4 bio.
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    // O5 review lists both kinds and marks the primary.
+    await expect(page.getByRole("heading", { name: /review & start ingestion/i })).toBeVisible();
+    await expect(page.getByText("primary", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Start ingestion" }).click();
+
+    // Ingestion runs (succeeded jobs by default); assert the captured upsert body.
+    await expect(page.getByRole("heading", { name: /your style/i })).toBeVisible();
+    expect(upsertBody).not.toBeNull();
+    const spec = (upsertBody as { spec: Record<string, unknown> }).spec;
+    expect(spec.contentKinds).toEqual(["video", "blog"]);
+    expect(spec.primaryContentKind).toBe("video");
+  });
+
   test("the sources step requires at least one source URL", async ({ page }) => {
     await installApi(page, defaults({ session: DEVREL, onboarding: FIRST_RUN }));
     await page.goto("/onboarding");

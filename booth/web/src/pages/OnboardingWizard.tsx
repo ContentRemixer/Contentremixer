@@ -17,6 +17,7 @@ import {
   cryptoId,
 } from "./onboarding/steps";
 import { useOnboardingGate } from "./onboarding/gate";
+import { toggleKind, makePrimary, primaryKind } from "./onboarding/contentKinds";
 import * as apiFns from "./onboarding/api";
 import type {
   SourceDraft,
@@ -78,8 +79,10 @@ export function OnboardingWizard() {
 
   const [step, setStep] = useState(1);
 
-  // O2–O4 collected inputs.
-  const [primaryKind, setPrimaryKind] = useState<PrimaryContentKind | null>(null);
+  // O2–O4 collected inputs. contentKinds is the multi-select set (ISI-7424);
+  // its first entry is the derived primary. Order is local-only state — the
+  // CRD stores the set unordered, so the derived primary is sent explicitly.
+  const [contentKinds, setContentKinds] = useState<PrimaryContentKind[]>([]);
   const [sources, setSources] = useState<SourceDraft[]>([{ id: cryptoId(), kind: "article", url: "" }]);
   const [bio, setBio] = useState("");
 
@@ -111,9 +114,13 @@ export function OnboardingWizard() {
     setStartError(null);
     try {
       const references: PersonaReference[] = valid.map((s) => ({ url: s.url.trim(), kind: s.kind }));
+      // Send BOTH the full set and the derived primary (= first selected). The
+      // CRD's contentKinds is listType=set and drops order, so the primary must
+      // ride along explicitly; the webhook requires it to be a member of the set.
       await apiFns.upsertPersona(personaName, {
         selfDescription: bio.trim() || undefined,
-        primaryContentKind: primaryKind ?? undefined,
+        contentKinds: contentKinds.length > 0 ? contentKinds : undefined,
+        primaryContentKind: primaryKind(contentKinds) ?? undefined,
         references,
       });
 
@@ -136,7 +143,7 @@ export function OnboardingWizard() {
     } finally {
       setStarting(false);
     }
-  }, [sources, bio, primaryKind, personaName]);
+  }, [sources, bio, contentKinds, personaName]);
 
   // --- O6: drive the ingestion run (scrape → accept → synthesize) ---------
   // Keyed on runToken so a retry re-runs it. The async loop updates per-source
@@ -295,8 +302,9 @@ export function OnboardingWizard() {
       {step === 1 && <StepWelcome onNext={() => setStep(2)} />}
       {step === 2 && (
         <StepPrimaryKind
-          value={primaryKind}
-          onChange={setPrimaryKind}
+          selected={contentKinds}
+          onToggle={(k) => setContentKinds((prev) => toggleKind(prev, k))}
+          onSetPrimary={(k) => setContentKinds((prev) => makePrimary(prev, k))}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
         />
@@ -307,7 +315,7 @@ export function OnboardingWizard() {
       {step === 4 && <StepBio value={bio} onChange={setBio} onBack={() => setStep(3)} onNext={() => setStep(5)} />}
       {step === 5 && (
         <StepReview
-          primaryKind={primaryKind}
+          contentKinds={contentKinds}
           sources={sources}
           bio={bio}
           starting={starting}

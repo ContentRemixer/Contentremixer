@@ -2,6 +2,7 @@ package scrapejobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// ErrLauncherUnavailable marks a launch failure that is the service's fault, not
+// the caller's: a missing deploy config (scrape-job image / REVIEW_DSN secret)
+// or a Kubernetes API error creating the Job. Handlers map it to HTTP 503 with
+// the wrapped detail, so a DevRel sees an actionable "scrape service not ready"
+// message and operators see what to fix — instead of the bare 500 "internal
+// error" that ISI-7425 surfaced when BOOTH_SCRAPER_IMAGE was unset.
+var ErrLauncherUnavailable = errors.New("scrapejobs: scrape launcher unavailable")
 
 // JobSpec is the fully-resolved scrape request the launcher turns into a
 // Kubernetes batch Job. Owner is already §6.3-authorized by the gating store.
@@ -64,10 +73,10 @@ var _ Launcher = (*K8sLauncher)(nil)
 
 func (l *K8sLauncher) Launch(ctx context.Context, spec JobSpec) (string, error) {
 	if l.Image == "" {
-		return "", fmt.Errorf("scrapejobs: launcher has no scrape-job image configured")
+		return "", fmt.Errorf("%w: no scrape-job image configured (set BOOTH_SCRAPER_IMAGE)", ErrLauncherUnavailable)
 	}
 	if l.DSNSecretName == "" || l.DSNSecretKey == "" {
-		return "", fmt.Errorf("scrapejobs: launcher has no REVIEW_DSN secret configured")
+		return "", fmt.Errorf("%w: no REVIEW_DSN secret configured", ErrLauncherUnavailable)
 	}
 	name := jobName(spec.JobID)
 	backoff := l.BackoffLimit
@@ -136,7 +145,10 @@ func (l *K8sLauncher) Launch(ctx context.Context, spec JobSpec) (string, error) 
 		},
 	}
 	if err := l.Client.Create(ctx, job); err != nil {
-		return "", fmt.Errorf("scrapejobs: create k8s job %s: %w", name, err)
+		// A Create failure (apiserver unreachable, RBAC denied, quota) is an
+		// infra/config condition, not the caller's fault — classify it 503 too,
+		// keeping the k8s error inspectable in the chain.
+		return "", fmt.Errorf("%w: create k8s job %s: %w", ErrLauncherUnavailable, name, err)
 	}
 	return name, nil
 }

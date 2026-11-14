@@ -1,0 +1,18 @@
+# Build context for media-actor-image-publish.yml is `tools/`. Keep it tiny:
+# package*.json are COPYd explicitly for the cached npm ci layer; everything
+# heavy or host-specific is excluded. (Only the media-actor image builds from a
+# tools/ context; the demo-recorder image uses its own tools/demo-recorder/.)
+**/node_modules
+**/npm-debug.log
+# Recorded artifacts / scratch
+**/*.webm
+**/*.mp4
+**/out
+**/output
+**/dist
+# VCS / editor / CI noise
+.git
+.gitignore
+**/.github
+**/*.md
+**/.DS_Store

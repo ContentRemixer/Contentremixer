@@ -1,0 +1,79 @@
+# media actor image (ISI-7395, parent ISI-7389 ADR-1/§7) — the FAT runtime
+# template that hosts the media skills: demo-recorder today (ISI-7388), the
+# video-designer (Remotion) next. One image is deliberate: ADR-1 keeps media
+# skills on a single heavy runtime so the k8s-Job launcher
+# (app/internal/mediajob) points every `template=media` WorkOrder at the same
+# `ghcr.io/contentremixer/media-actor` tag regardless of which skill runs.
+#
+# Base = the official Playwright image. It bakes Node, the browsers, AND every
+# system library Chromium needs (libatk/libgbm/… — the libs that bite a bare
+# node image; the D8 E2E footgun ISI-7363). On top we add exactly three things
+# the media skills need and the base lacks:
+#   - ffmpeg : transcode the Chromium VFR WebM into a faststart CFR MP4. The
+#              recorder uses `-fps_mode cfr` (NEVER `-vsync`, removed in ffmpeg
+#              9) — the ISI-7388 R4 footgun, already carried in record.mjs.
+#   - git    : the flush-before-suspend step (ADR-4) commits the MP4 into the
+#              content checkout and pushes it to the PR branch BEFORE the Job
+#              completes; the recorder/entrypoint drives git, not the operator
+#              (an emptyDir artifact dies with the pod, so the durable flush
+#              must happen inside the container's own success gate).
+#   - Remotion (later): pure npm, no extra system dep — Node is already baked.
+#
+# CONTRACT (coordinated with DR-1/DR-2, ISI-7399/7400): the `playwright` npm
+# version in tools/demo-recorder/package.json MUST equal this base image tag —
+# 1.64.0 == v1.64.0-noble. Bump one, bump both. PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+# makes `npm ci` trust the baked browsers instead of re-downloading them.
+#
+# Build context is `tools/` (NOT tools/media-actor/) so this one image can bake
+# multiple skill tools that live as siblings under tools/ — demo-recorder now,
+# tools/video-designer next — without a repo-root context. Published multi-arch
+# (amd64, arm64), cosign keyless-signed with SBOM + max provenance by
+# media-actor-image-publish.yml — the scrape-job lane (ISI-7343) shape.
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
+
+# ffmpeg + git are the only extra system deps over the Playwright base. Clean
+# the apt lists in the same layer so they never ship in the image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/media
+
+# Trust the baked-in browsers; never re-download on `npm ci` or at runtime.
+# HOME=/tmp: the Job runs with readOnlyRootFilesystem (hardened securityContext,
+# like scrape-job) so Chromium/npm need a writable HOME — the launcher mounts a
+# tmpfs emptyDir at /tmp.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_ENV=production \
+    HOME=/tmp
+
+# --- demo-recorder skill (ISI-7388) ---------------------------------------
+# Dependency layer FIRST (package*.json only) so source edits don't bust the
+# npm cache — the expensive layer stays warm across record.mjs changes.
+COPY demo-recorder/package.json demo-recorder/package-lock.json demo-recorder/
+RUN cd demo-recorder && npm ci --omit=dev --no-audit --no-fund
+
+# Source last. --chown gives the non-root runtime user ownership of the tree it
+# executes. The glob COPY picks up record.mjs + lib/* + scenarios/* + smoke.mjs.
+COPY --chown=pwuser:pwuser demo-recorder/ demo-recorder/
+
+# OpenContainers image metadata (org.opencontainers.image.*).
+LABEL org.opencontainers.image.title="media-actor" \
+      org.opencontainers.image.description="Fat media runtime template: headless Chromium (Playwright) + ffmpeg + git + Node, hosting the demo-recorder and (next) video-designer skills" \
+      org.opencontainers.image.source="https://github.com/ContentRemixer/Contentremixer" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="mcr.microsoft.com/playwright:v1.64.0-noble"
+
+# Drop to the non-root user baked into the Playwright image (uid 1000). The
+# build steps above (apt, npm ci, COPY) need root; the media skills run
+# unprivileged — both the Trivy DS-0002 fix and the Playwright-recommended way
+# to run this image. The launcher's securityContext (runAsNonRoot:true,
+# drop-ALL, readOnlyRootFilesystem) matches this uid.
+USER pwuser
+
+# No ENTRYPOINT that auto-runs: the mediajob launcher drives the container with
+# an explicit command per skill (e.g. `node demo-recorder/record.mjs <scenario>
+# --content-root /artifacts`). Default to a shell so `docker run <img> node
+# demo-recorder/smoke.mjs` and ad-hoc use both work.
+CMD ["bash"]

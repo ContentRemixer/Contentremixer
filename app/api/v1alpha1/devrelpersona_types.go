@@ -52,6 +52,12 @@ var KnownReferenceKinds = []string{
 // is talks is synthesized and tested differently from one who primarily blogs.
 // It is distinct from a reference Kind — references are style *exemplar sources*;
 // PrimaryContentKind is the *output medium* the persona targets.
+//
+// The enum marker lives on the type (not the field) so it lands on BOTH the
+// scalar spec.primaryContentKind and each item of the spec.contentKinds slice
+// (ISI-7424) — a field-level Enum marker on a slice is emitted on the array
+// itself, which is not a valid item constraint.
+// +kubebuilder:validation:Enum=blog;video;talk;tutorial
 type PrimaryContentKind string
 
 const (
@@ -148,9 +154,29 @@ type DevRelPersonaSpec struct {
 	// during onboarding (plan O2): blog | video | talk | tutorial. It conditions
 	// style synthesis (D3) and the content test (D4). Optional; unset means
 	// "unspecified" and the synthesizer falls back to a medium-agnostic profile.
-	// +kubebuilder:validation:Enum=blog;video;talk;tutorial
+	//
+	// When ContentKinds is set, PrimaryContentKind is its derived dominant (= the
+	// first selected kind, auto-derived in onboarding v1 but editable later in
+	// persona management, ISI-7424). The four single-value downstream consumers
+	// (style-synth, content-test, promote, store projection) keep reading this
+	// scalar unchanged; the validating webhook requires it to be a member of a
+	// non-empty ContentKinds so the derived dominant can never drift out of the set.
+	// The blog|video|talk|tutorial enum is carried on the PrimaryContentKind type.
 	// +optional
 	PrimaryContentKind PrimaryContentKind `json:"primaryContentKind,omitempty"`
+
+	// ContentKinds is the full set of mediums this DevRel produces, captured as a
+	// multi-select during onboarding (plan O2, ISI-7424): any of blog | video |
+	// talk | tutorial. PrimaryContentKind is the derived dominant of this set.
+	// Optional and backward compatible: an empty ContentKinds behaves exactly as
+	// before (only PrimaryContentKind matters). When non-empty, the validating
+	// webhook requires PrimaryContentKind to be one of its members. Phase-2 work
+	// (ISI-7429) threads the full set through style/content-test/promote
+	// conditioning; v1 consumers still read only the scalar PrimaryContentKind.
+	// The per-item blog|video|talk|tutorial enum is carried on the item type.
+	// +optional
+	// +listType=set
+	ContentKinds []PrimaryContentKind `json:"contentKinds,omitempty"`
 
 	// References are the style exemplars to ingest (talks, posts). A change to
 	// this list is what the reconciler turns into scrape→embed work.

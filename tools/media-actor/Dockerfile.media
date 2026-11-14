@@ -50,12 +50,19 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
 
 # --- demo-recorder skill (ISI-7388) ---------------------------------------
 # Dependency layer FIRST (package*.json only) so source edits don't bust the
-# npm cache — the expensive layer stays warm across record.mjs changes.
-COPY demo-recorder/package.json demo-recorder/package-lock.json demo-recorder/
-RUN cd demo-recorder && npm ci --omit=dev --no-audit --no-fund
+# npm cache — the expensive layer stays warm across record.mjs changes. Use a
+# nested WORKDIR to run npm ci in-place rather than `RUN cd demo-recorder && …`
+# (Trivy DS-0013: a `cd` in RUN is a misconfig), then reset to /opt/media so the
+# launcher's `node demo-recorder/record.mjs` still resolves from the image root.
+WORKDIR /opt/media/demo-recorder
+COPY demo-recorder/package.json demo-recorder/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+WORKDIR /opt/media
 
 # Source last. --chown gives the non-root runtime user ownership of the tree it
 # executes. The glob COPY picks up record.mjs + lib/* + scenarios/* + smoke.mjs.
+# node_modules from the deps layer persists (it is .dockerignore'd, so this COPY
+# merges over it rather than removing it).
 COPY --chown=pwuser:pwuser demo-recorder/ demo-recorder/
 
 # OpenContainers image metadata (org.opencontainers.image.*).

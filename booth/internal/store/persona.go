@@ -23,10 +23,11 @@ type PersonaConditioning struct {
 	SelfDescription    string
 	PrimaryContentKind string
 	// ContentKinds is the full multi-select set of mediums the DevRel produces
-	// (ISI-7424); PrimaryContentKind is its derived dominant. Plumbed here now so
-	// the projection carries it; downstream *use* (threading the full set through
-	// style/content-test/promote conditioning) is Phase 2 (ISI-7429). Empty when
-	// the persona predates multi-select or only set a single primary.
+	// (ISI-7424); PrimaryContentKind is its derived dominant. The D3 style
+	// synthesis composes across it so the named traits capture the author's
+	// cross-medium voice (ISI-7429, Phase 2); PrimaryContentKind stays the
+	// dominant/default, so an empty or single-valued set behaves exactly as
+	// before. Empty when the persona predates multi-select or set only a primary.
 	ContentKinds []string
 }
 

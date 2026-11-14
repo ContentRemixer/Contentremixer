@@ -49,6 +49,12 @@ type SynthesizeRequest struct {
 	// PrimaryContentKind orients the sample (spec.primaryContentKind).
 	// Optional; empty = medium-agnostic.
 	PrimaryContentKind string
+	// ContentKinds is the persona's full multi-select repertoire
+	// (spec.contentKinds, ISI-7424); PrimaryContentKind is its dominant. The D3
+	// synthesis composes across it so the named traits capture the author's
+	// cross-medium voice (ISI-7429). Optional; empty or single-valued → the
+	// synthesis behaves exactly as primary-only (graceful degradation).
+	ContentKinds []string
 }
 
 // NewSynthesizer builds the live synthesizer over an already-open review
@@ -121,6 +127,7 @@ func (s *Synthesizer) Synthesize(ctx context.Context, req SynthesizeRequest) (St
 		PersonaName:        req.PersonaName,
 		SelfDescription:    req.SelfDescription,
 		PrimaryContentKind: req.PrimaryContentKind,
+		ContentKinds:       req.ContentKinds,
 		Exemplars:          exemplars,
 	})
 	if err != nil {

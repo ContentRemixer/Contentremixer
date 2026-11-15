@@ -46,6 +46,12 @@ const (
 	JobSucceeded JobStatus = "succeeded"
 	// JobFailed — the scrape failed; Error carries the reason.
 	JobFailed JobStatus = "failed"
+	// JobSkipped — the reference was reachable but exposed no usable caption/
+	// transcript text (design §3.1: "caption-less videos are skipped"). The
+	// pod exits 0 — no sources are written and no retry is burned. Error
+	// carries the human-readable skip reason. Distinct from JobFailed so a
+	// DevRel sees a benign "captions unavailable" skip, not a red failure.
+	JobSkipped JobStatus = "skipped"
 )
 
 // SourceStatus is the review-queue state of one scraped source (plan §3.2).

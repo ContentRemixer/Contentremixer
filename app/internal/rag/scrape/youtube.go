@@ -49,9 +49,9 @@ func (y *youtubeScraper) scrape(ctx context.Context, ref v1alpha1.PersonaReferen
 
 	track, ok := pickCaptionTrack(pr.Captions.Renderer.CaptionTracks)
 	if !ok {
-		// Caption-less videos are skipped (design §3.1) — surface as an error
-		// the controller records per-reference without failing the persona.
-		return nil, fmt.Errorf("scrape: youtube %q: no caption track available (video %s)", ref.URL, videoID)
+		// Caption-less videos are skipped (design §3.1) — wrap the skip sentinel
+		// so the one-reference scrape-job exits 0 instead of hard-failing.
+		return nil, fmt.Errorf("scrape: youtube %q: no caption track available (video %s): %w", ref.URL, videoID, ErrCaptionsUnavailable)
 	}
 
 	// The caption-track baseUrl extracted from the player response no longer
@@ -68,7 +68,7 @@ func (y *youtubeScraper) scrape(ctx context.Context, ref v1alpha1.PersonaReferen
 		return nil, fmt.Errorf("scrape: youtube %q: %w", ref.URL, err)
 	}
 	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("scrape: youtube %q: caption track was empty (video %s)", ref.URL, videoID)
+		return nil, fmt.Errorf("scrape: youtube %q: caption track was empty (video %s): %w", ref.URL, videoID, ErrCaptionsUnavailable)
 	}
 
 	title := strings.TrimSpace(pr.VideoDetails.Title)
@@ -213,7 +213,10 @@ type timedtext struct {
 func transcriptText(capBody []byte) (string, error) {
 	trimmed := bytes.TrimSpace(capBody)
 	if len(trimmed) == 0 {
-		return "", fmt.Errorf("caption track returned an empty body (video unavailable or format unsupported)")
+		// The timedtext endpoint served a 200 with an empty body — the live
+		// YouTube anti-bot behavior (ISI-7462). Wrap the skip sentinel so the
+		// scrape-job treats it as a clean caption-less skip, not a hard failure.
+		return "", fmt.Errorf("caption track returned an empty body (video unavailable or format unsupported): %w", ErrCaptionsUnavailable)
 	}
 	if trimmed[0] == '{' {
 		return transcriptTextJSON3(trimmed)

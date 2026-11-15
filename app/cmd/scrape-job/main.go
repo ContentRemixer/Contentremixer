@@ -13,6 +13,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -108,6 +109,19 @@ func run(log *slog.Logger) error {
 	}
 
 	if err := doScrape(ctx, st, env, log); err != nil {
+		// A caption-less reference (design §3.1) is a clean skip, not a failure:
+		// no retry or code change recovers captions the source does not expose
+		// (ISI-7462). Record skipped and exit 0 so the Job does not burn retries
+		// or surface a red failure to the DevRel.
+		if errors.Is(err, scrape.ErrCaptionsUnavailable) {
+			log.Info("scrape-job skipped: captions unavailable",
+				slog.String("jobId", env.jobID), slog.String("url", env.sourceURL), slog.String("reason", err.Error()))
+			if serr := st.SetJobStatus(ctx, env.jobID, review.JobSkipped, err.Error()); serr != nil {
+				log.Error("scrape-job: could not record skip", slog.Any("err", serr))
+				return serr
+			}
+			return nil
+		}
 		// Record the failure on the job row, then surface it so the pod exits
 		// non-zero (Job backoff / visibility).
 		if serr := st.SetJobStatus(ctx, env.jobID, review.JobFailed, err.Error()); serr != nil {

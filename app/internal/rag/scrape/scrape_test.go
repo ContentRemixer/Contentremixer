@@ -3,6 +3,7 @@ package scrape
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -128,6 +129,38 @@ func TestScrapeYouTubeNoCaptions(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no caption track") {
 		t.Fatalf("want no-caption error, got %v", err)
+	}
+	// Caption-less must be a clean skip (scrape-job exits 0), not a hard failure.
+	if !errors.Is(err, ErrCaptionsUnavailable) {
+		t.Errorf("no-caption error must wrap ErrCaptionsUnavailable, got %v", err)
+	}
+}
+
+// TestScrapeYouTubeEmptyCaptionBodySkips reproduces the live ISI-7462 symptom:
+// the watch page declares a caption track, but the timedtext endpoint serves a
+// 200 with an EMPTY body (YouTube anti-bot). That must surface as a skip
+// sentinel so the one-reference scrape-job exits 0, not a hard Job failure.
+func TestScrapeYouTubeEmptyCaptionBodySkips(t *testing.T) {
+	watchURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&fmt=json3"
+	doer := &stubDoer{routes: map[string]stubResp{
+		watchURL: {body: fixture(t, "youtube_watch.html")},
+		capURL:   {body: []byte("")}, // 200, empty body — the live symptom
+	}}
+	s := New(&Options{HTTP: doer})
+
+	_, err := s.Scrape(context.Background(), v1alpha1.PersonaReference{
+		URL: "https://youtu.be/dQw4w9WgXcQ", Kind: "youtube",
+	})
+	if err == nil {
+		t.Fatal("want empty-body error, got nil")
+	}
+	if !errors.Is(err, ErrCaptionsUnavailable) {
+		t.Fatalf("empty caption body must wrap ErrCaptionsUnavailable (clean skip), got %v", err)
+	}
+	// The classifier buckets it as no-captions, not a network/parse failure.
+	if got := classifyScrapeErr(err); string(got) != "no_captions" {
+		t.Errorf("classifyScrapeErr = %q, want no_captions", got)
 	}
 }
 

@@ -1,0 +1,10 @@
+{
+  "wireMagic": "pb3",
+  "events": [
+    { "tStartMs": 0, "dDurationMs": 3500, "segs": [ { "utf8": "Welcome back to the channel." } ] },
+    { "tStartMs": 3500, "dDurationMs": 4000, "segs": [ { "utf8": "Today we're talking about observability in Go." } ] },
+    { "tStartMs": 7500, "dDurationMs": 3200, "segs": [ { "utf8": "Metrics, traces, and logs — the three pillars." } ] },
+    { "tStartMs": 10700, "aAppend": 1 },
+    { "tStartMs": 10700, "dDurationMs": 2100, "segs": [ { "utf8": "Let's" }, { "utf8": " dive in." } ] }
+  ]
+}

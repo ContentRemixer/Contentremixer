@@ -67,10 +67,12 @@ func fixedClock(t *testing.T) {
 func TestScrapeYouTube(t *testing.T) {
 	fixedClock(t)
 	watchURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en"
+	// The scraper appends &fmt=json3 to the bare track baseUrl (ISI-7460): a bare
+	// baseUrl now returns an empty body, so we request the stable json3 format.
+	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&fmt=json3"
 	doer := &stubDoer{routes: map[string]stubResp{
 		watchURL: {body: fixture(t, "youtube_watch.html")},
-		capURL:   {body: fixture(t, "youtube_captions.xml")},
+		capURL:   {body: fixture(t, "youtube_captions.json3")},
 	}}
 	s := New(&Options{HTTP: doer})
 
@@ -126,6 +128,54 @@ func TestScrapeYouTubeNoCaptions(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no caption track") {
 		t.Fatalf("want no-caption error, got %v", err)
+	}
+}
+
+func TestTranscriptText(t *testing.T) {
+	// Legacy XML tracks still decode via the fallback path (double-escaped
+	// entities resolve), so a track that happens to serve XML keeps working.
+	xmlText, err := transcriptText(fixture(t, "youtube_captions.xml"))
+	if err != nil {
+		t.Fatalf("xml: %v", err)
+	}
+	if !strings.Contains(xmlText, "we're talking about observability") {
+		t.Errorf("xml transcript not normalized: %q", xmlText)
+	}
+
+	// json3 (the format we request) decodes, skips seg-less events, and joins
+	// multi-seg cues without HTML-unescaping already-decoded text.
+	jsonText, err := transcriptText(fixture(t, "youtube_captions.json3"))
+	if err != nil {
+		t.Fatalf("json3: %v", err)
+	}
+	for _, want := range []string{"Welcome back to the channel.", "we're talking", "Let's dive in."} {
+		if !strings.Contains(jsonText, want) {
+			t.Errorf("json3 transcript missing %q: %q", want, jsonText)
+		}
+	}
+	if strings.Contains(jsonText, "\n") {
+		t.Errorf("json3 transcript should be single-line: %q", jsonText)
+	}
+
+	// An empty body (the ISI-7460 symptom) is an explicit error, not an opaque
+	// decode EOF.
+	if _, err := transcriptText([]byte("   \n  ")); err == nil ||
+		!strings.Contains(err.Error(), "empty body") {
+		t.Fatalf("want empty-body error, got %v", err)
+	}
+}
+
+func TestAppendCaptionFormat(t *testing.T) {
+	cases := map[string]string{
+		"https://www.youtube.com/api/timedtext?v=x&lang=en":          "https://www.youtube.com/api/timedtext?v=x&lang=en&fmt=json3",
+		"https://www.youtube.com/api/timedtext?v=x&lang=en&fmt=srv3": "https://www.youtube.com/api/timedtext?v=x&lang=en&fmt=srv3",
+		"https://example.com/timedtext":                              "https://example.com/timedtext?fmt=json3",
+		"":                                                           "",
+	}
+	for in, want := range cases {
+		if got := appendCaptionFormat(in); got != want {
+			t.Errorf("appendCaptionFormat(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" ?><timedtext format="3">
+<head>
+<ws id="0"/>
+<wp id="0"/>
+</head>
+<body>
+<w t="0" id="1" wp="1" ws="1"/>
+<p t="100" d="3500" w="1"><s>Welcome</s><s t="318"> back</s><s t="636"> to the channel.</s></p>
+<p t="3600" d="4000" w="1"><s>Today we&#39;re talking about observability in Go.</s></p>
+<p t="7600" d="2000" w="1">Let&#39;s dive in.</p>
+<p t="9600" d="500" w="1"></p>
+</body>
+</timedtext>

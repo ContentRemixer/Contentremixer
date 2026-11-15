@@ -253,6 +253,15 @@ patches:
       # fetcher-bearing tag AND redeploys the cluster (kubectl set env on
       # deploy/booth) so the live launcher hands new Jobs the correct image.
       #
+      # WHY BUMPED FROM 34c0583 -> 87233a1 (ISI-7461, final gap on ISI-7425):
+      # 34c0583 carried the fetchers (github-repo ingested cleanly) but PREDATED
+      # the YouTube caption fix (ISI-7460, merge 87233a1, PR #94). Live repro on
+      # 34c0583: `youtube` and `talk-recording` Jobs both Failed with
+      # `decode caption xml: EOF` (the bare timedtext baseUrl returned an empty
+      # 200). 87233a1 requests `&fmt=json3` + parses json3 (XML fallback), and is
+      # a descendant of 34c0583 so it keeps ALL post-ISI-7357 fetchers. Re-pin to
+      # it and redeploy so overlay + live stay converged.
+      #
       # PULL: ghcr.io/contentremixer/scrape-job is now PUBLIC (ISI-7344), so
       # every node pulls the sha-<12> tag anonymously — the earlier private-pkg
       # ImagePullBackOff gate is lifted (verified: the d48dba5 Job pods reached
@@ -262,7 +271,7 @@ patches:
         path: /spec/template/spec/containers/0/env/-
         value:
           name: BOOTH_SCRAPER_IMAGE
-          value: ghcr.io/contentremixer/scrape-job:sha-34c058323913
+          value: ghcr.io/contentremixer/scrape-job:sha-87233a1401e4
   # ISI-7392: the ISI-7340 TEMP node pin is LIFTED. The pin existed because the
   # booth image had to be injected into a single worker's containerd (private
   # package + no in-cluster pull creds). ISI-7392 verified nodes DO reach

@@ -3,7 +3,7 @@
 // shapes the Booth scrapejobs handlers emit. Field names match the Go `json`
 // tags exactly.
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "skipped";
 
 export type SourceStatus =
   | "pending"

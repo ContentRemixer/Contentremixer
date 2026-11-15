@@ -84,6 +84,31 @@ spec:
                 secretKeyRef:
                   name: booth-auth
                   key: BOOTH_ADMIN_BCRYPT_HASH
+            # Optional DevRel demo-user seed (ISI-7455). Booth's user store is
+            # in-memory, so every restart wipes manually-created accounts; seeding
+            # the demo user on boot keeps the board/DevRel login alive across a
+            # redeploy. All three keys are optional:true so Booth still boots when
+            # they are absent (behaviour unchanged). To activate, add the keys to
+            # the booth-auth Secret (shape in deploy/secrets/booth-auth.example.yaml):
+            # a username plus EXACTLY ONE credential (hash preferred).
+            - name: BOOTH_SEED_DEVREL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_SEED_DEVREL_USERNAME
+                  optional: true
+            - name: BOOTH_SEED_DEVREL_BCRYPT_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_SEED_DEVREL_BCRYPT_HASH
+                  optional: true
+            - name: BOOTH_SEED_DEVREL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: booth-auth
+                  key: BOOTH_SEED_DEVREL_PASSWORD
+                  optional: true
             # Scraper-review (ISI-7207) + content collaboration (ISI-7208):
             # same live pgvector DSN the operator uses (ISI-7148). When absent,
             # Booth boots as the CR-only API and the routes are not mounted.

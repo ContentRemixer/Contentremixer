@@ -97,3 +97,83 @@ func TestBootstrapFromEnvPropagatesConfigError(t *testing.T) {
 		t.Fatal("expected error for empty env")
 	}
 }
+
+// TestBootstrapSeedsDevRel proves the ISI-7455 acceptance: with the DevRel seed
+// env set, the demo user can log in after a (re)boot and lands in RoleDevRel,
+// while the Admin seed still works unchanged.
+func TestBootstrapSeedsDevRel(t *testing.T) {
+	p, err := BootstrapFromEnv(envMap(map[string]string{
+		EnvSessionKey:     testKey,
+		EnvAdminPassword:  "admin-pw",
+		EnvDevRelUsername: "henrik",
+		EnvDevRelPassword: "devrel-pw",
+	}))
+	if err != nil {
+		t.Fatalf("BootstrapFromEnv: %v", err)
+	}
+	sess, err := p.Auth.Authenticate("henrik", "devrel-pw")
+	if err != nil {
+		t.Fatalf("seeded DevRel cannot log in: %v", err)
+	}
+	if sess.Role != RoleDevRel {
+		t.Fatalf("DevRel seed role = %q, want DevRel", sess.Role)
+	}
+	// Admin seed unchanged.
+	if _, err := p.Auth.Authenticate(DefaultAdminUsername, "admin-pw"); err != nil {
+		t.Fatalf("admin seed broken by DevRel seed: %v", err)
+	}
+}
+
+// TestBootstrapNoDevRelSeedByDefault: no DevRel env => only the Admin exists.
+func TestBootstrapNoDevRelSeedByDefault(t *testing.T) {
+	p, err := BootstrapFromEnv(envMap(map[string]string{
+		EnvSessionKey:    testKey,
+		EnvAdminPassword: "admin-pw",
+	}))
+	if err != nil {
+		t.Fatalf("BootstrapFromEnv: %v", err)
+	}
+	users, err := p.Store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(users) != 1 || users[0].Role != RoleAdmin {
+		t.Fatalf("want exactly one Admin, got %+v", users)
+	}
+}
+
+func TestDevRelSeedConfigFailsClosed(t *testing.T) {
+	cases := map[string]map[string]string{
+		"username-without-credential": {EnvSessionKey: testKey, EnvAdminPassword: "pw", EnvDevRelUsername: "henrik"},
+		"credential-without-username": {EnvSessionKey: testKey, EnvAdminPassword: "pw", EnvDevRelPassword: "pw"},
+		"both-devrel-creds":           {EnvSessionKey: testKey, EnvAdminPassword: "pw", EnvDevRelUsername: "henrik", EnvDevRelPassword: "pw", EnvDevRelBcryptHash: string(mustHashForTest("x"))},
+	}
+	for name, env := range cases {
+		if _, err := LoadConfig(envMap(env)); err == nil {
+			t.Errorf("%s: expected error, got nil", name)
+		}
+	}
+}
+
+// TestBootstrapDevRelCollidesWithAdmin: a DevRel username equal to the Admin's
+// is skipped (the Admin seed wins) rather than erroring on ErrUserExists.
+func TestBootstrapDevRelCollidesWithAdmin(t *testing.T) {
+	p, err := BootstrapFromEnv(envMap(map[string]string{
+		EnvSessionKey:     testKey,
+		EnvAdminUsername:  "admin",
+		EnvAdminPassword:  "admin-pw",
+		EnvDevRelUsername: "admin",
+		EnvDevRelPassword: "devrel-pw",
+	}))
+	if err != nil {
+		t.Fatalf("BootstrapFromEnv: %v", err)
+	}
+	// The Admin credential wins; the DevRel password must not have overwritten it.
+	sess, err := p.Auth.Authenticate("admin", "admin-pw")
+	if err != nil {
+		t.Fatalf("admin login broken by colliding DevRel seed: %v", err)
+	}
+	if sess.Role != RoleAdmin {
+		t.Fatalf("role = %q, want Admin", sess.Role)
+	}
+}

@@ -37,13 +37,16 @@ interface Row {
   kind: ReferenceKind;
 }
 
-const TERMINAL: JobStatus[] = ["succeeded", "failed"];
+// "skipped" is terminal (caption-less ref, ISI-7462): the job exited 0 with no
+// sources, so polling must stop and the row shows a benign neutral badge.
+const TERMINAL: JobStatus[] = ["succeeded", "failed", "skipped"];
 
 const JOB_TONES: Record<JobStatus, "info" | "success" | "warning" | "neutral"> = {
   queued: "info",
   running: "info",
   succeeded: "success",
   failed: "warning",
+  skipped: "neutral",
 };
 
 export function PersonaSourcesPanel() {

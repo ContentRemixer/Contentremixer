@@ -24,6 +24,7 @@ package scrape
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,23 @@ import (
 	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry"
 	"github.com/ContentRemixer/Contentremixer/app/internal/telemetry/metricconv"
 )
+
+// ErrCaptionsUnavailable marks a reference that was reachable but exposed no
+// usable caption/transcript text — design §3.1: "captions only; no ASR;
+// caption-less videos are skipped". A caller orchestrating one reference per
+// process (the scrape-job pod) treats an error wrapping this as a CLEAN SKIP
+// (exit 0) rather than a hard failure: no retry or code change recovers
+// captions a video simply does not serve to an anonymous fetch. The live
+// symptom (ISI-7462) is YouTube's timedtext endpoint returning a 200 with an
+// empty body for anonymous/server-side fetches that lack a consent cookie /
+// PO token. Transport, HTTP-status, and parse failures do NOT wrap this and
+// stay hard failures.
+//
+// ponytail: recovering those captions would require an innertube/youtubei
+// caption fetch with a PO token (fragile, YouTube actively rotates it) or an
+// audio-download + local ASR path (explicitly out of design scope). Both are
+// deferred; skipping caption-less videos is the stable, design-aligned behavior.
+var ErrCaptionsUnavailable = errors.New("captions unavailable")
 
 // Doer is the minimal HTTP seam the scrapers depend on. *http.Client satisfies
 // it; tests inject a fixture-backed stub so no test touches the network.
@@ -256,6 +274,9 @@ func (s *Scraper) Scrape(ctx context.Context, ref v1alpha1.PersonaReference) (ou
 func classifyScrapeErr(err error) metricconv.ReferenceFailReason {
 	if err == nil {
 		return metricconv.ReferenceFailReasonNetwork
+	}
+	if errors.Is(err, ErrCaptionsUnavailable) {
+		return metricconv.ReferenceFailReasonNoCaptions
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

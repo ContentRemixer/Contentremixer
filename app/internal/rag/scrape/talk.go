@@ -51,7 +51,9 @@ func (t *talkRecordingScraper) scrape(ctx context.Context, ref v1alpha1.PersonaR
 		return nil, fmt.Errorf("scrape: talk-recording %q: %w", ref.URL, err)
 	}
 	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("scrape: talk-recording %q: transcript was empty (no captions in document)", ref.URL)
+		// No captions in the supplied document — a caption-less skip, not a
+		// failure (design §3.1), so the one-reference scrape-job exits 0.
+		return nil, fmt.Errorf("scrape: talk-recording %q: transcript was empty (no captions in document): %w", ref.URL, ErrCaptionsUnavailable)
 	}
 	return []rag.RawDoc{{
 		SourceURL: ref.URL,

@@ -20,6 +20,7 @@ export const JOB_STATUS_META: Record<JobStatus, { label: string; tone: BadgeTone
   running: { label: "Running", tone: "info" },
   succeeded: { label: "Succeeded", tone: "success" },
   failed: { label: "Failed", tone: "warning" },
+  skipped: { label: "Skipped — no captions", tone: "neutral" },
 };
 
 // Filter order shown in the status tabs. "all" is a client-only pseudo-filter

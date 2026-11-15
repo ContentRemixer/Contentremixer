@@ -233,28 +233,36 @@ patches:
         value:
           name: BOOTH_INSECURE_COOKIE
           value: "true"
-      # ISI-7433 (fixes ISI-7425): wire the scrape-job image so the launcher
+      # ISI-7459 (fixes ISI-7425): wire the scrape-job image so the launcher
       # stops refusing with the untyped error that collapsed to a bare HTTP 500
       # ("internal error") on onboarding Step 5 "Start ingestion". The base
       # (deploy/base/booth/deployment.yaml) intentionally left BOOTH_SCRAPER_IMAGE
       # unset until app/cmd/scrape-job shipped a ghcr.io tag; it has
       # (scrape-job-image-publish.yml, ISI-7343). Pinned to the sha-<12> tag of
-      # origin/main HEAD (3dde2a4, built 2026-11-14) — includes the ISI-7357
-      # github-repo / teleprompter-script / talk-recording fetchers the wizard
-      # emits. The `booth` SA already holds batch/jobs:create (rbac.yaml, verified
-      # live), and the `booth-scraper` SA (serviceaccount.yaml) runs the Job pods.
+      # origin/main (34c0583, PR #89, built 2026-11-15) — the newest main app
+      # build, which (like every post-ISI-7357 tag) includes the github-repo /
+      # teleprompter-script / talk-recording fetchers the wizard emits. The
+      # `booth` SA already holds batch/jobs:create (rbac.yaml, verified live),
+      # and the `booth-scraper` SA (serviceaccount.yaml) runs the Job pods.
       #
-      # PULL GATE: ghcr.io/contentremixer/scrape-job is PRIVATE and nodes pull
-      # anonymously (the in-cluster ghcr-pull secret has no read on this package),
-      # so the Job pods ImagePullBackOff until the package is made PUBLIC — the
-      # same durable fix applied to the booth package (see the node-pin note
-      # below). Tracked as an owner-gated unblock on ISI-7433; once public, a
-      # `kubectl apply -k` + `rollout restart deploy/booth` activates ingestion.
+      # WHY BUMPED FROM 3dde2a4 -> 34c0583: the overlay was already fetcher-ready
+      # (ISI-7433 pinned 3dde2a4), but the LIVE cluster had drifted — booth ran
+      # the pre-ISI-7357 sha-d48dba5a6eb9, so scrape Job pods failed with
+      # `scrape-job: unsupported source kind "github-repo"` and ingestion
+      # (ISI-7425) stayed broken. ISI-7459 both freshens the pin to the newest
+      # fetcher-bearing tag AND redeploys the cluster (kubectl set env on
+      # deploy/booth) so the live launcher hands new Jobs the correct image.
+      #
+      # PULL: ghcr.io/contentremixer/scrape-job is now PUBLIC (ISI-7344), so
+      # every node pulls the sha-<12> tag anonymously — the earlier private-pkg
+      # ImagePullBackOff gate is lifted (verified: the d48dba5 Job pods reached
+      # Error, i.e. they pulled and ran). A `kubectl apply -k` +
+      # `rollout restart deploy/booth` re-converges GitOps with this pin.
       - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
           name: BOOTH_SCRAPER_IMAGE
-          value: ghcr.io/contentremixer/scrape-job:sha-3dde2a4dae19
+          value: ghcr.io/contentremixer/scrape-job:sha-34c058323913
   # ISI-7392: the ISI-7340 TEMP node pin is LIFTED. The pin existed because the
   # booth image had to be injected into a single worker's containerd (private
   # package + no in-cluster pull creds). ISI-7392 verified nodes DO reach

@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -53,11 +54,16 @@ func (y *youtubeScraper) scrape(ctx context.Context, ref v1alpha1.PersonaReferen
 		return nil, fmt.Errorf("scrape: youtube %q: no caption track available (video %s)", ref.URL, videoID)
 	}
 
-	capXML, _, err := y.fetch.get(ctx, track.BaseURL)
+	// The caption-track baseUrl extracted from the player response no longer
+	// serves a body when fetched bare — YouTube now returns an empty 200 unless
+	// the request names an explicit caption format, which surfaced downstream as
+	// `decode caption xml: EOF` (ISI-7460). Request the stable json3 format; it
+	// reliably returns a non-empty body and is less brittle than the legacy XML.
+	capBody, _, err := y.fetch.get(ctx, appendCaptionFormat(track.BaseURL))
 	if err != nil {
 		return nil, err
 	}
-	text, err := transcriptText(capXML)
+	text, err := transcriptText(capBody)
 	if err != nil {
 		return nil, fmt.Errorf("scrape: youtube %q: %w", ref.URL, err)
 	}
@@ -159,17 +165,80 @@ func pickCaptionTrack(tracks []captionTrack) (captionTrack, bool) {
 	return captionTrack{}, false
 }
 
-// timedtext is the YouTube caption XML shape: <transcript><text ...>cue</text>…
+// appendCaptionFormat forces an explicit caption format on the track baseUrl.
+// A bare baseUrl (no fmt) now yields an empty body (ISI-7460); json3 is the
+// format yt-dlp and the ecosystem settled on as the stable, non-empty one. If
+// the URL already carries a fmt (some tracks do), we leave it untouched. We
+// append the raw param rather than re-encoding via url.Values so signed query
+// params (signature/expire/sparams) keep their original order.
+func appendCaptionFormat(baseURL string) string {
+	if baseURL == "" {
+		return baseURL
+	}
+	if u, err := url.Parse(baseURL); err == nil && u.Query().Get("fmt") != "" {
+		return baseURL
+	}
+	sep := "&"
+	if !strings.Contains(baseURL, "?") {
+		sep = "?"
+	}
+	return baseURL + sep + "fmt=json3"
+}
+
+// json3Transcript is the YouTube json3 caption shape: a list of timed events,
+// each with text segments. Window/append events carry no segs and are skipped.
+// Segment text is already Unicode-decoded (unlike the legacy XML), so it is NOT
+// HTML-unescaped — only intra-cue newlines are flattened.
+type json3Transcript struct {
+	Events []struct {
+		Segs []struct {
+			Utf8 string `json:"utf8"`
+		} `json:"segs"`
+	} `json:"events"`
+}
+
+// timedtext is the legacy YouTube caption XML shape:
+// <transcript><text ...>cue</text>…. Retained as a fallback for any track that
+// still serves XML.
 type timedtext struct {
 	Texts []struct {
 		Body string `xml:",chardata"`
 	} `xml:"text"`
 }
 
-// transcriptText decodes the timedtext XML into a single normalized paragraph
-// per cue, joined by spaces. Caption cues arrive HTML-escaped (and may contain
-// &amp;#39; style double-escaping); we unescape once, then collapse whitespace.
-func transcriptText(capXML []byte) (string, error) {
+// transcriptText decodes a caption body (json3 or legacy XML) into a single
+// normalized line, cues joined by spaces. The format is detected by the first
+// non-space byte: '{' → json3, else XML. An empty body is reported explicitly
+// rather than as an opaque decode EOF (ISI-7460).
+func transcriptText(capBody []byte) (string, error) {
+	trimmed := bytes.TrimSpace(capBody)
+	if len(trimmed) == 0 {
+		return "", fmt.Errorf("caption track returned an empty body (video unavailable or format unsupported)")
+	}
+	if trimmed[0] == '{' {
+		return transcriptTextJSON3(trimmed)
+	}
+	return transcriptTextXML(capBody)
+}
+
+func transcriptTextJSON3(capJSON []byte) (string, error) {
+	var tt json3Transcript
+	if err := json.Unmarshal(capJSON, &tt); err != nil {
+		return "", fmt.Errorf("decode caption json: %w", err)
+	}
+	parts := make([]string, 0, len(tt.Events))
+	for _, e := range tt.Events {
+		for _, seg := range e.Segs {
+			s := strings.TrimSpace(strings.ReplaceAll(seg.Utf8, "\n", " "))
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+	}
+	return collapseSpaces(strings.Join(parts, " ")), nil
+}
+
+func transcriptTextXML(capXML []byte) (string, error) {
 	var tt timedtext
 	if err := xml.Unmarshal(capXML, &tt); err != nil {
 		return "", fmt.Errorf("decode caption xml: %w", err)

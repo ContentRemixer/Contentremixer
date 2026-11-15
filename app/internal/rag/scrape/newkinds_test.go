@@ -62,10 +62,10 @@ func TestScrapeTeleprompterNoText(t *testing.T) {
 func TestScrapeTalkRecordingYouTubeReuse(t *testing.T) {
 	fixedClock(t)
 	watchURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en"
+	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&fmt=json3"
 	doer := &stubDoer{routes: map[string]stubResp{
 		watchURL: {body: fixture(t, "youtube_watch.html")},
-		capURL:   {body: fixture(t, "youtube_captions.xml")},
+		capURL:   {body: fixture(t, "youtube_captions.json3")},
 	}}
 	s := New(&Options{HTTP: doer})
 

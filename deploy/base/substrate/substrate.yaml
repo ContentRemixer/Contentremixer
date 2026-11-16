@@ -1,0 +1,94 @@
+# Substrate control plane (ISI-7507 §5). Spawns / suspends / resumes media
+# actors for the ISI-7397 substrate-actor Dispatcher strategy. Exposes the
+# HTTP contract in docs/substrate/control-plane-contract.md §3 on :8080.
+#
+# IMAGE: placeholder — the real image is OWNER-GATED (contract §4). The
+# k8squad-test overlay pins the published digest once it exists; do not treat
+# this tag as pullable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: substrate-control-plane
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: substrate-control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: substrate-control-plane
+        app.kubernetes.io/part-of: contentremixer
+    spec:
+      serviceAccountName: substrate-control-plane
+      containers:
+        - name: substrate
+          # OWNER-GATED placeholder (contract §4). Overlay pins the real digest.
+          image: ghcr.io/contentremixer/substrate-control-plane:PLACEHOLDER
+          args: ["--addr", ":8080"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Durable store (contract §4.2): reuse the live Postgres. DSN comes
+            # from the same Secret the operator/store use — wired out of band
+            # (deploy/README §secrets), never committed.
+            - name: SUBSTRATE_STORE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: substrate-store
+                  key: dsn
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "500m"
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: substrate-control-plane
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  selector:
+    app.kubernetes.io/name: substrate-control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+---
+# The control plane spawns/suspends/resumes actor Pods (and reads their
+# status). RBAC for that lives with the actor-workload wiring on ISI-7397;
+# this SA is the identity the Deployment runs as and the agentgateway routes
+# to. Narrow RBAC (pods + the actor CRD/Job it manages) is added when the
+# SubstrateStrategy + actor template land.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: substrate-control-plane
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer

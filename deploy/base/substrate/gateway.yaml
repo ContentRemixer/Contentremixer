@@ -1,0 +1,75 @@
+# agentgateway front door for the substrate control plane (ISI-7507 §5, §2
+# "reachability" layer). kgateway v2.1.3 on k8squad-test ships native
+# agentgateway support; a GatewayParameters with agentgateway enabled turns
+# this Gateway's data plane into an agentgateway proxy, and the HTTPRoute
+# below points it at the substrate-control-plane Service.
+#
+# VERIFY-BEFORE-APPLY (contract §5): confirm these two against the live
+# kgateway v2.1.3 CRDs on k8squad-test, they vary across kgateway minors —
+#   1. GatewayParameters apiVersion/group below (gateway.kgateway.dev/v1alpha1).
+#   2. the spec.kube.agentgateway shape/casing below.
+# `kubectl explain gatewayparameters.spec.kube.agentgateway` on the cluster is
+# the authority. Adjust here, do not guess on apply.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: substrate-agentgateway
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  kube:
+    # Flip the kgateway data plane to agentgateway mode (issue ISI-7431 recon:
+    # "GatewayParameters.spec.kube.agentgateway.enabled").
+    agentgateway:
+      enabled: true
+---
+# LB IP POLICY (same as deploy/overlays/k8squad-test/exposure.yaml): this repo
+# is public, so NO LAN IP is committed. ProxOps pins the MetalLB address out of
+# band via the generated Service annotation
+# `metallb.universe.tf/loadBalancerIPs`. Do NOT add spec.addresses here.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: substrate
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  gatewayClassName: kgateway
+  infrastructure:
+    # Bind this Gateway's data plane to the agentgateway-enabled parameters.
+    parametersRef:
+      group: gateway.kgateway.dev
+      kind: GatewayParameters
+      name: substrate-agentgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: substrate
+  namespace: contentremixer
+  labels:
+    app.kubernetes.io/name: substrate-control-plane
+    app.kubernetes.io/part-of: contentremixer
+spec:
+  parentRefs:
+    - name: substrate
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/actors
+      backendRefs:
+        - name: substrate-control-plane
+          port: 8080

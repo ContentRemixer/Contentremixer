@@ -1,0 +1,10 @@
+# Substrate control-plane base (ISI-7507). NOT wired into deploy/base top-level
+# kustomization yet — it ships as an opt-in base the k8squad-test overlay (or a
+# dedicated substrate overlay) includes under ISI-7431, once the owner-gated
+# image (contract §4) exists. Keeping it out of the default apply prevents a
+# CrashLoop from the placeholder image on every control-plane apply.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - substrate.yaml
+  - gateway.yaml

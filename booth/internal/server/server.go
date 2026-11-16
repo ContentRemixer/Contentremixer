@@ -19,6 +19,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
 )
 
@@ -30,7 +31,18 @@ type Server struct {
 	content     *content.Store
 	contentTest *contenttest.Store
 	promote     *promote.Store
+	tutorial    *tutorialrun.Store
 	log         *slog.Logger
+}
+
+// WithTutorialRuns attaches the P3-4 multi-skill orchestration store (ISI-7152)
+// and returns the Server for chaining. It is a setter rather than a New
+// parameter so the orchestration surface — which needs no external
+// dependencies — can be wired without changing New's signature. A nil store (or
+// never calling this) simply leaves the tutorial-run routes unmounted.
+func (s *Server) WithTutorialRuns(t *tutorialrun.Store) *Server {
+	s.tutorial = t
+	return s
 }
 
 // New builds a Server. If log is nil, slog.Default() is used. scrape, content,
@@ -96,6 +108,9 @@ func (s *Server) Handler() http.Handler {
 	// Promotion-suggestion surface (ISI-7369, plan §5 O8b/P4): validated content
 	// → suggested LinkedIn post, gated by promote.Store.
 	s.mountPromote(mux)
+	// Multi-skill tutorial orchestration surface (ISI-7152, P3-4), gated by
+	// tutorialrun.Store. Reuses the P3-1 §6.3 predicate — no new authz path.
+	s.mountTutorials(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

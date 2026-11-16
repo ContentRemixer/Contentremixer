@@ -164,6 +164,96 @@ func TestScrapeYouTubeEmptyCaptionBodySkips(t *testing.T) {
 	}
 }
 
+// innertubePlayerJSON builds a minimal InnerTube/watch player-response body with
+// a single English caption track at trackBaseURL.
+func innertubePlayerJSON(title, trackBaseURL string) []byte {
+	return []byte(`{"videoDetails":{"videoId":"dQw4w9WgXcQ","title":"` + title +
+		`","author":"DevRel Channel","lengthSeconds":"742"},` +
+		`"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[` +
+		`{"baseUrl":"` + trackBaseURL + `","languageCode":"en","name":{"simpleText":"English"}}]}}}`)
+}
+
+// TestScrapeYouTubeInnerTube proves the primary ISI-7467 fix: when the InnerTube
+// ANDROID client returns a player response whose caption baseUrl serves a body,
+// the transcript comes through WITHOUT ever touching the PoToken-gated watch
+// page (the watch URL is intentionally left unrouted → would 404 if reached).
+func TestScrapeYouTubeInnerTube(t *testing.T) {
+	fixedClock(t)
+	innertubeURL := "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+	capURL := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&client=android&fmt=json3"
+	doer := &stubDoer{routes: map[string]stubResp{
+		innertubeURL: {body: innertubePlayerJSON("Observability in Go — DevRel Talk",
+			"https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&client=android")},
+		// The ANDROID endpoint ignores fmt and returns srv3 XML (ISI-7467), even
+		// though the URL requests json3 — serve exactly that so the test mirrors
+		// the live path end to end.
+		capURL: {body: fixture(t, "youtube_captions.srv3.xml")},
+	}}
+	s := New(&Options{HTTP: doer})
+
+	docs, err := s.Scrape(context.Background(), v1alpha1.PersonaReference{
+		URL: "https://youtu.be/dQw4w9WgXcQ", Kind: "youtube",
+	})
+	if err != nil {
+		t.Fatalf("Scrape: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("want 1 doc, got %d", len(docs))
+	}
+	if !strings.Contains(docs[0].Text, "we're talking about observability") {
+		t.Errorf("transcript not extracted via InnerTube: %q", docs[0].Text)
+	}
+	// It must have resolved via InnerTube; the watch page must never be fetched.
+	for _, c := range doer.calls {
+		if strings.Contains(c, "/watch?v=") {
+			t.Errorf("fetched watch page when InnerTube served captions: %s", c)
+		}
+	}
+}
+
+// TestScrapeYouTubeInnerTubeEmptyFallsThrough proves the cascade: when the
+// InnerTube sources' caption baseUrl returns an empty body (the PoToken
+// symptom), the scrape falls through to the watch-page source and still
+// succeeds.
+func TestScrapeYouTubeInnerTubeEmptyFallsThrough(t *testing.T) {
+	fixedClock(t)
+	innertubeURL := "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+	gatedCap := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&gated=1&fmt=json3"
+	watchURL := "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+	watchCap := "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&fmt=json3"
+	doer := &stubDoer{routes: map[string]stubResp{
+		innertubeURL: {body: innertubePlayerJSON("Observability in Go — DevRel Talk",
+			"https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en&gated=1")},
+		gatedCap: {body: []byte("")}, // PoToken-gated: HTTP 200, empty body
+		watchURL: {body: fixture(t, "youtube_watch.html")},
+		watchCap: {body: fixture(t, "youtube_captions.json3")},
+	}}
+	s := New(&Options{HTTP: doer})
+
+	docs, err := s.Scrape(context.Background(), v1alpha1.PersonaReference{
+		URL: "https://youtu.be/dQw4w9WgXcQ", Kind: "youtube",
+	})
+	if err != nil {
+		t.Fatalf("Scrape: %v", err)
+	}
+	if len(docs) != 1 || !strings.Contains(docs[0].Text, "we're talking about observability") {
+		t.Fatalf("watch-page fallback did not recover transcript: %+v (err %v)", docs, err)
+	}
+	// The gated InnerTube caption must have been attempted before the fallback.
+	var sawGated, sawWatch bool
+	for _, c := range doer.calls {
+		if c == gatedCap {
+			sawGated = true
+		}
+		if c == watchURL {
+			sawWatch = true
+		}
+	}
+	if !sawGated || !sawWatch {
+		t.Errorf("expected InnerTube attempt then watch-page fallback; calls=%v", doer.calls)
+	}
+}
+
 func TestTranscriptText(t *testing.T) {
 	// Legacy XML tracks still decode via the fallback path (double-escaped
 	// entities resolve), so a track that happens to serve XML keeps working.
@@ -188,6 +278,23 @@ func TestTranscriptText(t *testing.T) {
 	}
 	if strings.Contains(jsonText, "\n") {
 		t.Errorf("json3 transcript should be single-line: %q", jsonText)
+	}
+
+	// srv3 (<timedtext format="3"><body><p><s>) is what the InnerTube ANDROID/IOS
+	// clients actually return (ISI-7467); it must decode via the XML path, joining
+	// <s> segments and reading <p> chardata cues, with entities (&amp;#39;)
+	// resolved to an apostrophe.
+	srv3Text, err := transcriptText(fixture(t, "youtube_captions.srv3.xml"))
+	if err != nil {
+		t.Fatalf("srv3: %v", err)
+	}
+	for _, want := range []string{"Welcome back to the channel.", "we're talking about observability", "Let's dive in."} {
+		if !strings.Contains(srv3Text, want) {
+			t.Errorf("srv3 transcript missing %q: %q", want, srv3Text)
+		}
+	}
+	if strings.Contains(srv3Text, "\n") {
+		t.Errorf("srv3 transcript should be single-line: %q", srv3Text)
 	}
 
 	// An empty body (the ISI-7460 symptom) is an explicit error, not an opaque

@@ -22,6 +22,7 @@
 package scrape
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -311,6 +312,30 @@ func (f *fetcher) get(ctx context.Context, url string) ([]byte, *http.Response, 
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 	req.Header.Set("Accept-Language", "en")
+	return f.send(req, url)
+}
+
+// postJSON issues a JSON POST with the given body and an optional User-Agent
+// override (empty falls back to the scraper default). Used for the InnerTube
+// player endpoint (ISI-7467), which must present a mobile-app User-Agent.
+func (f *fetcher) postJSON(ctx context.Context, url string, body []byte, userAgent string) ([]byte, *http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, nil, fmt.Errorf("scrape: build request for %q: %w", url, err)
+	}
+	if userAgent == "" {
+		userAgent = f.userAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept-Language", "en")
+	req.Header.Set("Content-Type", "application/json")
+	return f.send(req, url)
+}
+
+// send performs req through the Doer seam and returns the body (capped at
+// maxBodyBytes) on a 2xx. Non-2xx and transport errors are returned as errors.
+// url is passed separately only for error messages.
+func (f *fetcher) send(req *http.Request, url string) ([]byte, *http.Response, error) {
 	resp, err := f.do.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("scrape: fetch %q: %w", url, err)

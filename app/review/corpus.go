@@ -23,15 +23,18 @@ type pgvectorCorpus struct {
 // because it must import the app/internal embed + pgvector stages, which the
 // Booth module cannot name directly; Booth calls this public factory and holds
 // the result behind the Corpus interface. dsn is the pgvector DSN (the same live
-// Postgres, ISI-7148); litellmBaseURL is the gateway origin. The caller owns
-// Close via the returned io.Closer-style Close method.
-func NewCorpus(ctx context.Context, dsn, litellmBaseURL, apiKey string) (*CorpusHandle, error) {
-	vs, err := store.Open(ctx, dsn, store.DefaultDim)
+// Postgres, ISI-7148); litellmBaseURL is the gateway origin. dim is the
+// embedding/column dimension (ISI-7504, threaded from EMBED_DIM); dim <= 0
+// defaults to store.DefaultDim (1536) in both the store and embed stages, so
+// callers that pass 0 keep the pre-ISI-7504 behaviour. The caller owns Close
+// via the returned io.Closer-style Close method.
+func NewCorpus(ctx context.Context, dsn, litellmBaseURL, apiKey string, dim int) (*CorpusHandle, error) {
+	vs, err := store.Open(ctx, dsn, dim)
 	if err != nil {
 		return nil, fmt.Errorf("review: open corpus vector store: %w", err)
 	}
 	client := &litellm.Client{BaseURL: litellmBaseURL, APIKey: apiKey}
-	stage := embed.New(embed.NewLiteLLM(client, embed.Alias), store.DefaultDim)
+	stage := embed.New(embed.NewLiteLLM(client, embed.Alias), dim)
 	return &CorpusHandle{c: &pgvectorCorpus{stage: stage, vs: vs}, vs: vs}, nil
 }
 

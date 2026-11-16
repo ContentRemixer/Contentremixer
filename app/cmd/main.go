@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"strconv"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -292,7 +293,14 @@ func main() {
 			if nsForPersona == "" {
 				nsForPersona = os.Getenv("POD_NAMESPACE")
 			}
-			vstore, err := store.Open(runCtx, pgvectorDSN, store.DefaultDim)
+			// EMBED_DIM (ISI-7504) must match the live embedder's native output
+			// (bge-m3 = 1024) so the query vector dimension equals the store's
+			// column dimension (store.go Query asserts len(vec) == s.dim); 0/unset
+			// → store.DefaultDim (1536). The query vector is produced by
+			// embed.NewLiteLLM below at the model's native dim, so there is no
+			// separate embed-stage dim to thread on this query-only path.
+			embedDim, _ := strconv.Atoi(os.Getenv("EMBED_DIM"))
+			vstore, err := store.Open(runCtx, pgvectorDSN, embedDim)
 			if err != nil {
 				setupLog.Error(err, "persona conditioning disabled: cannot open pgvector store (runs stay style-only)")
 			} else if nsForPersona == "" {

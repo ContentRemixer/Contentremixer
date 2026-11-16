@@ -127,6 +127,12 @@ patches:
                 name: pgvector-credentials
                 key: DSN
                 optional: true
+          # EMBED_DIM (ISI-7503): the operator's persona retrieval must query at
+          # the SAME dimension the corpus was embedded/stored at (bge-m3 = 1024),
+          # or store.Query rejects the mismatch. Booth carries the matching
+          # EMBED_DIM in its base manifest; the operator gets it here.
+          - name: EMBED_DIM
+            value: "1024"
       # ISI-7239 (ISI-7185 follow-up): POPULATE the checkout the env above only
       # NAMED. An init container shallow-clones the reference repo into a shared
       # emptyDir the manager mounts read-only at RECYCLE_CHECKOUT_PATH, so
@@ -345,7 +351,7 @@ images:
     # youtube/InnerTube ingestion fixes. REQUIRES the DevRel seed keys in the
     # booth-auth Secret (see deploy/secrets/booth-auth.example.yaml) for the
     # seed to actually fire — without them it is a silent no-op.
-    newTag: sha-02ee166c16ff
+    newTag: sha-a9659dc8b01c
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin
@@ -364,4 +370,4 @@ images:
     # stage. The init-container checkout works on any image; only Commit()
     # needed the rebuild. The later a6063bda merge (ISI-7210) is web-only and
     # did not rebuild content-operator, so d61d7a97901c remains authoritative.
-    newTag: sha-d61d7a97901c
+    newTag: sha-a9659dc8b01c

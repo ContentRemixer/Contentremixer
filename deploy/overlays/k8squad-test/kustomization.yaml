@@ -148,14 +148,47 @@ patches:
             # pin-by-digest convention for third-party images). Bump the tag AND
             # digest together.
             image: alpine/git:v2.47.2@sha256:062a01ad7a0eb17cff382bc5e26086b4d710e56dfdfdf001109a49b6d9bd378c
+            # ISI-7497: clone-or-refresh, NOT a bare `git clone`. The checkout
+            # lives in an emptyDir that PERSISTS across in-pod container
+            # restarts (restartPolicy: Always never clears it), so after the
+            # first clone a plain re-run dies with "destination path already
+            # exists and is not an empty directory" — the init container then
+            # CrashLoopBackOffs forever, which keeps the pod stuck in Init and
+            # takes the admission webhook down with it (zero endpoints ->
+            # DevRelPersona creates get connection-refused). This script is
+            # idempotent: refresh an existing checkout in place, otherwise clean
+            # any partial contents and clone fresh.
             command:
               - /bin/sh
               - -ec
               - |
-                git clone --depth 1 --branch "${RECYCLE_REF:-main}" \
-                  "https://x-access-token:${GITHUB_TOKEN}@github.com/${RECYCLE_REPO}.git" \
-                  /workspace/checkout
-                echo "recycle-checkout-sync: cloned ${RECYCLE_REPO}@$(git -C /workspace/checkout rev-parse HEAD)"
+                CHECKOUT=/workspace/checkout
+                REF="${RECYCLE_REF:-main}"
+                REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${RECYCLE_REPO}.git"
+                # The emptyDir mount root is root-owned but git runs as uid
+                # 65532, so git refuses repo ops with "detected dubious
+                # ownership". Harmless on the clone path (clone creates the
+                # repo), but the refresh path's fetch/reset would then fail
+                # under `set -e` and re-wedge the init container — the very
+                # CrashLoop this fixes. Mark the checkout safe (writes to the
+                # writable HOME=/tmp/.gitconfig) so every git op below works.
+                git config --global --add safe.directory "${CHECKOUT}"
+                if [ -d "${CHECKOUT}/.git" ]; then
+                  # Restart path: freshen the existing checkout. Re-point the
+                  # remote so a rotated token takes effect, then hard-reset to
+                  # the branch tip.
+                  echo "recycle-checkout-sync: refreshing existing ${RECYCLE_REPO}@${REF}"
+                  git -C "${CHECKOUT}" remote set-url origin "${REMOTE}"
+                  git -C "${CHECKOUT}" fetch --depth 1 origin "${REF}"
+                  git -C "${CHECKOUT}" reset --hard FETCH_HEAD
+                else
+                  # First run, or a prior clone left partial non-.git contents:
+                  # clear whatever is there so clone can't wedge on a non-empty dir.
+                  rm -rf "${CHECKOUT}"/* "${CHECKOUT}"/.[!.]* 2>/dev/null || true
+                  echo "recycle-checkout-sync: cloning ${RECYCLE_REPO}@${REF}"
+                  git clone --depth 1 --branch "${REF}" "${REMOTE}" "${CHECKOUT}"
+                fi
+                echo "recycle-checkout-sync: ready ${RECYCLE_REPO}@$(git -C "${CHECKOUT}" rev-parse HEAD)"
             env:
               - name: RECYCLE_REPO
                 value: "ContentRemixer/Contentremixer"

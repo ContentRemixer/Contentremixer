@@ -300,15 +300,19 @@ images:
     # self-service onboarding feature (ISI-7350: D0–D9 + D1b). eae1427 (PR #56)
     # predates the onboarding wizard (D6/PR #69) so it does NOT serve it.
     #
-    # NOTE on the tag choice: origin/main HEAD is 851d8520899b, but
-    # booth-image-publish.yml only triggers on booth/**, app/**, or its own
-    # workflow file. The two commits on top of main (PR #72 brand foundation,
-    # PR #71 docs) touched ONLY branding/ and docs/, so NO booth image was built
-    # for sha-851d852089 (it does not exist in GHCR). The newest published booth
-    # image is sha-b17e54e65ca0 (PR #70, ISI-7363 D8 E2E), whose booth/ + web/dist
-    # content is byte-identical to current main — so this IS "latest main" for
-    # Booth. Bump again only when a future merge rebuilds booth/ or web/dist.
-    newTag: sha-b17e54e65ca0
+    # ISI-7496: bumped b17e54e65ca0 -> 02ee166c16ff. b17e54 (PR #70, ISI-7363)
+    # was ~28 PRs / 17+ booth/ commits stale — notably MISSING the ISI-7455
+    # DevRel seed-on-boot (PR #93), which is why `henrik` was wiped on every
+    # rollout and re-seeded by hand. sha-02ee166c16ff is the newest published
+    # booth image on main: it is the PR #98 merge (02ee166, ISI-7467) and the
+    # two later main commits (PR #99 #4ccced8 scrape-job overlay, its #6599c50
+    # merge) touch neither booth/** nor app/**, so no newer booth image exists.
+    # This pin carries ISI-7455 (seed), ISI-7434 (launcher->503), ISI-7435
+    # (teleprompter hidden), ISI-7426/7428 (multi-select contentKinds), and the
+    # youtube/InnerTube ingestion fixes. REQUIRES the DevRel seed keys in the
+    # booth-auth Secret (see deploy/secrets/booth-auth.example.yaml) for the
+    # seed to actually fire — without them it is a silent no-op.
+    newTag: sha-02ee166c16ff
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin

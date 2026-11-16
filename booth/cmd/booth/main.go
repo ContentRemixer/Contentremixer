@@ -29,6 +29,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/app/review"
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/approve"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
@@ -114,7 +115,12 @@ func run() error {
 	// LinkedIn post. Same enablement gate as content-test (review store + LiteLLM).
 	promoteStore := buildPromoteStore(reviewStore, st, auditor, log)
 
-	srv := server.New(prov, st, scrape, contentStore, contentTestStore, promoteStore, log)
+	// Dual-approval surface (ISI-7153, P3-5): in-Booth approve reflected onto the
+	// GitHub PR. Enabled only when a per-repo PAT is configured; otherwise the
+	// /v1/approve route is absent (the GitHub-side review gate still applies).
+	approveStore := buildApproveStore(st, auditor, log)
+
+	srv := server.New(prov, st, scrape, contentStore, contentTestStore, promoteStore, approveStore, log)
 	// Multi-skill tutorial orchestration (ISI-7152, P3-4). Runs in-process with
 	// no external dependency, so it is always wired; the gate stamps RunContext.
 	// Owner from the session and reuses the P3-1 §6.3 predicate.
@@ -221,6 +227,23 @@ func buildPromoteStore(reviewStore *review.Store, st *store.Store, auditor audit
 	limiter := contenttest.NewLimiter(envIntOr("BOOTH_PROMOTE_RATE_PER_MIN", 10), time.Minute)
 	log.Info("promote enabled")
 	return promote.New(reviewStore, st, w, limiter, auditor)
+}
+
+// buildApproveStore wires the dual-approval gating store (ISI-7153, P3-5). It
+// needs a per-repo GitHub PAT (BOOTH_GITHUB_TOKEN) to reflect approvals onto
+// PRs; without it the /v1/approve route is unmounted and the GitHub-side review
+// gate stands alone. BOOTH_GITHUB_API_URL overrides the REST base (GitHub
+// Enterprise); empty → public GitHub. The persona store (always built) is the
+// §6.3 authorization anchor.
+func buildApproveStore(st *store.Store, auditor audit.Logger, log *slog.Logger) *approve.Store {
+	token := os.Getenv("BOOTH_GITHUB_TOKEN")
+	if token == "" {
+		log.Info("dual-approval disabled: BOOTH_GITHUB_TOKEN not set")
+		return nil
+	}
+	refl := approve.NewGitHubReflector(token, os.Getenv("BOOTH_GITHUB_API_URL"))
+	log.Info("dual-approval enabled")
+	return approve.New(st, refl, auditor)
 }
 
 // buildContentStore wires the content-collaboration gating store from a

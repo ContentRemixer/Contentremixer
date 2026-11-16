@@ -90,6 +90,21 @@ routes. The Phase-2 `DevRelPersona` (owner-scoped) kind and the run/draft/PR
 views are a single entry in `internal/store/registry.go` — the enforcement code
 is generic over the resource-kind table.
 
+Dual approval (P3-5, `internal/approve`) adds one more §6.3-gated action:
+
+```
+POST /v1/approve   # in-Booth approve of a generated-content PR, reflected to GitHub
+```
+
+It is mounted only when `BOOTH_GITHUB_TOKEN` (a per-repo PAT) is set;
+`BOOTH_GITHUB_API_URL` overrides the REST base for GitHub Enterprise. The action
+gates on the PR's owning persona (DevRel approves only their own PR, Admin any;
+a platform-owned PR is Admin-only) and reflects the approval onto the GitHub PR
+as a formal `APPROVE` review — or a `COMMENT` fallback carrying a
+machine-parseable `booth-approval:` block when the PAT cannot approve its own
+PR. Reflection is idempotent per `(PR, approver)` and **composes with** branch
+protection; it never merges.
+
 ## Develop
 
 ```

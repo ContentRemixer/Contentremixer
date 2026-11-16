@@ -101,6 +101,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: install kustomize + kubeconform
+        env:
+          # Authenticate the installer's GitHub API calls so it uses the 1000/hr
+          # authenticated limit instead of the 60/hr anonymous one, which the
+          # kustomize install script was hitting ("Github rate-limiter failed
+          # the request. Either authenticate or wait a couple of minutes.").
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           curl -sSfL https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash -s 5.4.3 .

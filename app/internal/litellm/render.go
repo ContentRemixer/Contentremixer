@@ -276,8 +276,10 @@ func DesiredDeployment(namespace string, profiles []contentremixerv1alpha1.Model
 									corev1.ResourceMemory: resourceQty("128Mi"),
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resourceQty("1"),
-									corev1.ResourceMemory: resourceQty("512Mi"),
+									corev1.ResourceCPU: resourceQty("1"),
+									// 1Gi (ISI-7504) for cold-start parity with the live
+									// gateway (bge-m3 embed route OOM'd at 512Mi, PR #102).
+									corev1.ResourceMemory: resourceQty("1Gi"),
 								},
 							},
 						},

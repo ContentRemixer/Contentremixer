@@ -139,8 +139,11 @@ func buildScrapeStore(k8s client.Client, namespace string, auditor audit.Logger,
 
 	// Accept-time corpus sink: embed via LiteLLM + upsert into the persona
 	// pgvector corpus (ISI-7146). Shares the same Postgres instance as review.
+	// EMBED_DIM (ISI-7504) lets deploy match the live embedder's dimension
+	// (bge-m3 = 1024) without a code change; 0/unset → store.DefaultDim (1536).
+	embedDim, _ := strconv.Atoi(os.Getenv("EMBED_DIM"))
 	corpus, err := review.NewCorpus(ctx, dsn,
-		os.Getenv("BOOTH_LITELLM_URL"), os.Getenv("LITELLM_API_KEY"))
+		os.Getenv("BOOTH_LITELLM_URL"), os.Getenv("LITELLM_API_KEY"), embedDim)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open accept corpus: %w", err)
 	}

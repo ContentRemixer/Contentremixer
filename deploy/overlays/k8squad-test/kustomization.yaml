@@ -165,6 +165,14 @@ patches:
                 CHECKOUT=/workspace/checkout
                 REF="${RECYCLE_REF:-main}"
                 REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${RECYCLE_REPO}.git"
+                # The emptyDir mount root is root-owned but git runs as uid
+                # 65532, so git refuses repo ops with "detected dubious
+                # ownership". Harmless on the clone path (clone creates the
+                # repo), but the refresh path's fetch/reset would then fail
+                # under `set -e` and re-wedge the init container — the very
+                # CrashLoop this fixes. Mark the checkout safe (writes to the
+                # writable HOME=/tmp/.gitconfig) so every git op below works.
+                git config --global --add safe.directory "${CHECKOUT}"
                 if [ -d "${CHECKOUT}/.git" ]; then
                   # Restart path: freshen the existing checkout. Re-point the
                   # remote so a rotated token takes effect, then hard-reset to

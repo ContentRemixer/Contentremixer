@@ -262,6 +262,17 @@ patches:
       # a descendant of 34c0583 so it keeps ALL post-ISI-7357 fetchers. Re-pin to
       # it and redeploy so overlay + live stay converged.
       #
+      # WHY BUMPED FROM 87233a1 -> 02ee166 (ISI-7477, final YouTube leg of
+      # ISI-7425 via ISI-7467): 87233a1's json3 request still got a 200 with an
+      # EMPTY body from YouTube's WEB timedtext baseUrl (PoToken-gated anti-
+      # scraping), so `youtube`/`talk-recording` Jobs failed with `caption track
+      # returned empty body`. 02ee166 (ISI-7467, PR #98) fetches captions via the
+      # InnerTube ANDROID/IOS client cascade (no PoToken, pure Go) and parses the
+      # srv3 XML the ANDROID endpoint returns. Live repro on 02ee166: all 3 board
+      # sources ingest transcript text — LjiKKSHesgk 20,007 ch, V1QS7ec0xg4
+      # 29,129 ch, Hz5TMI4NuOo (talk) 43,525 ch. Descendant of 87233a1, keeps the
+      # json3/XML fallback + ISI-7462 caption-less clean-skip. Re-pin + redeploy.
+      #
       # PULL: ghcr.io/contentremixer/scrape-job is now PUBLIC (ISI-7344), so
       # every node pulls the sha-<12> tag anonymously — the earlier private-pkg
       # ImagePullBackOff gate is lifted (verified: the d48dba5 Job pods reached
@@ -271,7 +282,7 @@ patches:
         path: /spec/template/spec/containers/0/env/-
         value:
           name: BOOTH_SCRAPER_IMAGE
-          value: ghcr.io/contentremixer/scrape-job:sha-87233a1401e4
+          value: ghcr.io/contentremixer/scrape-job:sha-02ee166c16ff
   # ISI-7392: the ISI-7340 TEMP node pin is LIFTED. The pin existed because the
   # booth image had to be injected into a single worker's containerd (private
   # package + no in-cluster pull creds). ISI-7392 verified nodes DO reach

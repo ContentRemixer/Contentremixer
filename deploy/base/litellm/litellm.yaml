@@ -55,7 +55,12 @@ spec:
               memory: 128Mi
             limits:
               cpu: "1"
-              memory: 512Mi
+              # 1Gi, not 512Mi: the litellm:main image OOMKills at startup under
+              # 512Mi (exit 137 within ~5s), which stalls the rollout and leaves
+              # an old ReplicaSet serving (ISI-7503). The controller's
+              # reconcileDeploymentDelta leaves resources untouched, so this base
+              # value is the single source of truth for the gateway's memory.
+              memory: 1Gi
       volumes:
         - name: config
           configMap:

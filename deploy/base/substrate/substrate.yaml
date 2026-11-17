@@ -25,11 +25,28 @@ spec:
         app.kubernetes.io/part-of: contentremixer
     spec:
       serviceAccountName: substrate-control-plane
+      # Pod-level hardening (trivy AVD-KSV / kubescape): run unprivileged as a
+      # non-root UID and pin the runtime default seccomp profile.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: substrate
           # OWNER-GATED placeholder (contract §4). Overlay pins the real digest.
           image: ghcr.io/contentremixer/substrate-control-plane:PLACEHOLDER
           args: ["--addr", ":8080"]
+          # Container-level hardening: no privilege escalation, read-only root
+          # fs (writable scratch mounted at /tmp below), drop all capabilities.
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
@@ -61,6 +78,13 @@ spec:
             limits:
               cpu: "500m"
               memory: 256Mi
+          volumeMounts:
+            # Writable scratch — readOnlyRootFilesystem above makes / immutable.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -92,3 +116,8 @@ metadata:
   labels:
     app.kubernetes.io/name: substrate-control-plane
     app.kubernetes.io/part-of: contentremixer
+# No API-server token is mounted yet: the placeholder scaffold makes no
+# Kubernetes API calls, and the actor-spawn RBAC lands with the
+# SubstrateStrategy on ISI-7397. Flip to `true` (or a projected token) when
+# that RBAC is bound. Keeping it false satisfies the least-privilege scanner.
+automountServiceAccountToken: false

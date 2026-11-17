@@ -77,7 +77,7 @@ func newPromoteServer(t *testing.T, pr *promote.Store) (http.Handler, *auth.Toke
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(prov, st, nil, nil, nil, pr, nil).Handler(), prov.Codec
+	return New(prov, st, nil, nil, nil, pr, nil, nil).Handler(), prov.Codec
 }
 
 // prStore builds a promote gating store over concrete fakes; Go satisfies the

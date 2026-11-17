@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/approve"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
@@ -32,6 +33,7 @@ type Server struct {
 	contentTest *contenttest.Store
 	promote     *promote.Store
 	tutorial    *tutorialrun.Store
+	approve     *approve.Store
 	log         *slog.Logger
 }
 
@@ -46,14 +48,15 @@ func (s *Server) WithTutorialRuns(t *tutorialrun.Store) *Server {
 }
 
 // New builds a Server. If log is nil, slog.Default() is used. scrape, content,
-// contentTest, and promote may each be nil (Postgres / LiteLLM not configured),
-// in which case the corresponding scraper-review / content-collaboration /
-// content-test / promote routes are not mounted.
-func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, promote *promote.Store, log *slog.Logger) *Server {
+// contentTest, promote, and approve may each be nil (Postgres / LiteLLM / GitHub
+// token not configured), in which case the corresponding scraper-review /
+// content-collaboration / content-test / promote / dual-approval routes are not
+// mounted.
+func New(prov *auth.Provider, st *store.Store, scrape *scrapejobs.Store, content *content.Store, contentTest *contenttest.Store, promote *promote.Store, approve *approve.Store, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, promote: promote, log: log}
+	return &Server{auth: prov, store: st, scrape: scrape, content: content, contentTest: contentTest, promote: promote, approve: approve, log: log}
 }
 
 // Handler returns the fully-wired http.Handler: unauthenticated health probes
@@ -111,6 +114,10 @@ func (s *Server) Handler() http.Handler {
 	// Multi-skill tutorial orchestration surface (ISI-7152, P3-4), gated by
 	// tutorialrun.Store. Reuses the P3-1 §6.3 predicate — no new authz path.
 	s.mountTutorials(mux)
+	// Dual-approval surface (ISI-7153, P3-5): in-Booth approve of a
+	// generated-content PR, §6.3-gated and reflected onto the GitHub PR,
+	// gated by approve.Store.
+	s.mountApprove(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

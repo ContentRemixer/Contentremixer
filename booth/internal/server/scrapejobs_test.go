@@ -119,7 +119,7 @@ func newScrapeServer(t *testing.T) (http.Handler, *auth.TokenCodec, *fakeReviewD
 	// Seed a pending source owned by alice.
 	db.sources["s1"] = review.ScrapedSource{ID: "s1", OwnerSubject: "alice", SourceURL: "u", SourceKind: "article", PersonaName: "p", Status: review.SourcePending}
 	scrape := scrapejobs.New(db, noopLauncher{}, audit.NewSlogLogger(nil))
-	return New(prov, nil, scrape, nil, nil, nil, nil).Handler(), prov.Codec, db
+	return New(prov, nil, scrape, nil, nil, nil, nil, nil).Handler(), prov.Codec, db
 }
 
 func TestScrapeJob_CreateAndGet(t *testing.T) {
@@ -236,7 +236,7 @@ func TestScrapeJob_LauncherUnavailable503(t *testing.T) {
 	}
 	db := &fakeReviewDB{jobs: map[string]review.ScrapeJob{}, sources: map[string]review.ScrapedSource{}}
 	scrape := scrapejobs.New(db, unavailableLauncher{}, audit.NewSlogLogger(nil))
-	h := New(prov, nil, scrape, nil, nil, nil, nil).Handler()
+	h := New(prov, nil, scrape, nil, nil, nil, nil, nil).Handler()
 	alice := tokenFor(t, prov.Codec, "alice", auth.RoleDevRel)
 
 	w := do(t, h, "POST", "/v1/scrape-jobs", alice, `{"personaName":"p","sourceUrl":"https://x/a","sourceKind":"article"}`)

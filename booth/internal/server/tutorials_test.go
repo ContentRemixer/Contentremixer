@@ -31,7 +31,7 @@ func newTutorialServer(t *testing.T) (http.Handler, *auth.TokenCodec) {
 		t.Fatal(err)
 	}
 	ts := tutorialrun.New(tutorialrun.NewMemoryRepo(), orchestrator.DefaultEngine(), audit.NewSlogLogger(nil))
-	srv := New(prov, nil, nil, nil, nil, nil, nil).WithTutorialRuns(ts)
+	srv := New(prov, nil, nil, nil, nil, nil, nil, nil).WithTutorialRuns(ts)
 	return srv.Handler(), prov.Codec
 }
 

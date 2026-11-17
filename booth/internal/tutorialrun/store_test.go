@@ -66,8 +66,12 @@ func TestCrossOwnerIsolation(t *testing.T) {
 func TestAdminSeesAllRuns(t *testing.T) {
 	s := newStore()
 	ctx := context.Background()
-	s.LaunchTutorialRun(ctx, devrel("alice"), LaunchRequest{Topic: "a"})
-	s.LaunchTutorialRun(ctx, devrel("bob"), LaunchRequest{Topic: "b"})
+	if _, err := s.LaunchTutorialRun(ctx, devrel("alice"), LaunchRequest{Topic: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LaunchTutorialRun(ctx, devrel("bob"), LaunchRequest{Topic: "b"}); err != nil {
+		t.Fatal(err)
+	}
 
 	runs, err := s.ListTutorialRuns(ctx, admin("root"))
 	if err != nil {

@@ -180,6 +180,8 @@ func main() {
 	var litellmEndpoint string
 	var pgvectorDSN string
 	var personaNamespace string
+	var substrateEndpoint string
+	var mediaActorImage string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -193,6 +195,10 @@ func main() {
 		"Postgres/pgvector DSN for persona voice retrieval (P2-D). Empty disables persona conditioning (recycle runs stay style-only, Phase-1).")
 	flag.StringVar(&personaNamespace, "persona-namespace", os.Getenv("PERSONA_NAMESPACE"),
 		"Namespace DevRelPersona CRs live in, for write-time conditioning lookup. Defaults to the pod namespace (POD_NAMESPACE) when empty.")
+	flag.StringVar(&substrateEndpoint, "substrate-endpoint", os.Getenv("SUBSTRATE_ENDPOINT"),
+		"Substrate control-plane base URL (agentgateway front door, e.g. http://substrate.contentremixer.svc:8080). Set with --media-actor-image to flip the media template from a k8s-Job to a substrate actor (ISI-7397). Empty keeps the k8s-Job path.")
+	flag.StringVar(&mediaActorImage, "media-actor-image", os.Getenv("MEDIA_ACTOR_IMAGE"),
+		"Pinned media-actor workload image the substrate actor runs (ghcr.io/contentremixer/media-actor@sha256:…). Required alongside --substrate-endpoint to enable the substrate media path.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -322,12 +328,26 @@ func main() {
 			Comments:  &githubapp.GitHubClient{},
 		}
 		// Dispatcher seam (ISI-7393): content => inline pipeline, media =>
-		// k8s-Job stub (fails closed with ErrMediaNotWired until the media
-		// launcher child lands). Adding substrate later is a new strategy here
-		// with no change above this line.
+		// either the k8s-Job strategy (default) or the substrate-actor strategy
+		// (ISI-7397 P1 flip), selected purely by config here. Because both media
+		// strategies satisfy the same dispatch.Strategy interface, the flip is
+		// this one map entry — zero control-plane diff above this line (ADR-1).
+		var mediaStrategy dispatch.Strategy = dispatch.MediaStrategy{}
+		if substrateEndpoint != "" && mediaActorImage != "" {
+			mediaStrategy = dispatch.SubstrateStrategy{
+				Client: dispatch.NewSubstrateClient(substrateEndpoint),
+				Image:  mediaActorImage,
+				// The per-repo PAT is projected into the actor pod as a Secret
+				// ref, never sent as a literal (contract §3.1). The ref names the
+				// same media PAT Secret the Job launcher mounts; unset leaves the
+				// actor record-only (smoke paths).
+				TokenSecretRef: mediaTokenSecretRef(),
+			}
+			setupLog.Info("media template flipped to substrate actor", "endpoint", substrateEndpoint, "image", mediaActorImage)
+		}
 		dispatcher := dispatch.New(map[string]dispatch.Strategy{
 			contentremixerv1alpha1.ActorTemplateContent: dispatch.ContentStrategy{Pipeline: contentRunner},
-			contentremixerv1alpha1.ActorTemplateMedia:   dispatch.MediaStrategy{},
+			contentremixerv1alpha1.ActorTemplateMedia:   mediaStrategy,
 		})
 		ghServer.Runner = recycleRunner{dispatcher: dispatcher}
 		setupLog.Info("recycle pipeline enabled", "checkout", recycleCheckout, "litellm", litellmEndpoint)
@@ -362,4 +382,18 @@ func main() {
 		setupLog.Error(runErr, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// mediaTokenSecretRef resolves the per-repo PAT Secret the substrate media actor
+// projects for its flush-before-suspend push (contract §3.1). It reads
+// MEDIA_TOKEN_SECRET_NAME / MEDIA_TOKEN_SECRET_KEY; when either is unset it
+// returns nil (the actor records but cannot push — smoke paths). The token value
+// itself never rides on the spawn body, only this reference.
+func mediaTokenSecretRef() *dispatch.SecretRef {
+	name := os.Getenv("MEDIA_TOKEN_SECRET_NAME")
+	key := os.Getenv("MEDIA_TOKEN_SECRET_KEY")
+	if name == "" || key == "" {
+		return nil
+	}
+	return &dispatch.SecretRef{Name: name, Key: key}
 }

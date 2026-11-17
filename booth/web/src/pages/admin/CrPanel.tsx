@@ -53,6 +53,12 @@ export interface CrPanelConfig {
   create?: CrCreateSpec;
   /** Shown when create is omitted, to explain how the kind is managed. */
   createNote?: string;
+  /**
+   * Extra per-row controls rendered before the Delete button — used for scoped,
+   * in-place field editors (e.g. ReferenceRepo labelRoutes) on kinds whose full
+   * object stays GitOps-authored. Receives refresh so the editor can reload.
+   */
+  rowActions?: (o: CrObject, refresh: () => void) => ReactNode;
 }
 
 // CrPanel is the shared list/create/delete surface for the CR-backed admin
@@ -117,9 +123,12 @@ export function CrPanel(cfg: CrPanelConfig) {
                     </td>
                   ))}
                   <td className="px-5 py-3 text-right">
-                    <Button variant="danger" size="sm" onClick={() => remove(o.metadata.name)}>
-                      Delete
-                    </Button>
+                    <div className="flex items-center justify-end gap-2">
+                      {cfg.rowActions?.(o, refresh)}
+                      <Button variant="danger" size="sm" onClick={() => remove(o.metadata.name)}>
+                        Delete
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

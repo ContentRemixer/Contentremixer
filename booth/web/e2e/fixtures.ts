@@ -182,6 +182,19 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
     if (p === "/v1/users" && method === "GET") return json(route, 200, data.users);
     if (p === "/v1/devrelpersonas" && method === "GET") return json(route, 200, data.personas);
     if (p === "/v1/referencerepos" && method === "GET") return json(route, 200, data.repos);
+    const repoByName = p.match(/^\/v1\/referencerepos\/([^/]+)$/);
+    if (repoByName) {
+      const name = decodeURIComponent(repoByName[1]);
+      const idx = data.repos.findIndex((r) => (r.metadata as { name?: string })?.name === name);
+      if (method === "GET") {
+        return idx >= 0 ? json(route, 200, data.repos[idx]) : json(route, 404, { error: "not found" });
+      }
+      if (method === "PUT") {
+        const body = req.postDataJSON() as Record<string, unknown>;
+        if (idx >= 0) data.repos[idx] = body; // mutate so a follow-up reload reflects the edit
+        return json(route, 200, body);
+      }
+    }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
 
     // --- DevRel persona CRUD (D5/D7) ---------------------------------------

@@ -41,4 +41,58 @@ test.describe("Admin console", () => {
     await expect(page.getByText("Owner-scoped DevRel voice profiles.", { exact: false })).toBeVisible();
     await expect(page.getByText("robin-voice")).toBeVisible();
   });
+
+  // ISI-7514: in-UI editor for ReferenceRepo.spec.labelRoutes. The editor must
+  // round-trip the full object so the token/webhook Secret refs are preserved
+  // and never surfaced, while spec.labelRoutes is the only thing it changes.
+  const repoFixture = () => ({
+    metadata: { name: "acme-docs", resourceVersion: "42" },
+    spec: {
+      repo: "acme/docs",
+      tokenRef: { name: "gh-token", key: "pat" },
+      webhookSecretRef: { name: "gh-hook", key: "secret" },
+      labelRoutes: [{ label: "recycle:blog", inputFormat: "auto", outputFormat: "blog" }],
+    },
+    status: { routeCount: 1 },
+  });
+
+  test("Admin edits labelRoutes and the PUT preserves the Secret refs", async ({ page }) => {
+    await installApi(page, defaults({ session: ADMIN, repos: [repoFixture()] }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Reference repos" }).click();
+    await expect(page.getByRole("cell", { name: "acme-docs", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit routes" }).click();
+    await expect(page.getByText("Label routes — acme-docs")).toBeVisible();
+    await expect(page.getByPlaceholder("recycle:blog").first()).toHaveValue("recycle:blog");
+
+    // Add a second route and fill its label.
+    await page.getByRole("button", { name: "Add route" }).click();
+    await page.getByPlaceholder("recycle:blog").nth(1).fill("recycle:tutorial");
+
+    const putReq = page.waitForRequest(
+      (r) => r.method() === "PUT" && /\/v1\/referencerepos\/acme-docs$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Save routes" }).click();
+    const body = (await putReq).postDataJSON();
+
+    // Secret refs round-tripped untouched…
+    expect(body.spec.tokenRef).toEqual({ name: "gh-token", key: "pat" });
+    expect(body.spec.webhookSecretRef).toEqual({ name: "gh-hook", key: "secret" });
+    // …and the edited routes are sent.
+    expect(body.spec.labelRoutes).toHaveLength(2);
+    expect(body.spec.labelRoutes.map((r: { label: string }) => r.label)).toContain("recycle:tutorial");
+  });
+
+  test("the routes editor blocks a duplicate label (mirrors the webhook)", async ({ page }) => {
+    await installApi(page, defaults({ session: ADMIN, repos: [repoFixture()] }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Reference repos" }).click();
+    await page.getByRole("button", { name: "Edit routes" }).click();
+
+    await page.getByRole("button", { name: "Add route" }).click();
+    await page.getByPlaceholder("recycle:blog").nth(1).fill("recycle:blog"); // duplicate
+
+    await expect(page.getByRole("button", { name: "Save routes" })).toBeDisabled();
+  });
 });

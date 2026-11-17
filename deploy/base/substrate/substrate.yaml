@@ -2,9 +2,12 @@
 # actors for the ISI-7397 substrate-actor Dispatcher strategy. Exposes the
 # HTTP contract in docs/substrate/control-plane-contract.md §3 on :8080.
 #
-# IMAGE: placeholder — the real image is OWNER-GATED (contract §4). The
-# k8squad-test overlay pins the published digest once it exists; do not treat
-# this tag as pullable.
+# IMAGE: built in-repo (board fork option B) from app/cmd/substrate via
+# app/Dockerfile.substrate and published as
+# ghcr.io/contentremixer/substrate-control-plane by substrate-image-publish.yml.
+# The `:PLACEHOLDER` tag is a pin marker: the k8squad-test overlay pins the
+# `sha-<12>` tag a main build emits (same hand-off as BOOTH_SCRAPER_IMAGE), so
+# the public base never hardcodes a mutable tag.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -151,7 +151,7 @@ func (g *GitHubReflector) find(ctx context.Context, repo string, prNumber int, k
 	if err != nil {
 		return ghReview{}, false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return ghReview{}, false, fmt.Errorf("approve: list reviews for %s#%d: %s: %s", repo, prNumber, resp.Status, truncate(data))
@@ -185,7 +185,7 @@ func (g *GitHubReflector) createReview(ctx context.Context, repo string, prNumbe
 	if err != nil {
 		return ghReview{}, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return ghReview{}, resp.StatusCode, fmt.Errorf("approve: %s review on %s#%d: %s: %s", event, repo, prNumber, resp.Status, truncate(data))

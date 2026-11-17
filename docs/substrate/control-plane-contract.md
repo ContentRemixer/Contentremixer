@@ -146,29 +146,34 @@ change is a joint edit of this doc + that client + the substrate server. A
 `dispatch`-side contract test (table of request/response fixtures) is the cheap
 guard — add it with the Strategy.
 
-## 4. Image build — OWNER-GATED (the actual blocker)
+## 4. Image build — IN-REPO (board fork option B, implemented)
 
-A DevRel/DevOps/Architect agent on **this** control plane **cannot** build the
-substrate image: the K8sAgentMesh repo holding the ISI-7417 prototype is not
-reachable from this control plane's GitHub token, and the prototype is
-in-memory (not a deployable service). The build is owned by the **Substrate /
-K8sAgentMesh project owner + board/ProxOps**.
+The board accepted the §6 fork as **option B**: build a substrate control plane
+*in this repo*, decoupling the media-actor flip from the unreachable external
+K8sAgentMesh repo. It is implemented:
 
-Whichever path the board picks (§6), the image MUST:
+- **Service** — `app/cmd/substrate` (+ `app/internal/substrate`): a Go HTTP
+  server exposing the §3 contract on `:8080`, backed by a **durable Postgres
+  store** (`substrate_actors`, actor spec+status as JSONB; survives pod
+  restarts, contract §4.2), running each actor as a Kubernetes **Job** of its
+  template image via a controller-runtime client. Unit-tested
+  (`internal/substrate/*_test.go`): spawn/persist, status refresh,
+  suspend→resume lifecycle, idempotent terminate, validation.
+- **Image** — `app/Dockerfile.substrate` (distroless/static:nonroot, UID 65532,
+  matching the hardened Deployment securityContext), published multi-arch
+  (amd64+arm64) and **cosign** keyless-signed as
+  `ghcr.io/contentremixer/substrate-control-plane` by
+  `.github/workflows/substrate-image-publish.yml` (mirrors scrape-job). A push
+  to `main` emits the `sha-<12>` tag the overlay pins — reachable by
+  k8squad-test over the node harbor mirror ([[isi-7346]]).
 
-1. Expose the §3 HTTP contract (`:8080` by default — see manifests).
-2. Replace the prototype's in-memory `SkeletonStore` with a **durable** store
-   for actor records + execution snapshots (reuse the live Postgres in
-   `contentremixer`, a dedicated table/schema; snapshot blobs as `bytea` or an
-   object store). Snapshots survive control-plane pod restarts.
-3. Honor ADR-4: snapshot = execution state only; **no** style/memory bytes.
-4. Be multi-arch (linux/amd64 + arm64 — k8squad-test is mixed), **cosign**-signed,
-   and pushed to a registry reachable by k8squad-test (same lane as the other
-   images: `ghcr.io/contentremixer/…`, mirrored through the node harbor cache —
-   see [[isi-7346]]/[[isi-7436]]).
-
-The manifests (§5) reference a **placeholder** image tag; the k8squad-test
-overlay pins the real digest once the owner publishes it.
+**Walking-skeleton scope (honest):** `suspend` tears the actor's Job down while
+the store keeps the WorkOrder record; `resume` re-creates the Job (re-grounding
+from the carried MemoryRef). This exercises the full §3 lifecycle end-to-end but
+does **not** yet do a true CRIU/checkpoint snapshot of live execution state —
+that is a v2 optimization (the payoff for fat/bursty media actors per the
+ISI-7389 analysis). Memory is never snapshotted here (ADR-4): the actor flushes
+and re-grounds itself against the external style layer.
 
 ## 5. Deployment manifests
 
@@ -187,19 +192,20 @@ casing/shape.
 
 ## 6. Disposition & the board fork
 
-Done when: image built+pushed (§4, owner), manifests apply (§5, done — pending
-image), contract exposed (§3, done — pending server implementing it).
+Done when (all three met once this PR merges + the image publishes):
 
-The only non-agent-executable item is the **image**. Two unblock paths, for the
-board to choose (raised as a request_confirmation on ISI-7507):
+1. **Image built+pushed** — §4, done: `app/cmd/substrate` + `app/Dockerfile.substrate`
+   + `substrate-image-publish.yml` publish+sign `ghcr.io/contentremixer/substrate-control-plane`
+   on merge to `main`.
+2. **Manifests apply** — §5, done: `deploy/base/substrate/` (kustomize-validated).
+3. **Contract exposed** — §3, done: the `internal/substrate` HTTP server
+   implements it (unit-tested).
 
-- **(A) Owner path** — Substrate/K8sAgentMesh owner builds+pushes the image from
-  the ISI-7417 prototype (or makes the K8sAgentMesh repo reachable from this
-  control plane's token so a DevOps agent here can build it).
-- **(B) In-repo path** — board authorizes building a **minimal** substrate
-  control plane *in this repo* that satisfies §3 (durable store + the five
-  lifecycle endpoints), decoupling the flip from the unreachable external repo.
-  Larger build, but fully agent-executable here and under our CI/cosign lane.
+The board accepted the fork as **option B** (in-repo build) on 2026-11-17
+(`confirmation:ISI-7507:image-build-fork:v2`). Option A (external owner builds
+from the K8sAgentMesh prototype) is retired.
 
-Both paths deliver the **same** contract (§3) and deploy the **same** manifests
-(§5), so these artifacts are robust to the decision.
+**Next (ISI-7431):** merge this PR → a `main` build publishes the `sha-<12>`
+image → ProxOps applies `deploy/base/substrate` to k8squad-test, pins the image
+tag + the agentgateway LB in the overlay, binds the actor-spawn RBAC, and wires
+the endpoint to the ISI-7397 SubstrateStrategy.

@@ -1,0 +1,28 @@
+# Build the substrate control-plane binary (ISI-7507, board fork option B) — the
+# app/cmd/substrate entrypoint that serves the actor-lifecycle HTTP contract
+# (docs/substrate/control-plane-contract.md §3) and runs actors as Kubernetes
+# Jobs. Published as ghcr.io/contentremixer/substrate-control-plane by
+# substrate-image-publish.yml; the deploy/base/substrate Deployment points at
+# the sha-<12> tag (pinned in the k8squad-test overlay once a main build ships).
+#
+# Distroless/static:nonroot (no git, no shell) — the control plane only reaches
+# Postgres + the Kubernetes API over HTTPS (ca-certificates built in). Default
+# UID 65532 matches the hardened Deployment securityContext (runAsNonRoot,
+# readOnlyRootFilesystem, drop-ALL).
+FROM golang:1.26.11 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+COPY api/ api/
+COPY internal/ internal/
+COPY cmd/substrate/ cmd/substrate/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+    go build -a -o substrate ./cmd/substrate
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /workspace/substrate /substrate
+USER 65532:65532
+ENTRYPOINT ["/substrate"]

@@ -189,7 +189,7 @@ metadata:
   namespace: contentremixer
 spec:
   default: true
-  litellmName: default          # must match CONTENTREMIXER_DEFAULT_MODEL
+  litellmName: default          # the gateway alias (must match LITELLM_DEFAULT_MODEL)
   provider: openai
   model: gpt-4o-mini
   apiKeyRef:
@@ -197,8 +197,66 @@ spec:
     key: key
 ```
 
-`CONTENTREMIXER_DEFAULT_MODEL` (default `default`) selects which alias the
-pipeline uses when a job doesn't pin a model.
+`LITELLM_DEFAULT_MODEL` (default `default`) — an env var on the operator and
+Booth Deployments — selects which gateway **alias** the pipeline uses when a job
+doesn't pin a model. You normally leave it at `default` and change *what that
+alias points at* (below), rather than changing the env var.
+
+#### 4.1.1 Changing the model
+
+The model is **not hard-coded** — it's whatever the `default` `ModelProfile`
+resolves to. The operator's ModelProfile controller watches these CRs, re-renders
+the `litellm-config` ConfigMap, and **rolls the LiteLLM gateway automatically**
+whenever a profile changes (it stamps a config checksum on the pod template). So
+changing the model is a CR edit, not a redeploy.
+
+**Point the default alias at a different model** (live cluster):
+
+```bash
+kubectl -n contentremixer edit modelprofile <your-default-profile>
+# change spec.model / spec.provider / spec.apiBase (and spec.apiKeyRef for
+# keyed providers), keeping spec.default: true and the same spec.litellmName.
+```
+
+Examples of the three fields that pick the model:
+
+- `spec.provider` — the LiteLLM provider prefix (`openai`, `anthropic`, `azure`,
+  `vertex_ai`, `openai-compatible`, …).
+- `spec.model` — the provider's model id (`gpt-4o`, `claude-opus-4`,
+  `llama3.1:70b`, `gpt-oss:120b`, …).
+- `spec.apiBase` — set this for self-hosted / OpenAI-compatible backends (e.g. a
+  local Ollama or agentgateway endpoint). Omit it for first-party providers.
+
+A keyed provider also needs `spec.apiKeyRef` pointing at a Secret (see §3.1); the
+controller wires it as `MODEL_KEY_<ALIAS>` on the gateway — **never inline keys**.
+
+**Keep several models and switch between them** — create one `ModelProfile` per
+model, each with a distinct `litellmName`, and flip `spec.default: true` to the
+one you want (exactly one profile may be `default` — the webhook rejects two).
+Non-default profiles stay registered as selectable aliases on the gateway.
+
+**Changing the embedding model** is a two-part change, because embeddings have a
+fixed vector width:
+
+1. Edit the embedding `ModelProfile` (the one tagged `embedding`, alias `embed`)
+   — set `spec.model` to the new embedder.
+2. Set `EMBED_DIM` (an env var on **both** the `booth` and
+   `contentremixer-operator` Deployments) to the new model's output dimension
+   (e.g. `bge-m3` → `1024`; unset/`0` falls back to `1536`). The dimension lives
+   only in `EMBED_DIM`, not on the CR.
+
+> ⚠️ Changing the embedding dimension invalidates every vector already stored in
+> pgvector. After a dimension change, **re-ingest** your sources (re-scrape and
+> re-accept) so the corpus is re-embedded at the new width; mixing widths breaks
+> similarity search.
+
+**Verify a model change:**
+
+```bash
+kubectl -n contentremixer get modelprofiles            # DEFAULT column shows the active profile
+kubectl -n contentremixer get cm litellm-config -o yaml # rendered model list
+kubectl -n contentremixer rollout status deploy/litellm # controller rolls it on config change
+```
 
 ### 4.2 `ReferenceRepo` — the Crate and its label routes
 

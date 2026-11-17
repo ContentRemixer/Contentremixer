@@ -8,10 +8,20 @@
 # trusted registry `ghcr.io/contentremixer/pgvector`, so the DB image rides the
 # same supply chain as `ghcr.io/contentremixer/operator`.
 #
+# PUBLISH VIA THE DOCKER/BUILDX TOOLCHAIN (ISI-7173 review): the mirror is a
+# single tagged `docker buildx imagetools create`, exactly the registry client
+# `image-publish.yml` uses to build+publish the operator image. That path is
+# proven to create new org packages with the Actions `GITHUB_TOKEN` (it created
+# `content-operator`/`operator`). The earlier `crane copy` attempt was denied
+# because it pushed the index's child/attestation manifests *by digest first*,
+# before any tagged push had established the brand-new `pgvector` repo in GHCR.
+# `imagetools create` issues one tagged manifest-list push, establishing the
+# repo, and copies the source index verbatim — so it still preserves the digest.
+#
 # SINGLE SOURCE OF TRUTH: the digest is NOT configured here — it is read from
 # `deploy/base/postgres/statefulset.yaml` (`image: ...@sha256:<digest>`). A
 # content-addressed digest is identical across registries, so the upstream
-# source and the ghcr mirror share it; `crane copy` preserves it end-to-end.
+# source and the ghcr mirror share it; the copy preserves it end-to-end.
 # Bumping pgvector therefore means editing the digest in that manifest in a
 # reviewed PR (deliberate), after which the next run re-mirrors the new digest.
 #
@@ -52,8 +62,6 @@ env:
   DST: ghcr.io/contentremixer/pgvector
   DST_TAG: pg16
   MANIFEST: deploy/base/postgres/statefulset.yaml
-  # Pin crane so the mirror is reproducible across runner image bumps.
-  CRANE_VERSION: v0.20.2
 
 jobs:
   mirror:
@@ -61,15 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Install crane from the pinned official go-containerregistry release.
-      - name: Install crane
-        run: |
-          set -euo pipefail
-          os=Linux arch=x86_64
-          url="https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_${os}_${arch}.tar.gz"
-          curl -sSfL "$url" -o /tmp/gcr.tgz
-          tar -xzf /tmp/gcr.tgz -C /usr/local/bin crane
-          crane version
+      - uses: docker/setup-buildx-action@v3
 
       # The deployed ref is the contract. Extract the digest the manifest pins
       # and fail closed if it is missing or not a bare image digest — we refuse
@@ -98,14 +98,15 @@ jobs:
       - name: Verify upstream digest is reachable
         env:
           DIGEST: ${{ steps.pin.outputs.digest }}
-        run: crane manifest "${UPSTREAM}@${DIGEST}" >/dev/null
+        run: docker buildx imagetools inspect "${UPSTREAM}@${DIGEST}" >/dev/null
 
-      # Content-addressed copy of the full multi-arch index (incl. provenance /
-      # SBOM attestation manifests). crane copy preserves the top-level digest.
+      # One tagged manifest-list push — establishes the repo and copies the
+      # source index (all platforms + attestation manifests) verbatim, so the
+      # ghcr tag carries the exact same top-level digest.
       - name: Mirror → ghcr (by digest)
         env:
           DIGEST: ${{ steps.pin.outputs.digest }}
-        run: crane copy "${UPSTREAM}@${DIGEST}" "${DST}:${DST_TAG}"
+        run: docker buildx imagetools create --tag "${DST}:${DST_TAG}" "${UPSTREAM}@${DIGEST}"
 
       # The mirror MUST be byte-identical to the pinned digest, else the
       # deployed `@sha256:` ref would fail to pull.
@@ -114,7 +115,7 @@ jobs:
           DIGEST: ${{ steps.pin.outputs.digest }}
         run: |
           set -euo pipefail
-          got="$(crane digest "${DST}:${DST_TAG}")"
+          got="$(docker buildx imagetools inspect "${DST}:${DST_TAG}" --format '{{.Manifest.Digest}}')"
           if [ "$got" != "$DIGEST" ]; then
             echo "::error::mirror digest ${got} != pinned ${DIGEST}"
             exit 1
@@ -128,7 +129,7 @@ jobs:
           DIGEST: ${{ steps.pin.outputs.digest }}
         run: |
           set -euo pipefail
-          live="$(crane digest "${UPSTREAM}:${DST_TAG}" 2>/dev/null || echo unknown)"
+          live="$(docker buildx imagetools inspect "${UPSTREAM}:${DST_TAG}" --format '{{.Manifest.Digest}}' 2>/dev/null || echo unknown)"
           {
             echo "### pgvector-mirror"
             echo "- source: \`${UPSTREAM}@${DIGEST}\`"

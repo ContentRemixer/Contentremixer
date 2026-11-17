@@ -32,10 +32,12 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/orchestrator"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 )
 
 func main() {
@@ -113,6 +115,10 @@ func run() error {
 	promoteStore := buildPromoteStore(reviewStore, st, auditor, log)
 
 	srv := server.New(prov, st, scrape, contentStore, contentTestStore, promoteStore, log)
+	// Multi-skill tutorial orchestration (ISI-7152, P3-4). Runs in-process with
+	// no external dependency, so it is always wired; the gate stamps RunContext.
+	// Owner from the session and reuses the P3-1 §6.3 predicate.
+	srv = srv.WithTutorialRuns(tutorialrun.New(tutorialrun.NewMemoryRepo(), orchestrator.DefaultEngine(), auditor))
 
 	httpServer := &http.Server{
 		Addr:              addr,

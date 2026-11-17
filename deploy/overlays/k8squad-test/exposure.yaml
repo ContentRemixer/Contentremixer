@@ -103,6 +103,16 @@ spec:
       backendRefs:
         - name: booth
           port: 8080
+      # ISI-7503 (onboarding Step-5): the O6->O7 style-profile synthesize is a
+      # single synchronous LLM call through the in-cluster LiteLLM gateway to the
+      # CPU-backed `default` model, which takes ~60s for a persona's exemplar
+      # corpus. With no explicit route timeout the gateway cut the browser at its
+      # default (~60s) and returned 504 even though Booth completed the synthesis
+      # and persisted the StyleProfile. Raise request + backendRequest well past
+      # the model latency so Step-5 returns 200 to the UI (verified live).
+      timeouts:
+        request: 300s
+        backendRequest: 300s
 ---
 # Self-signed serving cert for the Gateway HTTPS listener. SANs cover the
 # internal host so the endpoint verifies over TLS from the LAN. Swap for a

@@ -135,6 +135,28 @@ spec:
             # writer uses.
             - name: BOOTH_LITELLM_URL
               value: http://litellm.contentremixer.svc:4000
+            # EMBED_DIM pins the accept-time embed/pgvector vector dimension to
+            # the configured `embed` ModelProfile's output (ISI-7503). The live
+            # gateway serves bge-m3 (1024-dim); pgvector persona_chunks/
+            # style_profiles are provisioned to match. Default is 1536
+            # (text-embedding-3-small); override here to the on-prem model's dim.
+            # Requires the booth binary to read EMBED_DIM (ISI-7503 Option B code
+            # change) — inert on images built before that lands.
+            - name: EMBED_DIM
+              value: "1024"
+            # Style synthesis (D3), content-test and promote call the gateway's
+            # chat surface. LiteLLM rejects an empty/None model ("Invalid model
+            # name passed in model=None") — it does NOT fall back to
+            # general_settings.default_model for an explicitly-empty model — so
+            # pin the served alias here. Same fix the operator writer already
+            # carries as LITELLM_DEFAULT_MODEL (ISI-7503; surfaced once accept
+            # started succeeding and synthesize finally reached the LLM call).
+            - name: BOOTH_STYLE_SYNTH_MODEL
+              value: "default"
+            - name: BOOTH_CONTENT_TEST_MODEL
+              value: "default"
+            - name: BOOTH_PROMOTE_MODEL
+              value: "default"
             - name: LITELLM_API_KEY
               valueFrom:
                 secretKeyRef:

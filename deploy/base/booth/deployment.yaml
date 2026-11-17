@@ -56,7 +56,7 @@ spec:
           #   published image is cosign-signed by CI (ISI-7339). Owner: DevOps
           #   (ISI-7340), accepted 2026-11-12, revisit if a centralized
           #   trivy.yaml registry allowlist lands.
-          image: ghcr.io/contentremixer/booth:sha-eae1427662b4
+          image: ghcr.io/contentremixer/booth:sha-f3a372a6ec1c
           ports:
             - name: http
               containerPort: 8080

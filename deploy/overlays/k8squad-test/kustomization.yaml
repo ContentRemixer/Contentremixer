@@ -351,7 +351,14 @@ images:
     # youtube/InnerTube ingestion fixes. REQUIRES the DevRel seed keys in the
     # booth-auth Secret (see deploy/secrets/booth-auth.example.yaml) for the
     # seed to actually fire — without them it is a silent no-op.
-    newTag: sha-a9659dc8b01c
+    #
+    # ISI-7537 (2026-11-17): bumped a9659dc8b01c -> f3a372a6ec1c to bring live
+    # fully up to main HEAD f3a372a (+7 non-ingestion merges: substrate
+    # control-plane, dual-approval, tutorial orchestration, labelRoutes editor,
+    # pgvector mirror, substrate actor adapter). booth-image-publish.yml
+    # succeeded for this sha. Full ingestion wizard tail (login -> scrape ->
+    # accept -> synthesize) re-verified green live on this image.
+    newTag: sha-f3a372a6ec1c
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin
@@ -370,4 +377,9 @@ images:
     # stage. The init-container checkout works on any image; only Commit()
     # needed the rebuild. The later a6063bda merge (ISI-7210) is web-only and
     # did not rebuild content-operator, so d61d7a97901c remains authoritative.
-    newTag: sha-a9659dc8b01c
+    #
+    # ISI-7537 (2026-11-17): bumped a9659dc8b01c -> f3a372a6ec1c to converge the
+    # operator with main HEAD f3a372a (carries the config-gated SubstrateStrategy
+    # media flip, ISI-7397 — a no-op until SUBSTRATE_ENDPOINT/MEDIA_ACTOR_IMAGE
+    # are set, tracked ISI-7522). image-publish.yml succeeded for this sha.
+    newTag: sha-f3a372a6ec1c

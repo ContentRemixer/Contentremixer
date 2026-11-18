@@ -23,6 +23,8 @@ import (
 	"errors"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	apptest "github.com/ContentRemixer/Contentremixer/app/contenttest"
 	"github.com/ContentRemixer/Contentremixer/app/review"
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
@@ -48,6 +50,13 @@ var (
 	// ErrUpstream is a fault in the synthesis model/gateway (e.g. a completion
 	// that broke the section contract) — not a caller error (→ 502).
 	ErrUpstream = errors.New("contenttest: style synthesis upstream error")
+	// ErrStatusWrite means a persona CR read/write hit a Kubernetes API fault the
+	// caller cannot fix by changing their request — an RBAC denial on the
+	// devrelpersonas/status subresource (the ISI-7554 gap the "validate to finish"
+	// step hits) or a transient server-side condition. The HTTP layer maps it to a
+	// clear 503 instead of the bare 500 "internal error" the scrape leg hit before
+	// ISI-7434 (→ 503).
+	ErrStatusWrite = errors.New("contenttest: persona status update failed (permission or transient)")
 )
 
 // Audit verbs (mirror the other gating stores' vocabulary).
@@ -287,16 +296,37 @@ func mapSynthErr(err error) error {
 	return err
 }
 
-// mapPersonaErr translates the CRD store's sentinels into this package's.
+// mapPersonaErr translates the CRD store's sentinels into this package's. A §6.3
+// denial (bstore.ErrForbidden, our own sentinel) stays a 403 "forbidden"; a raw
+// Kubernetes API fault on the persona read or the Validated-condition write —
+// the ISI-7554 RBAC gap on devrelpersonas/status, or a transient apiserver
+// condition — becomes ErrStatusWrite (→ 503) rather than falling through to a
+// bare 500. The order matters: bstore.ErrForbidden is checked first, so a
+// genuine authorization denial is never reclassified as a backend fault.
 func mapPersonaErr(err error) error {
 	switch {
 	case errors.Is(err, bstore.ErrForbidden):
 		return ErrForbidden
 	case errors.Is(err, bstore.ErrNotFound):
 		return ErrNotFound
+	case isK8sWriteFault(err):
+		return fmt.Errorf("%w: %v", ErrStatusWrite, err)
 	default:
 		return err
 	}
+}
+
+// isK8sWriteFault reports whether err is a Kubernetes API-server response the
+// caller cannot fix by changing their request: an RBAC denial (the status-write
+// permission gap) or a transient server-side condition worth a retry. These are
+// the failures that must surface as a clear 503, not a 500.
+func isK8sWriteFault(err error) bool {
+	return apierrors.IsForbidden(err) ||
+		apierrors.IsServiceUnavailable(err) ||
+		apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) ||
+		apierrors.IsTooManyRequests(err) ||
+		apierrors.IsConflict(err)
 }
 
 // IsBadRequest / IsRateLimited let the HTTP layer map sentinels without importing

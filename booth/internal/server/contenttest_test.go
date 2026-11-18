@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
@@ -246,6 +249,53 @@ func TestValidatePersonaNoProfileIsBadRequest(t *testing.T) {
 	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
 	if w := do(t, h, "POST", "/v1/devrelpersonas/ada/validate", tok, ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("validate no profile = %d, want 400", w.Code)
+	}
+}
+
+// TestValidatePersonaStatusForbiddenIsNotBare500 covers the ISI-7568 hardening:
+// when the StyleProfile flip succeeds but the DevRelPersona `Validated` status
+// write hits a Kubernetes RBAC denial (the ISI-7554 devrelpersonas/status gap),
+// the caller must get a clear 503 — not the bare 500 "internal error" the scrape
+// leg emitted before ISI-7434. The §6.3 gate already admitted the caller (their
+// own persona), so this 403 is a backend permission fault, not an authz denial.
+func TestValidatePersonaStatusForbiddenIsNotBare500(t *testing.T) {
+	forbidden := apierrors.NewForbidden(
+		schema.GroupResource{Group: "contentremixer.io", Resource: "devrelpersonas/status"},
+		"ada",
+		errors.New("devrelpersonas/status is forbidden: booth SA lacks update"),
+	)
+	p := ctFakeProfiles{profile: review.StyleProfile{OwnerSubject: "sub-alice", PersonaName: "ada"}}
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice"}, setErr: forbidden}
+	ct := ctStore(p, pe, ctFakeRunner{}, nil)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+
+	w := do(t, h, "POST", "/v1/devrelpersonas/ada/validate", tok, "")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status-write forbidden = %d, want 503 (not bare 500); body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(strings.ToLower(w.Body.String()), "internal error") {
+		t.Fatalf("503 body must be actionable, not %q", w.Body.String())
+	}
+}
+
+// TestValidatePersonaStatusTransientIsNotBare500 covers the transient half: a
+// server-side apiserver fault (here a conflict on the status subresource) is
+// equally not-the-caller's-fault and maps to the same retryable 503.
+func TestValidatePersonaStatusTransientIsNotBare500(t *testing.T) {
+	conflict := apierrors.NewConflict(
+		schema.GroupResource{Group: "contentremixer.io", Resource: "devrelpersonas"},
+		"ada",
+		errors.New("the object has been modified; please apply your changes to the latest version"),
+	)
+	p := ctFakeProfiles{profile: review.StyleProfile{OwnerSubject: "sub-alice", PersonaName: "ada"}}
+	pe := ctFakePersonas{cond: store.PersonaConditioning{OwnerSubject: "sub-alice"}, setErr: conflict}
+	ct := ctStore(p, pe, ctFakeRunner{}, nil)
+	h, codec := newCTServer(t, ct)
+	tok := tokenFor(t, codec, "sub-alice", auth.RoleDevRel)
+
+	if w := do(t, h, "POST", "/v1/devrelpersonas/ada/validate", tok, ""); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status-write conflict = %d, want 503", w.Code)
 	}
 }
 

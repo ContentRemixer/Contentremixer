@@ -93,13 +93,22 @@ func (s *Server) validatePersona(w http.ResponseWriter, r *http.Request) {
 
 // writeContentTestErr maps the content-test gate's sentinels to HTTP codes:
 // ErrForbidden → 403, ErrNotFound → 404, ErrBadRequest → 400, ErrRateLimited →
-// 429, anything else → 500 (logged — an LLM/DB fault, not a caller error).
+// 429, ErrStatusWrite → 503, anything else → 500 (logged — an LLM/DB fault, not
+// a caller error).
 func (s *Server) writeContentTestErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, contenttest.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, contenttest.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found")
+	case errors.Is(err, contenttest.ErrStatusWrite):
+		// The §6.3 gate admitted the caller, but the persona status write hit a
+		// Kubernetes RBAC denial or transient apiserver fault the caller cannot
+		// fix (ISI-7554/ISI-7568). Surface a clear, actionable 503 — NOT the bare
+		// 500 the scrape leg emitted before ISI-7434 — so the UI shows "retry"
+		// rather than "internal error".
+		s.log.Warn("booth persona status write unavailable", slog.Any("err", err))
+		writeError(w, http.StatusServiceUnavailable, "could not mark persona validated — a permission or transient backend error; please retry shortly")
 	case errors.Is(err, contenttest.ErrNoExemplars):
 		writeError(w, http.StatusConflict, "no accepted exemplars to synthesize a style from yet")
 	case errors.Is(err, contenttest.ErrUpstream):

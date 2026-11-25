@@ -45,6 +45,18 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["create"]
+  # reference-repo Secret-write path (ISI-7776 W2, booth/internal/secrets.Writer):
+  # the create flow writes the PAT (tokenRef) + webhook HMAC (webhookSecretRef)
+  # into one per-repo Secret server-side so there is no kubectl step. get is the
+  # create-or-update read; create/update/patch are the write. No list and no
+  # delete — a secret value is never enumerated or echoed back to the SPA, only
+  # written and referenced by name+key.
+  # trivy:ignore:KSV-0041 — Secret write IS this component's designed,
+  #   Admin-gated (requireAdmin), audited (§6.4) capability; the Role is
+  #   namespaced and grants no list/delete. Owner: DevOps (ISI-7783).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

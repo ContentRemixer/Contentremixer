@@ -19,6 +19,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
@@ -34,6 +35,7 @@ type Server struct {
 	promote     *promote.Store
 	tutorial    *tutorialrun.Store
 	approve     *approve.Store
+	refSecrets  *secrets.Writer
 	log         *slog.Logger
 }
 
@@ -118,6 +120,10 @@ func (s *Server) Handler() http.Handler {
 	// generated-content PR, §6.3-gated and reflected onto the GitHub PR,
 	// gated by approve.Store.
 	s.mountApprove(mux)
+	// Write-only Secret-write path for the reference-repo create flow (ISI-7776
+	// W2): Admin writes tokenRef+webhookSecretRef values server-side; only the
+	// refs come back. Mounted only when a secrets.Writer is wired.
+	s.mountReferenceRepoSecrets(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

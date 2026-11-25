@@ -36,6 +36,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/orchestrator"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
@@ -125,6 +126,11 @@ func run() error {
 	// no external dependency, so it is always wired; the gate stamps RunContext.
 	// Owner from the session and reuses the P3-1 §6.3 predicate.
 	srv = srv.WithTutorialRuns(tutorialrun.New(tutorialrun.NewMemoryRepo(), orchestrator.DefaultEngine(), auditor))
+	// Write-only Secret-write path for the reference-repo create flow (ISI-7776
+	// W2). Reuses the Booth SA's k8s client + namespace; the Secret-write SA RBAC
+	// is granted in deploy. Always wired — the create flow needs it to produce a
+	// working tokenRef+webhookSecretRef with no kubectl step.
+	srv = srv.WithReferenceRepoSecrets(secrets.New(k8s, namespace, auditor))
 
 	httpServer := &http.Server{
 		Addr:              addr,

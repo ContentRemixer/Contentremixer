@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="500" viewBox="0 0 560 500" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
+  <style>
+    .bg{fill:#0f172a}.card{fill:#1e293b}.border{stroke:#334155;stroke-width:1}
+    .h{fill:#f1f5f9}.t{fill:#e2e8f0}.m{fill:#94a3b8}.hd{fill:#64748b}
+    .sel{fill:#0f172a;stroke:#334155;stroke-width:1}
+    .err{fill:#3f1d2b;stroke:#b91c1c;stroke-width:1}.errtx{fill:#fca5a5}
+    .errbar{fill:#b91c1c}
+    .warnPill{fill:#3a2d0a;stroke:#854d0e;stroke-width:1}.warnPilltx{fill:#fcd34d}
+    .btnOff{fill:#273244}.btnOfftx{fill:#64748b}
+    .ghost{fill:none;stroke:#334155;stroke-width:1}
+    text{font-size:13px}.hdr{font-size:11px;letter-spacing:.06em}
+  </style>
+  <rect class="bg" width="560" height="500"/>
+  <rect class="card border" x="20" y="20" width="520" height="460" rx="8"/>
+  <text class="h" x="40" y="50" font-size="14" font-weight="600">Editing: my-team</text>
+
+  <!-- cycle banner -->
+  <rect class="err" x="40" y="66" width="480" height="48" rx="6"/>
+  <rect class="errbar" x="40" y="66" width="4" height="48"/>
+  <text class="errtx" x="56" y="88" font-size="12" font-weight="600">Cycle: architect → coding → architect</text>
+  <text class="errtx" x="56" y="106" font-size="11">Hand-offs must flow one way. Remove an edge to break the cycle.</text>
+
+  <!-- handoffs with offending edges flagged -->
+  <text class="hd hdr" x="40" y="146">HANDOFFS (EDGES)</text>
+  <g>
+    <rect class="errbar" x="40" y="156" width="3" height="30"/>
+    <rect class="sel" x="50" y="156" width="150" height="30" rx="6"/><text class="t" x="60" y="176" font-size="12">architect</text>
+    <text fill="#fca5a5" x="210" y="176">→</text>
+    <rect class="sel" x="230" y="156" width="150" height="30" rx="6"/><text class="t" x="240" y="176" font-size="12">coding</text>
+    <text class="m" x="392" y="176" font-size="11">Remove</text>
+  </g>
+  <g transform="translate(0,40)">
+    <rect class="errbar" x="40" y="156" width="3" height="30"/>
+    <rect class="sel" x="50" y="156" width="150" height="30" rx="6"/><text class="t" x="60" y="176" font-size="12">coding</text>
+    <text fill="#fca5a5" x="210" y="176">→</text>
+    <rect class="sel" x="230" y="156" width="150" height="30" rx="6"/><text class="t" x="240" y="176" font-size="12">architect</text>
+    <text class="m" x="392" y="176" font-size="11">Remove</text>
+  </g>
+
+  <!-- orphan node -->
+  <text class="hd hdr" x="40" y="286">NODES</text>
+  <g>
+    <rect class="sel" x="40" y="296" width="120" height="30" rx="6"/><text class="t" x="50" y="316" font-size="12">research</text>
+    <rect class="sel" x="168" y="296" width="220" height="30" rx="6"/><text class="t" x="178" y="316" font-size="12">Researcher — research</text>
+    <rect class="warnPill" x="400" y="298" width="96" height="26" rx="13"/>
+    <text class="warnPilltx" x="412" y="315" font-size="11">unreachable</text>
+  </g>
+  <text class="warnPilltx" x="40" y="356" font-size="11">Node "research" is never reached from the entry node.</text>
+
+  <!-- footer: disabled save -->
+  <line class="border" x1="40" y1="396" x2="520" y2="396"/>
+  <text class="errtx" x="40" y="428" font-size="12">2 problems — fix before saving</text>
+  <rect class="ghost" x="352" y="410" width="74" height="30" rx="6"/><text class="t" x="372" y="430" font-size="12">Cancel</text>
+  <rect class="btnOff" x="438" y="410" width="80" height="30" rx="6"/><text class="btnOfftx" x="464" y="430" font-size="12">Save</text>
+
+  <text class="hd" x="40" y="464" font-size="11">Client mirror of webhook T5–T7. If the server still rejects, its message wins verbatim.</text>
+</svg>

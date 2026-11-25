@@ -63,7 +63,17 @@ metadata:
   labels:
     app.kubernetes.io/part-of: contentremixer
 spec:
+  # Attached to BOTH listeners. On https (self-signed, LAN) the webhook is
+  # reachable directly; on http (:80) it is reachable too so a TLS-TERMINATING
+  # public edge (Tailscale Funnel, ISI-7126/ISI-7784) can forward PLAIN HTTP to
+  # the kgateway and still land /github/webhook on the receiver. The
+  # more-specific /github/webhook PathPrefix wins over booth's `/` on BOTH
+  # listeners (Gateway API path precedence), so booth is unaffected. This lets
+  # ONE public Funnel hostname front both operator-webhook:8443 and booth:8080
+  # through the kgateway's existing path routing (ISI-7784 scope).
   parentRefs:
+    - name: contentremixer
+      sectionName: http
     - name: contentremixer
       sectionName: https
   rules:

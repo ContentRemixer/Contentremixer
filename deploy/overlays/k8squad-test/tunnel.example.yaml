@@ -1,6 +1,6 @@
 # Public edge for real github.com webhook delivery — Cloudflare Tunnel (ISI-7112).
 #
-# WHY A TUNNEL: the Gateway is pinned to 10.0.0.222, a PRIVATE LAN IP that
+# WHY A TUNNEL: the Gateway is pinned to a PRIVATE LAN IP that
 # github.com (public) cannot reach. A Cloudflare Tunnel gives a public hostname
 # WITHOUT exposing the homelab WAN IP or touching the router, and Cloudflare
 # terminates TLS at its edge with a **GitHub-trusted cert** — so this path also

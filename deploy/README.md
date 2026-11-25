@@ -194,11 +194,12 @@ A dedicated security review of the collection plane and its fixes:
 
 The design said "TLS Ingress", but k8Squad test has **no ingress controller**.
 It does ingress via the **Gateway API (kgateway, GatewayClass `kgateway`)**
-fronted by **MetalLB** LoadBalancer IPs (pool `10.0.0.219-250`). So
-`overlays/k8squad-test/exposure.yaml` ships a `Gateway` + `HTTPRoute` instead,
-with the Gateway pinned to **`10.0.0.222`** (`spec.addresses`, stable across
-rebuilds, matches the cert SAN). TLS terminates at the Gateway; the receiver
-stays plain-HTTP on `:8443`.
+fronted by a **MetalLB** LoadBalancer IP. So
+`overlays/k8squad-test/exposure.yaml` ships a `Gateway` + `HTTPRoute` instead.
+The LoadBalancer IP is pinned **out of band** (a MetalLB Service annotation —
+see the POLICY block in `exposure.yaml`); this public repo never states the
+internal LAN address. TLS terminates at the Gateway; the receiver stays
+plain-HTTP on `:8443`.
 
 Cluster prereqs (present on k8Squad test as of first deploy): **cert-manager**,
 **kgateway**, **MetalLB**. The TLS cert is **self-signed** (cert-manager
@@ -222,11 +223,11 @@ kubectl -n contentremixer rollout status deploy/contentremixer-operator
    `contentremixer-operator-webhook-tls` (admission) and `github-webhook-tls`
    (Gateway) show `READY=True`.
 2. **Gateway programmed:** `kubectl -n contentremixer get gateway contentremixer`
-   → `ADDRESS 10.0.0.222 PROGRAMMED True`.
+   → `ADDRESS <gateway-LB-IP> PROGRAMMED True` (the out-of-band pinned IP).
 3. **TLS reachable (from the LAN):**
-   `curl -sk -X POST https://10.0.0.222/github/webhook -H 'Content-Type: application/json' -d '{"action":"opened","repository":{"full_name":"x/y"}}'`
+   `curl -sk -X POST https://<gateway-LB-IP>/github/webhook -H 'Content-Type: application/json' -d '{"action":"opened","repository":{"full_name":"x/y"}}'`
    → **HTTP 200** (receiver accepts/acks); a malformed body returns `400`. The
-   served cert SAN is `recycler.k8squad.test` + `IP:10.0.0.222`.
+   served cert SAN is `recycler.k8squad.test`.
 4. **Admission webhook:** creating a second `default: true` ModelProfile is
    rejected ("another ModelProfile … is already the default") — proves the
    admission path + self-signed CA injection.
@@ -271,7 +272,67 @@ GitHub receiver stays **ack-only** (the state the ISI-7185 dry-run observed).
 >    (`distroless/static:nonroot`) manager image needs **no** git binary. Only
 >    the throwaway init container carries `git`.
 
-### Option A — Cloudflare Tunnel (RECOMMENDED)
+> **Edge choice (ISI-7112, board + CEO):** **Option C — Tailscale Funnel** is
+> the chosen turnkey path. **Option A (Cloudflare Tunnel)** and **Option B
+> (router port-forward)** are kept as documented fallbacks.
+
+### Option C — Tailscale Funnel (RECOMMENDED; ISI-7126/ISI-7784)
+
+No domain to own (the public host is `https://recycler.<tailnet>.ts.net`), no
+router/WAN change, no home-IP exposure, works through CGNAT, and the homelab
+already runs Tailscale. Funnel terminates TLS at the tailnet edge with a
+**Let's-Encrypt, GitHub-trusted cert** — so **this option satisfies the
+"GitHub-trusted cert" requirement for free** (no on-cluster ACME issuer). Funnel
+only serves public ports **443 / 8443 / 10000**; the webhook lands on **443**.
+`tailscale-funnel.example.yaml` in this overlay is the ready Tailscale-operator
+`Ingress` (SHAPE ONLY, not in `kustomization.yaml`). Its two path rules put
+**`/github/webhook` → operator-webhook:8443** and **`/` → booth:8080** behind
+the single Funnel host, so one public hostname fronts both the webhook and the
+board UI (ISI-7784).
+
+> **Homelab tailnet status (verified ISI-7784):** on the ContentRemixer homelab
+> tailnet, Funnel is enabled in the ACL (`nodeAttrs` → `funnel`), HTTPS certs +
+> MagicDNS are on, and funnel-ports `443,8443,10000` are authorized. The kgateway
+> `exposure.yaml` HTTP listener (`:80`) now path-routes `/github/webhook` → the
+> receiver and `/` → booth, so a TLS-terminating edge can forward plain HTTP to
+> it and still land both backends correctly. The **only** remaining owner action
+> is minting the operator credential (step 1). (Tailnet name and internal IPs
+> are kept out of this public repo — see the `exposure.yaml` IP POLICY block.)
+
+1. **[owner / tailnet-admin]** Mint a Tailscale **OAuth client** (tags
+   `tag:k8s-operator`,`tag:k8s`) — or a reusable **auth key** — for the
+   Kubernetes operator. (Funnel/HTTPS/MagicDNS are already on for this tailnet;
+   see the status note above.) The OAuth client/auth key cannot be minted from
+   the node CLI — it needs the Tailscale admin console or an API access token.
+2. **[agent]** Install the Tailscale Kubernetes operator (owns
+   `ingressClassName: tailscale`) with that credential — e.g. via the upstream
+   `tailscale/tailscale-operator` Helm chart — then apply the Funnel Ingress:
+   ```sh
+   helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+     -n tailscale --create-namespace \
+     --set-string oauth.clientId="$TS_OAUTH_ID" \
+     --set-string oauth.clientSecret="$TS_OAUTH_SECRET"
+   kubectl apply -f deploy/overlays/k8squad-test/tailscale-funnel.example.yaml
+   kubectl -n contentremixer get ingress contentremixer-funnel \
+     -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'   # recycler.<tailnet>.ts.net
+   ```
+   Public host is now `https://recycler.<tailnet>.ts.net/github/webhook` (and
+   `https://recycler.<tailnet>.ts.net/` for the board UI).
+
+> **Quick interim edge (no operator): node-level Funnel.** Any machine already on
+> the tailnet that can reach the kgateway LoadBalancer IP (`<gateway-LB-IP>:80`)
+> can serve the edge directly, giving `https://<node>.<tailnet>.ts.net`:
+> ```sh
+> sudo tailscale set --operator=$USER            # one-time, grants non-root serve/funnel
+> tailscale serve --bg --https=443 http://<gateway-LB-IP>:80
+> tailscale funnel --bg 443
+> tailscale funnel status                        # shows the public URL
+> ```
+> This needs root (or the one-time `--operator` grant) on that node. It fronts
+> both backends via the kgateway `:80` path routing, same as the operator path,
+> but the hostname is the node's, not the dedicated `recycler` subdomain.
+
+### Option A — Cloudflare Tunnel (fallback)
 
 No router/WAN change, no home-IP exposure, and Cloudflare terminates TLS at its
 edge with a trusted cert — so **this option satisfies the "GitHub-trusted cert"
@@ -293,11 +354,12 @@ this overlay is the ready cloudflared Deployment (SHAPE ONLY, not in
 
 ### Option B — Router port-forward + ACME cert
 
-Forward WAN `:443` → `10.0.0.222` and serve a real cert on the Gateway. Exposes
-the home WAN IP and is fragile on a dynamic IP; prefer Option A.
+Forward WAN `:443` → the Gateway LoadBalancer IP and serve a real cert on the
+Gateway. Exposes the home WAN IP and is fragile on a dynamic IP; prefer Option C
+(or A).
 
-1. **[owner]** Port-forward WAN `:443` → `10.0.0.222:443` on the homelab router,
-   and add a public DNS `A` record `recycler.<domain>` → <home WAN IP>.
+1. **[owner]** Port-forward WAN `:443` → `<gateway-LB-IP>:443` on the homelab
+   router, and add a public DNS `A` record `recycler.<domain>` → <home WAN IP>.
 2. **[owner]** Provide an ACME issuer credential (e.g. a Cloudflare API token for
    DNS-01, or open `:80` for HTTP-01).
 3. **[agent]** Replace the self-signed `github-webhook-tls` Certificate in
@@ -321,7 +383,12 @@ the home WAN IP and is fragile on a dynamic IP; prefer Option A.
    # kind: ClusterIssuer}; dnsNames: [recycler.<domain>]; drop ipAddresses.
    ```
 
-### Shared steps (both options)
+### Shared steps (all options)
+
+> Public host: **Option C** → `https://recycler.<tailnet>.ts.net`, **Option A**
+> → `https://recycler.<domain>` (Cloudflare), **Option B** → your public DNS
+> host. Substitute it for `recycler.<domain>` in the Payload URL below. (The
+> concrete tailnet name is an internal detail, kept out of this public repo.)
 
 3. **Secrets** (out-of-band, never in repo — see "Secrets mechanism" above):
    - **[agent]** `github-webhook` HMAC — generate a fresh random secret; it only

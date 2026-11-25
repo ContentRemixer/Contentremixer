@@ -107,6 +107,22 @@ type Writer interface {
 	Write(ctx context.Context, rc RunContext, s Sample) (Mix, error)
 }
 
+// SEOOptimizer is the post-write, pre-check enrichment stage (ISI-7806):
+// a bounded second LLM pass that enriches Mix.Meta with SEO metadata the
+// downstream checker (seoMetaCheck) and the blog PR template already expect —
+// description, canonical_url, primary_keyword, tags — and optionally a JSON-LD
+// schema block.
+//
+// DEGRADE-NEVER-FAIL (unlike the fail-closed Checker): SEO advises on
+// discoverability, it must never block a run. On any error, a disabled
+// optimizer, or output it cannot parse, Optimize returns the Mix UNCHANGED —
+// generation keeps working with exactly what the Writer produced.
+type SEOOptimizer interface {
+	// Optimize enriches m.Meta from a bounded pass over m.Markdown and returns
+	// the enriched Mix. It never returns a Mix less complete than the input.
+	Optimize(ctx context.Context, rc RunContext, m Mix) (Mix, error)
+}
+
 // Severity levels for a checker Violation (design §4).
 const (
 	// SeverityBlock fails the gate closed — a run with any block violation

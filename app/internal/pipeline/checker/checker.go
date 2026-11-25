@@ -38,6 +38,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline"
 )
@@ -214,16 +215,19 @@ func seoMetaCheck(m pipeline.Mix) []pipeline.Violation {
 		})
 	}
 
-	// Metadata: description 140-160 chars, title tag <= 60.
+	// Metadata: description 140-160 chars, title tag <= 60. Length is counted
+	// in RUNES, not bytes (ISI-7805 review note: "chars" means runes — an
+	// em-dash/accent-heavy description measures short under a byte budget). The
+	// SEO optimizer (ISI-7806) owns the same rune budget end-to-end.
 	desc := firstMetaString(m.Meta, "description", "meta_description")
-	if n := len(strings.TrimSpace(desc)); n < 140 || n > 160 {
+	if n := utf8.RuneCountInString(strings.TrimSpace(desc)); n < 140 || n > 160 {
 		msg := "meta description missing (seo skill: 140-160 chars, verb + payoff)"
 		if n > 0 {
 			msg = fmt.Sprintf("meta description is %d chars (want 140-160)", n)
 		}
 		warn("meta.description", msg)
 	}
-	if n := len(strings.TrimSpace(m.Title)); n > 60 {
+	if n := utf8.RuneCountInString(strings.TrimSpace(m.Title)); n > 60 {
 		warn("title", fmt.Sprintf("title is %d chars (want <= 60)", n))
 	}
 

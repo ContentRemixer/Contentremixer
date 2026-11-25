@@ -551,3 +551,93 @@ func TestRunnerBlockedOpensNoPR(t *testing.T) {
 		t.Errorf("blocked comment must not re-leak the caught token:\n%s", blocked)
 	}
 }
+
+// stubSEO records that it ran and (unless failing) enriches the Mix meta. A
+// failing stub returns an error to prove the Runner degrades (never blocks).
+type stubSEO struct {
+	called bool
+	fail   bool
+}
+
+func (s *stubSEO) Optimize(_ context.Context, _ pipeline.RunContext, m pipeline.Mix) (pipeline.Mix, error) {
+	s.called = true
+	if s.fail {
+		return m, fmt.Errorf("seo: gateway down")
+	}
+	meta := map[string]any{}
+	for k, v := range m.Meta {
+		meta[k] = v
+	}
+	meta["primary_keyword"] = "kubernetes secrets"
+	meta["canonical_url"] = "/blog/kubernetes-secrets"
+	m.Meta = meta
+	return m, nil
+}
+
+// TestRunnerSEOStageEnrichesMetaBetweenWriteAndCheck proves the SEO stage runs
+// (between Write and Check) and its enrichment reaches the assembled
+// recycled/<slug>/meta.yaml blob.
+func TestRunnerSEOStageEnrichesMetaBetweenWriteAndCheck(t *testing.T) {
+	fake := &fakeGitHub{}
+	srv := fake.server(t)
+	seoStage := &stubSEO{}
+	runner := newRunner(writer.GeneratorFunc(func(context.Context, writer.GenerateRequest) (writer.GenerateResponse, error) {
+		return writer.GenerateResponse{
+			Content: "# The boring fix for leaking secrets\n\nRotate early.\n\n## Steps\n\nOne at a time.\n",
+			Model:   "anthropic/claude-opus-4",
+		}, nil
+	}), &recordingComments{}, srv.URL)
+	runner.SEO = seoStage
+
+	out, err := runner.Run(context.Background(), runContext(), contentremixerv1alpha1.PRTargetSpec{}, testPAT)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !seoStage.called {
+		t.Fatal("SEO stage was never invoked")
+	}
+	if out.Blocked {
+		t.Fatal("run unexpectedly blocked")
+	}
+
+	// The enriched meta must have landed in a blob (the meta.yaml blob).
+	var found bool
+	fake.mu.Lock()
+	for _, c := range fake.calls {
+		if c.Method == http.MethodPost && strings.HasSuffix(c.Path, "/git/blobs") {
+			if content, _ := c.Body["content"].(string); strings.Contains(content, "primary_keyword") && strings.Contains(content, "kubernetes secrets") {
+				found = true
+			}
+		}
+	}
+	fake.mu.Unlock()
+	if !found {
+		t.Error("SEO-enriched meta (primary_keyword) did not reach the recycled meta.yaml blob")
+	}
+}
+
+// TestRunnerSEOFailureNeverBlocks proves DEGRADE-NEVER-FAIL wiring: a failing
+// SEO stage leaves the run working and opens the PR unchanged.
+func TestRunnerSEOFailureNeverBlocks(t *testing.T) {
+	fake := &fakeGitHub{}
+	srv := fake.server(t)
+	seoStage := &stubSEO{fail: true}
+	runner := newRunner(writer.GeneratorFunc(func(context.Context, writer.GenerateRequest) (writer.GenerateResponse, error) {
+		return writer.GenerateResponse{
+			Content: "# The boring fix for leaking secrets\n\nRotate early.\n\n## Steps\n\nOne at a time.\n",
+			Model:   "anthropic/claude-opus-4",
+		}, nil
+	}), &recordingComments{}, srv.URL)
+	runner.SEO = seoStage
+
+	out, err := runner.Run(context.Background(), runContext(), contentremixerv1alpha1.PRTargetSpec{}, testPAT)
+	if err != nil {
+		t.Fatalf("Run must not fail when SEO fails: %v", err)
+	}
+	if out.Blocked || out.PRNumber == 0 {
+		t.Fatalf("failing SEO must not block the run: %+v", out)
+	}
+	if !seoStage.called {
+		t.Fatal("SEO stage was never invoked")
+	}
+}

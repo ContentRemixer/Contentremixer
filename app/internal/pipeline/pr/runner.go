@@ -26,6 +26,10 @@ type Runner struct {
 	Analyzer pipeline.Analyzer
 	// Writer is pipeline stage F. Required.
 	Writer pipeline.Writer
+	// SEO is the post-write SEO enrichment stage (ISI-7806). Optional and
+	// DEGRADE-NEVER-FAIL: when nil the run is unchanged; when set it runs
+	// between Write and Check and never blocks the run.
+	SEO pipeline.SEOOptimizer
 	// Checker is pipeline stage G (Mastering). Required.
 	Checker pipeline.Checker
 	// Assembler is pipeline stage H (this package). Required.
@@ -64,6 +68,15 @@ func (r *Runner) Run(ctx context.Context, rc pipeline.RunContext, target content
 	if err != nil {
 		r.reportFailure(ctx, rc, token, "writing the "+rc.OutputFormat+" draft", err)
 		return RunOutcome{}, err
+	}
+	// SEO enrichment (ISI-7806) between Write and Check. DEGRADE-NEVER-FAIL:
+	// the optimizer returns the Mix unchanged on any failure, and even a
+	// returned error is non-fatal here — SEO never blocks a run, so we keep
+	// the pre-optimize Mix and carry on.
+	if r.SEO != nil {
+		if enriched, serr := r.SEO.Optimize(ctx, rc, mix); serr == nil {
+			mix = enriched
+		}
 	}
 	check, err := r.Checker.Check(ctx, mix)
 	if err != nil {

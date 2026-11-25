@@ -285,8 +285,93 @@ func PRBody(rc pipeline.RunContext, s pipeline.Sample, m pipeline.Mix) string {
 		Slug:         Slug(rc, s),
 		Summary:      summaryFromMarkdown(m.Markdown),
 		LinkedIssue:  fmt.Sprintf("#%d", rc.IssueNumber),
+		// SEO fields from the enriched Mix.Meta (ISI-7806); h2_outline and
+		// "sources present" are derived deterministically from the body so
+		// they are correct even when the SEO stage is disabled.
+		Title:           strings.TrimSpace(m.Title),
+		MetaDescription: metaStr(m.Meta, "description", "meta_description"),
+		CanonicalURL:    metaStr(m.Meta, "canonical_url"),
+		Tags:            metaTagsJoined(m.Meta),
+		PrimaryKeyword:  metaStr(m.Meta, "primary_keyword", "keyword"),
+		H2Outline:       h2Outline(m.Markdown),
+		Sources:         sourcesMarker(m.Markdown),
 	}
 	return renderTemplateBody(ct, pf) + "\n" + ClearanceBlock(rc, s, m)
+}
+
+// metaStr returns the first non-empty string value among meta[keys...].
+func metaStr(meta map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := meta[k].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// metaTagsJoined renders meta["tags"] (string, []string, or []any of strings)
+// as a comma-separated list for the PR template, "" when absent.
+func metaTagsJoined(meta map[string]any) string {
+	switch t := meta["tags"].(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case []string:
+		return strings.Join(t, ", ")
+	case []any:
+		var out []string
+		for _, v := range t {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+	return ""
+}
+
+// h2Outline lists the body's H2 (## ) headings in order, semicolon-joined, so
+// the blog template's "H2 outline confirmed" line ships the actual outline.
+// Fenced code is skipped so a shell/py comment is never read as a heading.
+func h2Outline(md string) string {
+	var hs []string
+	fenced := false
+	for _, line := range strings.Split(md, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if strings.HasPrefix(t, "## ") && !strings.HasPrefix(t, "### ") {
+			if h := strings.TrimSpace(strings.TrimPrefix(t, "##")); h != "" {
+				hs = append(hs, h)
+			}
+		}
+	}
+	return strings.Join(hs, "; ")
+}
+
+// sourcesMarker reports "Present" when the body carries a Sources/References
+// heading, else "" (the template renders it as an unchecked item).
+func sourcesMarker(md string) string {
+	fenced := false
+	for _, line := range strings.Split(md, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced || !strings.HasPrefix(t, "#") {
+			continue
+		}
+		h := strings.ToLower(strings.TrimLeft(t, "# "))
+		if strings.HasPrefix(h, "source") || strings.HasPrefix(h, "reference") {
+			return "Present"
+		}
+	}
+	return ""
 }
 
 // summaryFromMarkdown pulls a one-line summary from the Mix body: the first

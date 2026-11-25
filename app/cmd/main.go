@@ -10,6 +10,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -42,6 +43,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/checker"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/persona"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/pr"
+	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/seo"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/writer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/embed"
 	"github.com/ContentRemixer/Contentremixer/app/internal/rag/retrieve"
@@ -326,6 +328,16 @@ func main() {
 			Checker:   checker.New(),
 			Assembler: &pr.Assembler{GitHub: &pr.GitHubClient{}},
 			Comments:  &githubapp.GitHubClient{},
+		}
+		// SEO enrichment (ISI-7806): a bounded post-write LLM pass that fills
+		// Mix.Meta (description/canonical_url/primary_keyword/tags + JSON-LD)
+		// through the same gateway. Config-gated on SEO_OPTIMIZE_MODEL (the
+		// LiteLLM alias to use; mirrors the BOOTH_STYLE_SYNTH_MODEL precedent):
+		// unset leaves the stage unwired and runs are byte-for-byte as before.
+		// DEGRADE-NEVER-FAIL, so it never gates a run even when enabled.
+		if seoModel := strings.TrimSpace(os.Getenv("SEO_OPTIMIZE_MODEL")); seoModel != "" {
+			contentRunner.SEO = seo.New(gatewayClient, seoModel, seo.Guard{})
+			setupLog.Info("SEO optimizer enabled", "model", seoModel)
 		}
 		// Dispatcher seam (ISI-7393): content => inline pipeline, media =>
 		// either the k8s-Job strategy (default) or the substrate-actor strategy

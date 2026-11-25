@@ -116,6 +116,19 @@ type Prefill struct {
 	Slug         string
 	Summary      string
 	LinkedIssue  string // e.g. "#42"
+
+	// Type-specific SEO prefills (ISI-7806). Populated by PRBody from the
+	// SEO-enriched Mix.Meta so the blog template's checklist ships pre-filled
+	// instead of blank. Empty fields render exactly as the blank static
+	// template (RenderStaticTemplate passes the zero Prefill), so the
+	// generated .github template files never drift.
+	Title           string
+	MetaDescription string
+	CanonicalURL    string
+	Tags            string
+	PrimaryKeyword  string
+	H2Outline       string
+	Sources         string
 }
 
 const fillIn = "_fill in_"
@@ -206,13 +219,41 @@ func renderTemplateBody(contentType string, pf Prefill) string {
 	_, _ = fmt.Fprintf(&b, "### %s fields\n", heading)
 	_, _ = fmt.Fprintf(&b, "<!-- Driven by content/%s/meta.template.yaml (pr_template); kept in lock-step with Content CI field validation (C7/C8). -->\n", contentType)
 	for _, f := range typeFields[contentType] {
-		if f.Hint != "" {
+		switch val := typeValue(f.Key, pf); {
+		case val != "":
+			// Pre-filled from the SEO-enriched Mix: mark confirmed with value.
+			_, _ = fmt.Fprintf(&b, "- [x] **%s:** %s\n", f.Label, val)
+		case f.Hint != "":
 			_, _ = fmt.Fprintf(&b, "- [ ] **%s:** (%s)\n", f.Label, f.Hint)
-		} else {
+		default:
 			_, _ = fmt.Fprintf(&b, "- [ ] **%s:**\n", f.Label)
 		}
 	}
 	return b.String()
+}
+
+// typeValue resolves a type-specific field's pre-filled value from the
+// Prefill, "" when unknown or unset. Only the blog SEO fields are pre-filled
+// (ISI-7806); every other type-specific field has no prefill source yet and
+// renders as the blank checklist item.
+func typeValue(key string, pf Prefill) string {
+	switch key {
+	case "title":
+		return strings.TrimSpace(pf.Title)
+	case "meta_description":
+		return strings.TrimSpace(pf.MetaDescription)
+	case "canonical_url":
+		return strings.TrimSpace(pf.CanonicalURL)
+	case "tags":
+		return strings.TrimSpace(pf.Tags)
+	case "primary_keyword":
+		return strings.TrimSpace(pf.PrimaryKeyword)
+	case "h2_outline":
+		return strings.TrimSpace(pf.H2Outline)
+	case "sources":
+		return strings.TrimSpace(pf.Sources)
+	}
+	return ""
 }
 
 // staticClearanceChecklist is the human-facing Sample-clearance section in the

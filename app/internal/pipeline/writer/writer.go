@@ -31,6 +31,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -408,17 +409,26 @@ func metaDescription(draft string) string {
 	if len(words) == 0 {
 		return ""
 	}
+	// Budget is counted in RUNES, not bytes (ISI-7805 review note / ISI-7806:
+	// "chars" means runes end-to-end, matching seoMetaCheck and the SEO
+	// optimizer; em-dash/accent-heavy prose would otherwise pack short).
 	const maxLen = 160
 	var b strings.Builder
+	n := 0 // runes written so far
 	for _, w := range words {
-		add := w
-		if b.Len() > 0 {
-			add = " " + w
+		wr := utf8.RuneCountInString(w)
+		add := wr
+		if n > 0 {
+			add++ // the joining space
 		}
-		if b.Len()+len(add) > maxLen {
+		if n+add > maxLen {
 			break
 		}
-		b.WriteString(add)
+		if n > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(w)
+		n += add
 	}
 	// A single leading word longer than the ceiling: hard-cap on a rune
 	// boundary so the description stays non-empty and valid UTF-8.
@@ -440,12 +450,18 @@ func metaDescription(draft string) string {
 func stripInlineMarkdown(s string) string {
 	s = mdImageRe.ReplaceAllString(s, "")
 	s = mdLinkRe.ReplaceAllString(s, "$1")
+	// Reference-style links [text][ref] and [text][] collapse to their anchor
+	// text too (ISI-7805 review note): the P0 version only handled inline
+	// [text](url), so a reference label would otherwise leak "[text][ref]"
+	// literally into the description.
+	s = mdRefLinkRe.ReplaceAllString(s, "$1")
 	return strings.NewReplacer("**", "", "__", "", "`", "").Replace(s)
 }
 
 var (
-	mdImageRe = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
-	mdLinkRe  = regexp.MustCompile(`\[([^\]]+)\]\([^)]*\)`)
+	mdImageRe   = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+	mdLinkRe    = regexp.MustCompile(`\[([^\]]+)\]\([^)]*\)`)
+	mdRefLinkRe = regexp.MustCompile(`\[([^\]]+)\]\[[^\]]*\]`)
 )
 
 // RenderMetaYAML serializes a Mix meta map the way the PR assembler

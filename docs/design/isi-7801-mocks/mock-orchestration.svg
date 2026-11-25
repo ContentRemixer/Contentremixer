@@ -1,98 +1,122 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="620" viewBox="0 0 880 620" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="680" viewBox="0 0 880 680" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
   <style>
     .bg{fill:#0f172a}.card{fill:#1e293b}.border{stroke:#334155;stroke-width:1}
+    .field{fill:#0f172a;stroke:#334155;stroke-width:1}
+    .sel{fill:#273244;stroke:#6366f1;stroke-width:1}
     .h{fill:#f1f5f9}.t{fill:#e2e8f0}.m{fill:#94a3b8}.hd{fill:#64748b}
-    .input{fill:#0f172a;stroke:#334155;stroke-width:1}
-    .sel{fill:#0f172a;stroke:#334155;stroke-width:1}
+    .lbl{fill:#cbd5e1;font-size:11px;letter-spacing:.03em}
     .badgeS{fill:#14532d}.badgeStx{fill:#86efac}
-    .rowSel{fill:#273449}
+    .badgeW{fill:#5a3a10}.badgeWtx{fill:#fcd34d}
     .btn{fill:#334155}.btntx{fill:#e2e8f0}
     .accent{fill:#6366f1}.accenttx{fill:#ffffff}
-    .ghost{fill:none;stroke:#334155;stroke-width:1}
-    .arrow{stroke:#6366f1;stroke-width:1.5;fill:none;marker-end:url(#a)}
+    .rm{fill:#94a3b8}.caret{fill:#64748b}.arrow{stroke:#64748b;stroke-width:1.5;fill:none}
     text{font-size:13px}.hdr{font-size:11px;letter-spacing:.06em}
   </style>
-  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#6366f1"/></marker></defs>
-  <rect class="bg" width="880" height="620"/>
+  <rect class="bg" width="880" height="680"/>
+
   <!-- tabs -->
-  <text class="m" x="24" y="30" font-size="12">… Model profiles</text>
-  <text class="m" x="150" y="30" font-size="12">Agents</text>
-  <text class="h" x="212" y="30" font-size="12" font-weight="600">Orchestration</text>
-  <rect class="accent" x="210" y="38" width="86" height="2"/>
-  <line class="border" x1="24" y1="40" x2="856" y2="40"/>
+  <text class="m" x="24" y="34" font-size="12">Users &amp; roles</text>
+  <text class="m" x="120" y="34" font-size="12">Personas</text>
+  <text class="m" x="196" y="34" font-size="12">Reference repos</text>
+  <text class="m" x="308" y="34" font-size="12">Model profiles</text>
+  <text class="m" x="414" y="34" font-size="12">Agents</text>
+  <text class="h" x="474" y="34" font-size="12" font-weight="600">Orchestration</text>
+  <rect class="accent" x="472" y="42" width="84" height="2"/>
+  <line class="border" x1="24" y1="44" x2="856" y2="44"/>
 
-  <!-- LEFT: team list -->
-  <rect class="card border" x="24" y="56" width="300" height="540" rx="8"/>
-  <text class="h" x="40" y="84" font-size="14" font-weight="600">Agent teams</text>
-  <rect class="accent" x="256" y="68" width="56" height="26" rx="6"/>
-  <text class="accenttx" x="262" y="85" font-size="11">New team</text>
-  <line class="border" x1="40" y1="100" x2="308" y2="100"/>
-  <!-- selected row -->
-  <rect class="rowSel" x="32" y="110" width="284" height="44" rx="6"/>
-  <text class="t" x="44" y="130" font-weight="600">tutorial-default</text>
-  <rect class="badgeS" x="200" y="118" width="56" height="16" rx="4"/><text class="badgeStx" x="206" y="130" font-size="10">Default</text>
-  <text class="m" x="44" y="146" font-size="11">entry architect · 5 nodes · 4 handoffs</text>
-  <!-- row 2 -->
-  <text class="t" x="44" y="182">content-default</text>
-  <text class="m" x="44" y="198" font-size="11">entry writer · 1 node · 0 handoffs</text>
-  <line class="border" x1="40" y1="212" x2="308" y2="212"/>
-  <text class="hd" x="40" y="236" font-size="11">Exactly one team may be the</text>
-  <text class="hd" x="40" y="252" font-size="11">Default. Seeded teams can't be</text>
-  <text class="hd" x="40" y="268" font-size="11">deleted.</text>
+  <!-- card -->
+  <rect class="card border" x="24" y="64" width="832" height="600" rx="8"/>
+  <text class="h" x="44" y="94" font-size="15" font-weight="600">Orchestration</text>
+  <text class="m" x="44" y="113" font-size="12">Each team is one orchestration DAG: an entry node, agent-bound nodes, and directed hand-offs.</text>
+  <line class="border" x1="44" y1="124" x2="836" y2="124"/>
 
-  <!-- RIGHT: team editor -->
-  <rect class="card border" x="340" y="56" width="516" height="540" rx="8"/>
-  <text class="h" x="358" y="84" font-size="14" font-weight="600">Editing: tutorial-default</text>
+  <!-- vertical split -->
+  <line class="border" x1="300" y1="124" x2="300" y2="644"/>
 
-  <!-- entry -->
-  <text class="hd hdr" x="358" y="112">ENTRY</text>
-  <rect class="sel" x="358" y="120" width="180" height="32" rx="6"/>
-  <text class="t" x="370" y="141">architect</text><text class="m" x="518" y="141">▾</text>
+  <!-- ===== LEFT: team list ===== -->
+  <text class="hd hdr" x="44" y="150">TEAMS</text>
+  <rect class="btn" x="214" y="138" width="72" height="24" rx="6"/><text class="btntx" x="224" y="154" font-size="11">New team</text>
 
-  <!-- nodes -->
-  <text class="hd hdr" x="358" y="182">NODES</text>
-  <!-- header -->
-  <text class="hd" x="358" y="202" font-size="10">node id</text>
-  <text class="hd" x="470" y="202" font-size="10">agent</text>
+  <!-- selected team row -->
+  <rect class="sel" x="40" y="166" width="248" height="52" rx="6"/>
+  <text class="t" x="52" y="188" font-size="13" font-weight="600">tutorial-default</text>
+  <rect class="badgeS" x="200" y="174" width="56" height="18" rx="4"/><text class="badgeStx" x="206" y="187" font-size="11">Default</text>
+  <text class="m" x="52" y="208" font-size="11">entry: architect · 5 nodes · 4 handoffs</text>
+
+  <!-- content-default row -->
+  <rect class="field" x="40" y="228" width="248" height="52" rx="6"/>
+  <text class="t" x="52" y="250" font-size="13">content-default</text>
+  <text class="m" x="52" y="270" font-size="11">entry: writer · 1 node · 0 handoffs</text>
+
+  <text class="hd" x="44" y="606" font-size="10.5">Exactly one team may be Default</text>
+  <text class="hd" x="44" y="622" font-size="10.5">(runs when a tutorial names no team).</text>
+  <text class="hd" x="44" y="638" font-size="10.5">Seeded teams: Delete disabled.</text>
+
+  <!-- ===== RIGHT: team editor ===== -->
+  <text class="h" x="320" y="150" font-size="13" font-weight="600">Edit team · tutorial-default</text>
+  <text class="hd" x="700" y="150" font-size="11">GET → swap spec → PUT</text>
+
+  <!-- ENTRY -->
+  <text class="lbl" x="320" y="176">ENTRY NODE</text>
+  <rect class="field" x="320" y="182" width="200" height="28" rx="6"/>
+  <text class="t" x="330" y="201" font-size="12">architect</text>
+  <path class="caret" d="M500 193 l10 0 l-5 6 z"/>
+  <text class="hd" x="528" y="201" font-size="10.5">options = this team's node ids</text>
+
+  <!-- NODES -->
+  <text class="hd hdr" x="320" y="238">NODES  (id → agent)</text>
   <!-- node rows -->
-  <g>
-    <rect class="input" x="358" y="210" width="100" height="30" rx="6"/><text class="t" x="368" y="230" font-size="12">architect</text>
-    <rect class="sel" x="466" y="210" width="260" height="30" rx="6"/><text class="t" x="476" y="230" font-size="12">System Architect — architect</text><text class="m" x="706" y="230">▾</text>
-    <text class="m" x="738" y="230" font-size="11">Remove</text>
+  <g font-size="12">
+    <!-- r1 -->
+    <rect class="field" x="320" y="248" width="110" height="26" rx="5"/><text class="t" x="328" y="265">architect</text>
+    <rect class="field" x="438" y="248" width="300" height="26" rx="5"/><text class="t" x="446" y="265">System Architect — architect</text><path class="caret" d="M718 259 l10 0 l-5 6 z"/>
+    <text class="rm" x="748" y="266" font-size="14">×</text>
+    <!-- r2 -->
+    <rect class="field" x="320" y="280" width="110" height="26" rx="5"/><text class="t" x="328" y="297">research</text>
+    <rect class="field" x="438" y="280" width="300" height="26" rx="5"/><text class="t" x="446" y="297">Researcher — research</text><path class="caret" d="M718 291 l10 0 l-5 6 z"/>
+    <text class="rm" x="748" y="298" font-size="14">×</text>
+    <!-- r3 -->
+    <rect class="field" x="320" y="312" width="110" height="26" rx="5"/><text class="t" x="328" y="329">coding</text>
+    <rect class="field" x="438" y="312" width="300" height="26" rx="5"/><text class="t" x="446" y="329">Coding Specialist — coding</text><path class="caret" d="M718 323 l10 0 l-5 6 z"/>
+    <text class="rm" x="748" y="330" font-size="14">×</text>
+    <!-- r4 -->
+    <rect class="field" x="320" y="344" width="110" height="26" rx="5"/><text class="t" x="328" y="361">observability</text>
+    <rect class="field" x="438" y="344" width="300" height="26" rx="5"/><text class="t" x="446" y="361">Observability Specialist — observability</text><path class="caret" d="M718 355 l10 0 l-5 6 z"/>
+    <text class="rm" x="748" y="362" font-size="14">×</text>
+    <!-- r5 -->
+    <rect class="field" x="320" y="376" width="110" height="26" rx="5"/><text class="t" x="328" y="393">graphic</text>
+    <rect class="field" x="438" y="376" width="300" height="26" rx="5"/><text class="t" x="446" y="393">Graphic Designer — graphic</text><path class="caret" d="M718 387 l10 0 l-5 6 z"/>
+    <text class="rm" x="748" y="394" font-size="14">×</text>
   </g>
-  <g transform="translate(0,38)">
-    <rect class="input" x="358" y="210" width="100" height="30" rx="6"/><text class="t" x="368" y="230" font-size="12">coding</text>
-    <rect class="sel" x="466" y="210" width="260" height="30" rx="6"/><text class="t" x="476" y="230" font-size="12">Coding Specialist — coding</text><text class="m" x="706" y="230">▾</text>
-    <text class="m" x="738" y="230" font-size="11">Remove</text>
-  </g>
-  <g transform="translate(0,76)">
-    <rect class="input" x="358" y="210" width="100" height="30" rx="6"/><text class="t" x="368" y="230" font-size="12">graphic</text>
-    <rect class="sel" x="466" y="210" width="260" height="30" rx="6"/><text class="t" x="476" y="230" font-size="12">Graphic Designer — graphic</text><text class="m" x="706" y="230">▾</text>
-    <text class="m" x="738" y="230" font-size="11">Remove</text>
-  </g>
-  <text class="m" x="358" y="338" font-size="11">+ Add node</text>
+  <text class="accenttx" x="320" y="424" font-size="11" fill="#818cf8">+ Add node</text>
 
-  <!-- handoffs -->
-  <text class="hd hdr" x="358" y="378">HANDOFFS (EDGES)</text>
-  <g>
-    <rect class="sel" x="358" y="388" width="150" height="30" rx="6"/><text class="t" x="368" y="408" font-size="12">architect</text><text class="m" x="490" y="408">▾</text>
-    <text class="accenttx" x="518" y="408" fill="#6366f1">→</text>
-    <rect class="sel" x="538" y="388" width="150" height="30" rx="6"/><text class="t" x="548" y="408" font-size="12">coding</text><text class="m" x="670" y="408">▾</text>
-    <text class="m" x="700" y="408" font-size="11">Remove</text>
+  <!-- HANDOFFS -->
+  <text class="hd hdr" x="320" y="456">HANDOFFS  (from → to)</text>
+  <g font-size="12">
+    <!-- e1 -->
+    <rect class="field" x="320" y="466" width="150" height="26" rx="5"/><text class="t" x="328" y="483">architect</text><path class="caret" d="M452 477 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M480 479 l20 0 M494 474 l6 5 l-6 5"/>
+    <rect class="field" x="510" y="466" width="150" height="26" rx="5"/><text class="t" x="518" y="483">research</text><path class="caret" d="M642 477 l10 0 l-5 6 z"/>
+    <text class="rm" x="672" y="484" font-size="14">×</text>
+    <!-- e2 -->
+    <rect class="field" x="320" y="498" width="150" height="26" rx="5"/><text class="t" x="328" y="515">architect</text><path class="caret" d="M452 509 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M480 511 l20 0 M494 506 l6 5 l-6 5"/>
+    <rect class="field" x="510" y="498" width="150" height="26" rx="5"/><text class="t" x="518" y="515">coding</text><path class="caret" d="M642 509 l10 0 l-5 6 z"/>
+    <text class="rm" x="672" y="516" font-size="14">×</text>
+    <!-- e3 -->
+    <rect class="field" x="320" y="530" width="150" height="26" rx="5"/><text class="t" x="328" y="547">architect</text><path class="caret" d="M452 541 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M480 543 l20 0 M494 538 l6 5 l-6 5"/>
+    <rect class="field" x="510" y="530" width="150" height="26" rx="5"/><text class="t" x="518" y="547">observability</text><path class="caret" d="M642 541 l10 0 l-5 6 z"/>
+    <text class="rm" x="672" y="548" font-size="14">×</text>
+    <!-- e4 -->
+    <rect class="field" x="320" y="562" width="150" height="26" rx="5"/><text class="t" x="328" y="579">architect</text><path class="caret" d="M452 573 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M480 575 l20 0 M494 570 l6 5 l-6 5"/>
+    <rect class="field" x="510" y="562" width="150" height="26" rx="5"/><text class="t" x="518" y="579">graphic</text><path class="caret" d="M642 573 l10 0 l-5 6 z"/>
+    <text class="rm" x="672" y="580" font-size="14">×</text>
   </g>
-  <g transform="translate(0,38)">
-    <rect class="sel" x="358" y="388" width="150" height="30" rx="6"/><text class="t" x="368" y="408" font-size="12">architect</text><text class="m" x="490" y="408">▾</text>
-    <text x="518" y="408" fill="#6366f1">→</text>
-    <rect class="sel" x="538" y="388" width="150" height="30" rx="6"/><text class="t" x="548" y="408" font-size="12">graphic</text><text class="m" x="670" y="408">▾</text>
-    <text class="m" x="700" y="408" font-size="11">Remove</text>
-  </g>
-  <text class="m" x="358" y="478" font-size="11">+ Add handoff</text>
+  <text x="320" y="608" font-size="11" fill="#818cf8">+ Add handoff</text>
 
-  <!-- footer -->
-  <line class="border" x1="358" y1="500" x2="838" y2="500"/>
-  <text class="badgeStx" x="358" y="528" font-size="12">✓ valid DAG — entry reachable, no cycles</text>
-  <rect class="ghost" x="672" y="512" width="74" height="30" rx="6"/><text class="t" x="692" y="532" font-size="12">Cancel</text>
-  <rect class="accent" x="758" y="512" width="80" height="30" rx="6"/><text class="accenttx" x="784" y="532" font-size="12">Save</text>
-
-  <text class="hd" x="358" y="572" font-size="11">GET → swap spec.{entry,nodes,edges} → PUT /v1/agentteams · default &amp; owner preserved</text>
+  <!-- footer save/cancel -->
+  <rect class="btn" x="640" y="616" width="80" height="28" rx="7"/><text class="btntx" x="662" y="635" font-size="12">Cancel</text>
+  <rect class="accent" x="728" y="616" width="98" height="28" rx="7"/><text class="accenttx" x="748" y="635" font-size="12">Save</text>
 </svg>

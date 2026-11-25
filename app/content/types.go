@@ -112,15 +112,75 @@ type Anchor struct {
 	Quote string `json:"quote,omitempty"`
 }
 
+// MentionKind distinguishes the two directory namespaces a mention can target
+// (plan §6 P2): an agent persona or a human person.
+type MentionKind string
+
+const (
+	// MentionAgent references an agent persona (URI scheme agent://). A bare
+	// agent mention only notifies in P2; P3 turns it into tracked work.
+	MentionAgent MentionKind = "agent"
+	// MentionPerson references a human user (URI scheme person://).
+	MentionPerson MentionKind = "person"
+)
+
+// ValidMentionKind reports whether k is a known mention namespace.
+func ValidMentionKind(k MentionKind) bool {
+	switch k {
+	case MentionAgent, MentionPerson:
+		return true
+	}
+	return false
+}
+
+// Mention is a structured reference to an agent or person embedded in a comment
+// body (plan §6 P2). It is persisted as a span alongside the prose so P3 can
+// resolve mentions to tracked work server-side WITHOUT re-parsing the markdown:
+// Kind+Ref name the directory entry, Label is the display name captured at
+// mention time, and [Start,End) are character offsets into Body pointing at the
+// `[@Label](<kind>://<ref>)` machine form.
+type Mention struct {
+	Kind  MentionKind `json:"kind"`
+	Ref   string      `json:"ref"`
+	Label string      `json:"label"`
+	Start int         `json:"start"`
+	End   int         `json:"end"`
+}
+
+// AgentMention is one entry in the agent half of the @mention directory (plan
+// §6 P2). Ref is the stable id used in the agent://<ref> URI and the one P3
+// resolves to an AgentRequest; Label is the display name.
+type AgentMention struct {
+	Ref   string `json:"ref"`
+	Label string `json:"label"`
+}
+
+// DefaultAgentDirectory is the board-approved set of agent personas the first
+// `@` offers (plan §6 P2): Graphic Designer, Content Writer, Video Creator,
+// Code Reviewer. Kept here, in the domain, so the directory endpoint (P2) and
+// the mention→AgentRequest resolver (P3) share one source of truth for the
+// agent://<ref> namespace. The Graphic Designer ref aligns with
+// DefaultAssigneeAgent, the existing illustration-request assignee.
+func DefaultAgentDirectory() []AgentMention {
+	return []AgentMention{
+		{Ref: "graphic-designer", Label: DefaultAssigneeAgent},
+		{Ref: "content-writer", Label: "Content Writer"},
+		{Ref: "video-creator", Label: "Video Creator"},
+		{Ref: "code-reviewer", Label: "Code Reviewer"},
+	}
+}
+
 // Comment is one anchored inline comment. AuthorSubject is who wrote it; the
 // §6.3 gate reads the PARENT content's owner for visibility (peer review:
-// anyone who can read the document can read and add comments).
+// anyone who can read the document can read and add comments). Mentions holds
+// the structured @mention spans parsed from Body at write time (plan §6 P2).
 type Comment struct {
 	ID            string    `json:"id"`
 	ContentID     string    `json:"contentId"`
 	AuthorSubject string    `json:"author"`
 	Body          string    `json:"body"`
 	Anchor        Anchor    `json:"anchor"`
+	Mentions      []Mention `json:"mentions,omitempty"`
 	Resolved      bool      `json:"resolved"`
 	CreatedAt     time.Time `json:"createdAt"`
 }

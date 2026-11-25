@@ -10,6 +10,7 @@ import type {
   CreateIllustrationRequest,
   CreateReviewRequest,
   IllustrationRequest,
+  MentionDirectory,
   ReviewThread,
   UpdateContentRequest,
   UpdateIllustrationRequest,
@@ -26,6 +27,13 @@ export const contentApi = {
 
   update: (id: string, body: UpdateContentRequest) =>
     api.put<Content>(`/v1/content/${encodeURIComponent(id)}`, body),
+
+  // The @mention directory the comment composer sources (plan §6 P2): fixed
+  // agent personas + the username roster. Returned as two groups.
+  mentionDirectory: () =>
+    api
+      .get<MentionDirectory | null>("/v1/mention-directory")
+      .then((d) => d ?? { agents: [], people: [] }),
 
   listComments: (id: string) =>
     api.get<Comment[] | null>(`/v1/content/${encodeURIComponent(id)}/comments`).then(arr),

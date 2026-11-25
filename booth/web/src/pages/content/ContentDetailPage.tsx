@@ -19,7 +19,7 @@ import {
   TabsTrigger,
   useToast,
 } from "../../ui";
-import type { BadgeTone } from "../../ui";
+import type { BadgeTone, Mentionable, MentionSpan } from "../../ui";
 import {
   ChevronRightIcon,
   CommentIcon,
@@ -91,6 +91,8 @@ export function ContentDetailPage() {
   const [composerSeed, setComposerSeed] = useState("");
   const [illusAnchor, setIllusAnchor] = useState<Anchor | undefined>(undefined);
   const [illusOpen, setIllusOpen] = useState(false);
+  // Agents + people the composer's `@` autocomplete offers (plan §6 P2).
+  const [mentionables, setMentionables] = useState<Mentionable[]>([]);
 
   const [commentBusy, setCommentBusy] = useState(false);
   const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
@@ -130,6 +132,33 @@ export function ContentDetailPage() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Load the @mention directory once; a failure just leaves the composer
+  // without autocomplete (comments still work).
+  useEffect(() => {
+    let live = true;
+    contentApi
+      .mentionDirectory()
+      .then((d) => {
+        if (!live) return;
+        const map = (e: { id: string; name: string; role?: string }, isAgent: boolean): Mentionable => ({
+          id: e.id,
+          name: e.name,
+          role: e.role,
+          isAgent,
+        });
+        setMentionables([
+          ...d.agents.map((a) => map(a, true)),
+          ...d.people.map((p) => map(p, false)),
+        ]);
+      })
+      .catch(() => {
+        /* no directory → no autocomplete */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // Highlights are derived from the anchored comments plus the live selection
   // the author is about to comment on.
@@ -242,11 +271,15 @@ export function ContentDetailPage() {
     clearSelection();
   }
 
-  async function submitComment(text: string) {
+  async function submitComment(text: string, mentions: MentionSpan[]) {
     if (!pendingAnchor) return;
     setCommentBusy(true);
     try {
-      const created = await contentApi.addComment(id, { body: text, anchor: pendingAnchor });
+      const created = await contentApi.addComment(id, {
+        body: text,
+        anchor: pendingAnchor,
+        mentions: mentions.length > 0 ? mentions : undefined,
+      });
       setComments((prev) => [...prev, created]);
       setPendingAnchor(null);
       setComposerSeed("");
@@ -441,6 +474,7 @@ export function ContentDetailPage() {
                 comments={comments}
                 pendingAnchor={pendingAnchor}
                 composerSeed={composerSeed}
+                mentionables={mentionables}
                 activeCommentId={activeCommentId}
                 busy={commentBusy}
                 onFocus={setActiveCommentId}

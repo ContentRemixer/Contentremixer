@@ -115,10 +115,13 @@ type UpdateContentRequest struct {
 	Status *appcontent.ContentStatus `json:"status"`
 }
 
-// CreateCommentRequest is the POST /v1/content/{id}/comments payload.
+// CreateCommentRequest is the POST /v1/content/{id}/comments payload. Mentions
+// carries the structured @mention spans the composer parsed from Body (plan §6
+// P2) so P3 can resolve them without re-parsing prose.
 type CreateCommentRequest struct {
-	Body   string            `json:"body"`
-	Anchor appcontent.Anchor `json:"anchor"`
+	Body     string               `json:"body"`
+	Anchor   appcontent.Anchor    `json:"anchor"`
+	Mentions []appcontent.Mention `json:"mentions"`
 }
 
 // CreateReviewRequest is the POST /v1/content/{id}/reviews payload. An empty
@@ -270,12 +273,27 @@ func (s *Store) CreateComment(ctx context.Context, sess auth.Session, contentID 
 	if req.Anchor.Start < 0 || req.Anchor.End < req.Anchor.Start {
 		return appcontent.Comment{}, fmt.Errorf("%w: anchor must satisfy 0 <= start <= end", ErrBadRequest)
 	}
+	for i, m := range req.Mentions {
+		if !appcontent.ValidMentionKind(m.Kind) {
+			return appcontent.Comment{}, fmt.Errorf("%w: mention %d has unknown kind %q", ErrBadRequest, i, m.Kind)
+		}
+		if m.Ref == "" {
+			return appcontent.Comment{}, fmt.Errorf("%w: mention %d is missing a ref", ErrBadRequest, i)
+		}
+		// Offsets are advisory anchors into Body (the client computes them in
+		// UTF-16 units); only sanity-check their ordering so an encoding skew
+		// against Go's rune count can never false-reject a valid mention.
+		if m.Start < 0 || m.End < m.Start {
+			return appcontent.Comment{}, fmt.Errorf("%w: mention %d span must satisfy 0 <= start <= end", ErrBadRequest, i)
+		}
+	}
 	c := appcontent.Comment{
 		ID:            newID(),
 		ContentID:     contentID,
 		AuthorSubject: sess.Subject,
 		Body:          req.Body,
 		Anchor:        req.Anchor,
+		Mentions:      req.Mentions,
 	}
 	if err := s.db.InsertComment(ctx, c); err != nil {
 		s.audit(ctx, sess, verbCreate, kindComment, c.ID, false)

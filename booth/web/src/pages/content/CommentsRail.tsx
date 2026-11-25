@@ -1,4 +1,5 @@
 import { cx, CommentComposer, CommentThread, Button } from "../../ui";
+import type { Mentionable, MentionSpan } from "../../ui";
 import { timeAgo } from "./time";
 import type { Comment, Anchor } from "./types";
 
@@ -13,10 +14,12 @@ export interface CommentsRailProps {
   pendingAnchor: Anchor | null;
   /** Seed text the composer opens with (e.g. a pre-filled @mention). */
   composerSeed?: string;
+  /** Agents + people the composer's `@` autocomplete offers (plan §6 P2). */
+  mentionables?: Mentionable[];
   activeCommentId: string | null;
   busy: boolean;
   onFocus: (commentId: string) => void;
-  onSubmit: (body: string) => void;
+  onSubmit: (body: string, mentions: MentionSpan[]) => void;
   onCancelCompose: () => void;
 }
 
@@ -24,6 +27,7 @@ export function CommentsRail({
   comments,
   pendingAnchor,
   composerSeed = "",
+  mentionables,
   activeCommentId,
   busy,
   onFocus,
@@ -45,6 +49,7 @@ export function CommentsRail({
             key={`${pendingAnchor.start}:${composerSeed}`}
             autoFocus
             initialValue={composerSeed}
+            mentionables={mentionables}
             submitLabel="Comment"
             busy={busy}
             onSubmit={onSubmit}

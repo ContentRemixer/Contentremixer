@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS booth.comments (
 );
 CREATE INDEX IF NOT EXISTS comments_content_idx ON booth.comments (content_id);
 
+-- Structured @mention spans on a comment (plan §6 P2): a JSONB array of
+-- {kind,ref,label,start,end} so P3 can resolve mentions to tracked work
+-- server-side without re-parsing prose. Added forward-only so existing rows
+-- keep NULL (read back as an empty slice).
+ALTER TABLE booth.comments ADD COLUMN IF NOT EXISTS mentions JSONB;
+
 -- Peer-review threads and their messages.
 CREATE TABLE IF NOT EXISTS booth.review_threads (
     id         TEXT        PRIMARY KEY,

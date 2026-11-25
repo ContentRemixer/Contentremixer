@@ -147,22 +147,31 @@ func (s *Store) DeleteContent(ctx context.Context, id string) error {
 
 // --- comments -------------------------------------------------------------
 
-// InsertComment stores a new anchored comment as-is.
+// InsertComment stores a new anchored comment as-is, persisting its structured
+// @mention spans as JSONB (nil/empty → SQL NULL).
 func (s *Store) InsertComment(ctx context.Context, c Comment) error {
+	var mentions []byte
+	if len(c.Mentions) > 0 {
+		var err error
+		if mentions, err = json.Marshal(c.Mentions); err != nil {
+			return fmt.Errorf("content: marshal mentions: %w", err)
+		}
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO booth.comments (id, content_id, author_subject, body, anchor_start, anchor_end, anchor_quote, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
-		c.ID, c.ContentID, c.AuthorSubject, c.Body, c.Anchor.Start, c.Anchor.End, c.Anchor.Quote)
+INSERT INTO booth.comments (id, content_id, author_subject, body, anchor_start, anchor_end, anchor_quote, mentions, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+		c.ID, c.ContentID, c.AuthorSubject, c.Body, c.Anchor.Start, c.Anchor.End, c.Anchor.Quote, mentions)
 	if err != nil {
 		return fmt.Errorf("content: insert comment: %w", err)
 	}
 	return nil
 }
 
-// ListComments returns one document's comments oldest-first.
+// ListComments returns one document's comments oldest-first, each with its
+// structured @mention spans attached.
 func (s *Store) ListComments(ctx context.Context, contentID string) ([]Comment, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id, content_id, author_subject, body, anchor_start, anchor_end, anchor_quote, resolved, created_at
+SELECT id, content_id, author_subject, body, anchor_start, anchor_end, anchor_quote, mentions, resolved, created_at
   FROM booth.comments WHERE content_id = $1 ORDER BY created_at ASC`, contentID)
 	if err != nil {
 		return nil, fmt.Errorf("content: list comments: %w", err)
@@ -171,9 +180,15 @@ SELECT id, content_id, author_subject, body, anchor_start, anchor_end, anchor_qu
 	var out []Comment
 	for rows.Next() {
 		var c Comment
+		var mentions []byte
 		if err := rows.Scan(&c.ID, &c.ContentID, &c.AuthorSubject, &c.Body,
-			&c.Anchor.Start, &c.Anchor.End, &c.Anchor.Quote, &c.Resolved, &c.CreatedAt); err != nil {
+			&c.Anchor.Start, &c.Anchor.End, &c.Anchor.Quote, &mentions, &c.Resolved, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("content: scan comment: %w", err)
+		}
+		if len(mentions) > 0 {
+			if err := json.Unmarshal(mentions, &c.Mentions); err != nil {
+				return nil, fmt.Errorf("content: unmarshal mentions: %w", err)
+			}
 		}
 		out = append(out, c)
 	}

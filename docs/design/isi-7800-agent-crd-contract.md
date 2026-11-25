@@ -140,6 +140,33 @@ Markers: `+kubebuilder:object:root=true`, `+kubebuilder:subresource:status`,
 `+kubebuilder:resource:shortName=agent`, print columns `Role`, `SkillKind`,
 `Model` (`.spec.modelProfile`), `Default`.
 
+### 2.2 Model resolution — model IS defined at the Agent level
+
+Yes: **each `Agent` carries its own model** via `spec.modelProfile` (the
+`litellmName` of a `ModelProfile`). This is deliberate and is the right altitude —
+model is an *agent* property, not a team or skill-kind property:
+
+- **Per-agent, not per-skillKind.** Two Agents can share a `skillKind` but run on
+  different models (e.g. a `coding` agent on a cheap model and a premium one on a
+  long-context model). Binding the model to the skill-kind registry would forbid that.
+- **Per-agent, not per-team.** An `AgentTeam` node only references an Agent
+  (`agentRef`); it inherits that Agent's model. So a team is pure topology and the
+  same Agent reused across teams keeps one model definition (no duplication/drift).
+
+The full resolution order (layered, each overriding the previous):
+
+1. **Global default** — the `ModelProfile` with `default: true` (today's "default" alias).
+2. **Per-Agent** — `Agent.spec.modelProfile` when non-empty and not `"default"`
+   (webhook rule A2 requires it to name a real `ModelProfile`).
+3. **Per-call** — a model-backed skill may still override for a single call via the
+   existing `orchestrator.SkillOutput.ModelUsed` (the §5 Sample-clearance field),
+   e.g. a draft pass on a cheap model then a polish pass on a premium one.
+
+So the answer to "should we define the model at the agent level as well?" is **it
+already is** (layer 2), on top of the global default (layer 1), with a per-call
+escape hatch (layer 3). No schema change needed; this subsection just makes the
+intent explicit for sign-off.
+
 ---
 
 ## 3. `AgentTeam` CRD (`contentremixer.io/v1alpha1`, admin-only)

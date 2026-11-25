@@ -71,6 +71,30 @@ var _ = Describe("ReferenceRepo controller + webhook (envtest)", func() {
 		Expect(got.Spec.LabelRoutes[0].OutputFormat).To(Equal("blog"))
 	})
 
+	It("accepts a ReferenceRepo with no tokenRef (GitHub App path) and still reaches Ready", func() {
+		// ISI-7836: tokenRef is optional — a repo onboarded via the GitHub App
+		// carries no PAT. The webhook HMAC secret is still required.
+		hook := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: ns},
+			Data:       map[string][]byte{"hmac": []byte("hooksecret")},
+		}
+		_ = k8sClient.Create(ctx, hook) // may already exist from a prior spec
+
+		rr := referenceRepo("crate-app")
+		rr.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{} // no PAT
+		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
+
+		got := &contentremixerv1alpha1.ReferenceRepo{}
+		Eventually(func(g Gomega) {
+			g.Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "crate-app"}, got)).To(Succeed())
+			// No tokenRef to resolve ⇒ TokenResolved is vacuously true (App path).
+			g.Expect(got.Status.TokenResolved).To(BeTrue())
+			ready := meta.FindStatusCondition(got.Status.Conditions, "Ready")
+			g.Expect(ready).NotTo(BeNil())
+			g.Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+		}).Should(Succeed())
+	})
+
 	It("fails closed (Ready=False, TokenResolved=False) when the PAT Secret is missing", func() {
 		rr := referenceRepo("crate-no-secret")
 		// Unique Secret names that do NOT exist (the shared github-pat /

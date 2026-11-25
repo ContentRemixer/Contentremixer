@@ -18,7 +18,16 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp/appauth"
 )
+
+// InstallationTokenSource mints a short-lived GitHub App installation token for
+// one installation. Implemented by *appauth.Minter; nil when the operator runs
+// PAT-only (no github-app Secret). Kept as an interface so the handler is
+// testable without RSA signing.
+type InstallationTokenSource interface {
+	InstallationToken(ctx context.Context, installationID int64) (string, error)
+}
 
 // maxBodyBytes caps a delivery body (GitHub issue payloads are well under this).
 const maxBodyBytes = 1 << 20 // 1 MiB
@@ -42,6 +51,10 @@ type Server struct {
 	// delivery path (analyzer → writer → checker → PR assembly, design §4).
 	// When nil the receiver stays ack-only (pre-H behavior).
 	Runner RouteRunner
+	// AppTokens, when non-nil, mints GitHub App installation tokens for
+	// ReferenceRepos that omit spec.tokenRef (ISI-7836). When a repo has a
+	// tokenRef the PAT still wins; AppTokens is the no-PAT fallback.
+	AppTokens InstallationTokenSource
 
 	// runs is the enqueue built from Runner in Start; tests may pre-set it.
 	runs *runQueue
@@ -61,6 +74,11 @@ type issuesEvent struct {
 	Repository struct {
 		FullName string `json:"full_name"`
 	} `json:"repository"`
+	// Installation is present on every delivery from a GitHub App (ISI-7836);
+	// its id selects which installation token to mint for repos with no PAT.
+	Installation struct {
+		ID json.RawMessage `json:"id"`
+	} `json:"installation"`
 }
 
 // NeedLeaderElection reports false: the delivery receiver serves on every
@@ -186,13 +204,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.secretValue(ctx, repoCR.Namespace, repoCR.Spec.TokenRef)
+	token, err := s.resolveToken(ctx, repoCR, &ev)
 	if err != nil {
-		log.Error(err, "resolving PAT", "repo", ev.Repository.FullName)
+		log.Error(err, "resolving write credential", "repo", ev.Repository.FullName)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	if err := s.Poster.PostComment(ctx, repoCR.Spec.Repo, ev.Issue.Number, string(token), ackComment(matched, unmapped)); err != nil {
+	if err := s.Poster.PostComment(ctx, repoCR.Spec.Repo, ev.Issue.Number, token, ackComment(matched, unmapped)); err != nil {
 		log.Error(err, "posting ack comment", "repo", repoCR.Spec.Repo, "issue", ev.Issue.Number)
 		http.Error(w, "failed to post ack", http.StatusBadGateway)
 		return
@@ -207,7 +225,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			req := RouteRequest{
 				Repo:        repoCR.Spec.Repo,
 				IssueNumber: ev.Issue.Number,
-				Token:       string(token),
+				Token:       token,
 				Route:       route,
 				SourcePath:  sourcePath,
 				Notes:       notes,
@@ -225,6 +243,29 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("acked recycle issue", "repo", repoCR.Spec.Repo, "issue", ev.Issue.Number, "routes", len(matched), "ignored", len(unmapped))
 	writeStatus(w, http.StatusOK, "acked: %d route(s), %d ignored", len(matched), len(unmapped))
+}
+
+// resolveToken returns the write credential for a delivery. A ReferenceRepo
+// with spec.tokenRef uses that PAT (unchanged legacy path); one without it
+// falls back to a GitHub App installation token minted from the delivery's
+// installation.id (ISI-7836). The returned string is a Bearer credential the
+// REST calls downstream (ack comment, PR assembly) accept identically.
+func (s *Server) resolveToken(ctx context.Context, repoCR *contentremixerv1alpha1.ReferenceRepo, ev *issuesEvent) (string, error) {
+	if repoCR.Spec.TokenRef.Name != "" {
+		tok, err := s.secretValue(ctx, repoCR.Namespace, repoCR.Spec.TokenRef)
+		if err != nil {
+			return "", err
+		}
+		return string(tok), nil
+	}
+	if s.AppTokens == nil {
+		return "", fmt.Errorf("ReferenceRepo %q has no spec.tokenRef and no GitHub App is configured", repoCR.Spec.Repo)
+	}
+	installationID := appauth.ParseInstallationID(ev.Installation.ID)
+	if installationID == 0 {
+		return "", fmt.Errorf("delivery for %q carries no installation.id; GitHub App not installed on this repo?", repoCR.Spec.Repo)
+	}
+	return s.AppTokens.InstallationToken(ctx, installationID)
 }
 
 // findReferenceRepo returns the ReferenceRepo whose spec.repo matches fullName

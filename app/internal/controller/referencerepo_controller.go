@@ -47,8 +47,14 @@ func (r *ReferenceRepoReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	status := repo.Status.DeepCopy()
 
-	// Resolve PAT Secret (TokenRef).
-	tokenErr := resolveSecretKey(ctx, r, repo.Namespace, repo.Spec.TokenRef)
+	// Resolve PAT Secret (TokenRef). Optional since ISI-7836: a ReferenceRepo
+	// with no tokenRef authenticates writes via a GitHub App installation token
+	// (minted per delivery from the github-app Secret), so an empty tokenRef is
+	// valid and reports TokenResolved=true (nothing to resolve — App path).
+	var tokenErr error
+	if repo.Spec.TokenRef.Name != "" {
+		tokenErr = resolveSecretKey(ctx, r, repo.Namespace, repo.Spec.TokenRef)
+	}
 	status.TokenResolved = tokenErr == nil
 	setRepoCondition(status, "TokenResolved", status.TokenResolved, tokenErr)
 

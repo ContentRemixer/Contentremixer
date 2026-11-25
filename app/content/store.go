@@ -270,7 +270,7 @@ func (s *Store) messagesFor(ctx context.Context, threadIDs []string) (map[string
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id, thread_id, author_subject, body, created_at
+SELECT id, thread_id, author_subject, body, is_agent, created_at
   FROM booth.review_messages WHERE thread_id = ANY($1) ORDER BY created_at ASC`, threadIDs)
 	if err != nil {
 		return nil, fmt.Errorf("content: list messages: %w", err)
@@ -278,7 +278,7 @@ SELECT id, thread_id, author_subject, body, created_at
 	defer rows.Close()
 	for rows.Next() {
 		var m ReviewMessage
-		if err := rows.Scan(&m.ID, &m.ThreadID, &m.AuthorSubject, &m.Body, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.ThreadID, &m.AuthorSubject, &m.Body, &m.IsAgent, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("content: scan message: %w", err)
 		}
 		out[m.ThreadID] = append(out[m.ThreadID], m)
@@ -295,9 +295,9 @@ func (s *Store) InsertMessage(ctx context.Context, m ReviewMessage) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
-INSERT INTO booth.review_messages (id, thread_id, author_subject, body, created_at)
-VALUES ($1, $2, $3, $4, now())`,
-		m.ID, m.ThreadID, m.AuthorSubject, m.Body); err != nil {
+INSERT INTO booth.review_messages (id, thread_id, author_subject, body, is_agent, created_at)
+VALUES ($1, $2, $3, $4, $5, now())`,
+		m.ID, m.ThreadID, m.AuthorSubject, m.Body, m.IsAgent); err != nil {
 		return fmt.Errorf("content: insert message: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE booth.review_threads SET updated_at = now() WHERE id = $1`, m.ThreadID); err != nil {
@@ -334,7 +334,8 @@ type RequestFilter struct {
 	VisibleTo string
 }
 
-// InsertIllustrationRequest stores a new request as-is.
+// InsertIllustrationRequest stores a new request as-is. An empty Kind defaults
+// to KindDesign (the original illustration flow) for back-compat.
 func (s *Store) InsertIllustrationRequest(ctx context.Context, r IllustrationRequest) error {
 	var anchor []byte
 	if r.Anchor != nil {
@@ -344,11 +345,14 @@ func (s *Store) InsertIllustrationRequest(ctx context.Context, r IllustrationReq
 			return fmt.Errorf("content: marshal anchor: %w", err)
 		}
 	}
+	if r.Kind == "" {
+		r.Kind = KindDesign
+	}
 	if _, err := s.pool.Exec(ctx, `
-INSERT INTO booth.illustration_requests (id, content_id, owner_subject, assigned_agent, status, brief, anchor, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
-		r.ID, r.ContentID, r.OwnerSubject, r.AssignedAgent, string(r.Status), r.Brief, anchor); err != nil {
-		return fmt.Errorf("content: insert illustration request: %w", err)
+INSERT INTO booth.illustration_requests (id, content_id, owner_subject, assigned_agent, kind, status, brief, anchor, thread_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())`,
+		r.ID, r.ContentID, r.OwnerSubject, r.AssignedAgent, string(r.Kind), string(r.Status), r.Brief, anchor, nullStr(r.ThreadID)); err != nil {
+		return fmt.Errorf("content: insert agent request: %w", err)
 	}
 	return nil
 }
@@ -356,13 +360,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())`,
 // GetIllustrationRequest returns one row by id, or ErrNotFound.
 func (s *Store) GetIllustrationRequest(ctx context.Context, id string) (IllustrationRequest, error) {
 	return s.scanRequest(s.pool.QueryRow(ctx, `
-SELECT id, content_id, owner_subject, assigned_agent, status, brief, anchor, created_at, updated_at
+SELECT id, content_id, owner_subject, assigned_agent, kind, status, brief, anchor, thread_id, created_at, updated_at
   FROM booth.illustration_requests WHERE id = $1`, id))
 }
 
 // ListIllustrationRequests returns rows matching the filter, newest-first.
 func (s *Store) ListIllustrationRequests(ctx context.Context, f RequestFilter) ([]IllustrationRequest, error) {
-	q := `SELECT id, content_id, owner_subject, assigned_agent, status, brief, anchor, created_at, updated_at
+	q := `SELECT id, content_id, owner_subject, assigned_agent, kind, status, brief, anchor, thread_id, created_at, updated_at
   FROM booth.illustration_requests`
 	var conds []string
 	var args []any
@@ -406,18 +410,23 @@ func (s *Store) ListIllustrationRequests(ctx context.Context, f RequestFilter) (
 // scanner is the shared row-scan surface of QueryRow and Rows.
 type scanner interface{ Scan(dest ...any) error }
 
-// scanRequest materializes one illustration_request row.
+// scanRequest materializes one illustration_requests (agent request) row.
 func (s *Store) scanRequest(row scanner) (IllustrationRequest, error) {
 	var r IllustrationRequest
-	var status string
+	var kind, status string
 	var anchor []byte
-	if err := row.Scan(&r.ID, &r.ContentID, &r.OwnerSubject, &r.AssignedAgent, &status, &r.Brief, &anchor, &r.CreatedAt, &r.UpdatedAt); err != nil {
+	var threadID *string
+	if err := row.Scan(&r.ID, &r.ContentID, &r.OwnerSubject, &r.AssignedAgent, &kind, &status, &r.Brief, &anchor, &threadID, &r.CreatedAt, &r.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return IllustrationRequest{}, ErrNotFound
 		}
-		return IllustrationRequest{}, fmt.Errorf("content: scan illustration request: %w", err)
+		return IllustrationRequest{}, fmt.Errorf("content: scan agent request: %w", err)
 	}
+	r.Kind = AgentRequestKind(kind)
 	r.Status = IllustrationStatus(status)
+	if threadID != nil {
+		r.ThreadID = *threadID
+	}
 	if anchor != nil {
 		var a Anchor
 		if err := json.Unmarshal(anchor, &a); err != nil {
@@ -426,6 +435,14 @@ func (s *Store) scanRequest(row scanner) (IllustrationRequest, error) {
 		r.Anchor = &a
 	}
 	return r, nil
+}
+
+// nullStr maps "" to a SQL NULL so an unset thread_id stays NULL (not "").
+func nullStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // UpdateIllustrationRequest patches status and/or assignee and returns the

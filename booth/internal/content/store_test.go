@@ -568,6 +568,98 @@ func TestGate_IllustrationTransitions(t *testing.T) {
 	}
 }
 
+// TestGate_AgentRequestKindAndDelivery covers the ISI-7820 generalization:
+// typed kinds (default design, back-compat), thread linkage validated against
+// the parent document, and the result-callback write path (delivering an agent
+// request posts its deliverable back into the linked thread as an isAgent
+// message).
+func TestGate_AgentRequestKindAndDelivery(t *testing.T) {
+	s, _, _ := newTestGate()
+	ctx := context.Background()
+	alice := devrel("alice")
+	doc := mustCreate(t, s, alice, "A1")
+
+	// Back-compat: no kind defaults to design.
+	def, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "hero"})
+	if err != nil {
+		t.Fatalf("create default: %v", err)
+	}
+	if def.Kind != appcontent.KindDesign {
+		t.Fatalf("default kind: want design, got %q", def.Kind)
+	}
+
+	// Unknown kind is rejected.
+	if _, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "x", Kind: "bogus"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("bad kind: want ErrBadRequest, got %v", err)
+	}
+
+	// A mention-as-work request: kind=content, linked to a review thread.
+	thread, err := s.CreateReview(ctx, alice, doc.ID, CreateReviewRequest{Subject: "Para 2", Body: "@DevRel Writer please expand this"})
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	writer := "DevRel Writer"
+	req, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{
+		Brief: "expand paragraph 2", Kind: appcontent.KindContent,
+		AssignedAgent: writer, ThreadID: thread.ID,
+		Anchor: &appcontent.Anchor{Start: 0, End: 5},
+	})
+	if err != nil {
+		t.Fatalf("create content request: %v", err)
+	}
+	if req.Kind != appcontent.KindContent || req.ThreadID != thread.ID {
+		t.Fatalf("content request wrong: %+v", req)
+	}
+	// It lands in the assignee's work queue.
+	q, err := s.ListIllustrationRequests(ctx, admin("root"), writer, "")
+	if err != nil || len(q) != 1 || q[0].ID != req.ID {
+		t.Fatalf("writer queue: %v %+v", err, q)
+	}
+
+	// Cross-document thread linkage is rejected.
+	other := mustCreate(t, s, alice, "A2")
+	if _, err := s.CreateIllustrationRequest(ctx, alice, other.ID, CreateIllustrationRequestPayload{Brief: "x", ThreadID: thread.ID}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("cross-doc thread: want ErrBadRequest, got %v", err)
+	}
+
+	agent := devrel(writer)
+	delivered := appcontent.IllustrationDelivered
+	inProgress := appcontent.IllustrationInProgress
+
+	// A deliverable not accompanying a delivered transition is rejected.
+	if _, err := s.UpdateIllustrationRequest(ctx, agent, req.ID, UpdateIllustrationRequestPayload{Status: &inProgress, Deliverable: "oops"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("deliverable on non-delivered: want ErrBadRequest, got %v", err)
+	}
+	// A deliverable on a request with no linked thread is rejected.
+	if _, err := s.UpdateIllustrationRequest(ctx, devrel(appcontent.DefaultAssigneeAgent), def.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "no thread"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("deliverable without thread: want ErrBadRequest, got %v", err)
+	}
+
+	// The happy path: the agent delivers; the result posts back as an isAgent
+	// message in the linked thread.
+	if _, err := s.UpdateIllustrationRequest(ctx, agent, req.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "Here is the expanded copy."}); err != nil {
+		t.Fatalf("agent deliver: %v", err)
+	}
+	threads, err := s.ListReviewThreads(ctx, alice, doc.ID)
+	if err != nil {
+		t.Fatalf("list threads: %v", err)
+	}
+	var got *appcontent.ReviewMessage
+	for i := range threads {
+		if threads[i].ID != thread.ID {
+			continue
+		}
+		msgs := threads[i].Messages
+		got = &msgs[len(msgs)-1]
+	}
+	if got == nil {
+		t.Fatal("linked thread not found")
+	}
+	if !got.IsAgent || got.Body != "Here is the expanded copy." || got.AuthorSubject != writer {
+		t.Fatalf("deliverable message wrong: %+v", got)
+	}
+}
+
 func TestGate_BadRequests(t *testing.T) {
 	s, _, _ := newTestGate()
 	ctx := context.Background()

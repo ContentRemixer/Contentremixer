@@ -370,6 +370,59 @@ func TestContentRoutes_Lifecycle(t *testing.T) {
 
 // TestContentRoutes_Scoping covers the §6.3 denial over HTTP: another DevRel
 // cannot read, comment on, or delete alice's document.
+// TestContentRoutes_AgentRequests exercises the ISI-7820 generalization over
+// HTTP: the /v1/agent-requests route, a typed thread-linked request, and the
+// deliverable callback that posts the agent's result back into the thread.
+func TestContentRoutes_AgentRequests(t *testing.T) {
+	h, codec, _ := newContentTestServer(t)
+	alice := tokenFor(t, codec, "alice", auth.RoleDevRel)
+	writer := tokenFor(t, codec, "DevRel Writer", auth.RoleDevRel)
+
+	rec := do(t, h, "POST", "/v1/content", alice, `{"title":"notes","bodyMd":"# intro"}`)
+	var doc appcontent.Content
+	_ = json.Unmarshal(rec.Body.Bytes(), &doc)
+
+	// A mention in a thread, then a typed, thread-linked request on the generalized route.
+	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/reviews", alice, `{"subject":"para 2","body":"@DevRel Writer expand"}`)
+	var thread appcontent.ReviewThread
+	_ = json.Unmarshal(rec.Body.Bytes(), &thread)
+
+	rec = do(t, h, "POST", "/v1/agent-requests", alice,
+		`{"contentId":"`+doc.ID+`","brief":"expand para 2","kind":"content","assignedAgent":"DevRel Writer","threadId":"`+thread.ID+`","anchor":{"start":0,"end":5}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create agent request: %d %s", rec.Code, rec.Body.String())
+	}
+	var req appcontent.AgentRequest
+	if err := json.Unmarshal(rec.Body.Bytes(), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Kind != appcontent.KindContent || req.ThreadID != thread.ID {
+		t.Fatalf("request wrong: %+v", req)
+	}
+
+	// Unknown kind → 400.
+	rec = do(t, h, "POST", "/v1/agent-requests", alice, `{"contentId":"`+doc.ID+`","brief":"x","kind":"bogus"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad kind: want 400, got %d", rec.Code)
+	}
+
+	// The writer sees it in its queue via the alias route too.
+	rec = do(t, h, "GET", "/v1/illustration-requests?assignee="+url.QueryEscape("DevRel Writer"), writer, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), req.ID) {
+		t.Fatalf("writer queue: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The writer delivers with a deliverable → it posts back into the thread.
+	rec = do(t, h, "PATCH", "/v1/agent-requests/"+req.ID, writer, `{"status":"delivered","deliverable":"Here is the expanded copy."}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deliver: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, "GET", "/v1/content/"+doc.ID+"/reviews", alice, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Here is the expanded copy.") || !strings.Contains(rec.Body.String(), `"isAgent":true`) {
+		t.Fatalf("deliverable not in thread: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestContentRoutes_Scoping(t *testing.T) {
 	h, codec, cs := newContentTestServer(t)
 	alice := tokenFor(t, codec, "alice", auth.RoleDevRel)

@@ -27,6 +27,11 @@ export const DialogContent = forwardRef<
         ref={ref}
         className={cx(
           "fixed left-1/2 top-1/2 z-50 w-[min(94vw,32rem)] -translate-x-1/2 -translate-y-1/2",
+          // Cap at the viewport and scroll internally so tall dialogs (e.g. the
+          // ReferenceRepo create form) keep their footer buttons reachable —
+          // otherwise the fixed-position content overflows the viewport and the
+          // footer can't be scrolled into view.
+          "flex max-h-[92vh] flex-col overflow-y-auto",
           "rounded-lg border border-border bg-surface shadow-card focus:outline-none",
           className,
         )}

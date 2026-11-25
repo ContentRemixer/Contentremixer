@@ -54,6 +54,13 @@ export interface CrPanelConfig {
   /** Shown when create is omitted, to explain how the kind is managed. */
   createNote?: string;
   /**
+   * Bespoke create control rendered in the header action slot instead of the
+   * built-in flat-create "New" button — for kinds whose nested spec the generic
+   * CreateDialog cannot express (e.g. ReferenceRepo, ISI-7782). Receives refresh
+   * so the control can reload the list after a successful create.
+   */
+  customCreate?: (refresh: () => void) => ReactNode;
+  /**
    * Extra per-row controls rendered before the Delete button — used for scoped,
    * in-place field editors (e.g. ReferenceRepo labelRoutes) on kinds whose full
    * object stays GitOps-authored. Receives refresh so the editor can reload.
@@ -88,7 +95,9 @@ export function CrPanel(cfg: CrPanelConfig) {
         title={cfg.title}
         subtitle={cfg.subtitle}
         action={
-          cfg.create ? (
+          cfg.customCreate ? (
+            cfg.customCreate(refresh)
+          ) : cfg.create ? (
             <Button size="sm" onClick={() => setAdding(true)}>
               New
             </Button>

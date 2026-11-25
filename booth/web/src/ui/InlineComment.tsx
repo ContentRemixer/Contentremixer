@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { cx } from "./cx";
 import { Avatar } from "./Avatar";
+import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { Textarea } from "./Field";
 import { CommentIcon } from "../components/icons";
@@ -22,6 +23,9 @@ export interface InlineCommentItem {
   body: string;
   /** Pre-formatted relative time ("2h ago"); formatting is the caller's job. */
   timeLabel?: string;
+  /** Optional status pill shown next to the author, e.g. "Delivered" for an
+   * agent's posted-back AgentRequest result (ISI-7821/M4). */
+  badge?: string;
 }
 
 /**
@@ -70,6 +74,7 @@ function CommentRow({ item }: { item: InlineCommentItem }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-xs font-semibold text-text">{item.author.name}</span>
+          {item.badge ? <Badge tone="success" dot>{item.badge}</Badge> : null}
           {item.timeLabel ? <span className="text-[11px] text-text-muted">{item.timeLabel}</span> : null}
         </div>
         <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text">{item.body}</p>

@@ -109,6 +109,16 @@ func (f *memRepo) ListComments(_ context.Context, contentID string) ([]appconten
 	return out, nil
 }
 
+func (f *memRepo) SetCommentResolved(_ context.Context, id, contentID string, resolved bool) (appcontent.Comment, error) {
+	c, ok := f.comments[id]
+	if !ok || c.ContentID != contentID {
+		return appcontent.Comment{}, content.ErrNotFound
+	}
+	c.Resolved = resolved
+	f.comments[id] = c
+	return c, nil
+}
+
 func (f *memRepo) InsertThread(_ context.Context, t appcontent.ReviewThread, first appcontent.ReviewMessage) error {
 	f.threads[t.ID] = t
 	f.messages[t.ID] = append(f.messages[t.ID], first)
@@ -305,6 +315,25 @@ func TestContentRoutes_Lifecycle(t *testing.T) {
 	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/comments", alice, `{"body":"","anchor":{"start":0,"end":1}}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty comment: want 400, got %d", rec.Code)
+	}
+	// Resolve a single comment (ISI-7821 P4): default body resolves, explicit
+	// false reopens, and the new state round-trips through the list.
+	var mkComment appcontent.Comment
+	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/comments", alice, `{"body":"resolve me","anchor":{"start":0,"end":1}}`)
+	if err := json.Unmarshal(rec.Body.Bytes(), &mkComment); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/comments/"+mkComment.ID+"/resolve", alice, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"resolved":true`) {
+		t.Fatalf("resolve comment: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/comments/"+mkComment.ID+"/resolve", alice, `{"resolved":false}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"resolved":false`) {
+		t.Fatalf("reopen comment: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/comments/missing/resolve", alice, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("resolve missing comment: want 404, got %d", rec.Code)
 	}
 
 	rec = do(t, h, "POST", "/v1/content/"+doc.ID+"/reviews", alice, `{"subject":"structure","body":"reorder"}`)

@@ -133,6 +133,19 @@ func (f *fakeRepo) ListComments(_ context.Context, contentID string) ([]appconte
 	return out, nil
 }
 
+func (f *fakeRepo) SetCommentResolved(_ context.Context, id, contentID string, resolved bool) (appcontent.Comment, error) {
+	if f.fail {
+		return appcontent.Comment{}, errRepo
+	}
+	c, ok := f.comments[id]
+	if !ok || c.ContentID != contentID {
+		return appcontent.Comment{}, ErrNotFound
+	}
+	c.Resolved = resolved
+	f.comments[id] = c
+	return c, nil
+}
+
 func (f *fakeRepo) InsertThread(_ context.Context, t appcontent.ReviewThread, first appcontent.ReviewMessage) error {
 	if f.fail {
 		return errRepo
@@ -418,6 +431,39 @@ func TestGate_CommentsGateOnParentContent(t *testing.T) {
 	got, err := s.ListComments(ctx, admin("root"), mine.ID)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("admin list comments: %v %+v", err, got)
+	}
+}
+
+func TestGate_ResolveComment(t *testing.T) {
+	s, _, _ := newTestGate()
+	ctx := context.Background()
+	mine := mustCreate(t, s, devrel("alice"), "A1")
+	other := mustCreate(t, s, devrel("alice"), "A2")
+
+	c, err := s.CreateComment(ctx, devrel("alice"), mine.ID, CreateCommentRequest{Body: "tighten"})
+	if err != nil {
+		t.Fatalf("comment: %v", err)
+	}
+	if c.Resolved {
+		t.Fatalf("new comment should be unresolved")
+	}
+	// A stranger can't resolve a comment on someone else's doc (§6.3).
+	if _, err := s.ResolveComment(ctx, devrel("bob"), mine.ID, c.ID, true); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stranger resolve: want ErrForbidden, got %v", err)
+	}
+	// Resolve persists and round-trips.
+	got, err := s.ResolveComment(ctx, devrel("alice"), mine.ID, c.ID, true)
+	if err != nil || !got.Resolved {
+		t.Fatalf("resolve: %v %+v", err, got)
+	}
+	// Reopen flips it back.
+	got, err = s.ResolveComment(ctx, devrel("alice"), mine.ID, c.ID, false)
+	if err != nil || got.Resolved {
+		t.Fatalf("reopen: %v %+v", err, got)
+	}
+	// A comment can't be resolved through the wrong document id.
+	if _, err := s.ResolveComment(ctx, devrel("alice"), other.ID, c.ID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-doc resolve: want ErrNotFound, got %v", err)
 	}
 }
 

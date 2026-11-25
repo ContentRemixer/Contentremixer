@@ -33,6 +33,12 @@ export const contentApi = {
   addComment: (id: string, body: CreateCommentRequest) =>
     api.post<Comment>(`/v1/content/${encodeURIComponent(id)}/comments`, body),
 
+  resolveComment: (id: string, commentId: string, resolved: boolean) =>
+    api.post<Comment>(
+      `/v1/content/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}/resolve`,
+      { resolved },
+    ),
+
   listReviews: (id: string) =>
     api.get<ReviewThread[] | null>(`/v1/content/${encodeURIComponent(id)}/reviews`).then(arr),
 

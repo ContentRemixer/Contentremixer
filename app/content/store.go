@@ -180,6 +180,27 @@ SELECT id, content_id, author_subject, body, anchor_start, anchor_end, anchor_qu
 	return out, rows.Err()
 }
 
+// SetCommentResolved toggles a comment's resolved flag, scoped to its parent
+// document so a comment can't be resolved through the wrong content id. It
+// returns the updated comment, or ErrNotFound when no such comment exists under
+// that document (ISI-7821 P4).
+func (s *Store) SetCommentResolved(ctx context.Context, id, contentID string, resolved bool) (Comment, error) {
+	var c Comment
+	err := s.pool.QueryRow(ctx, `
+UPDATE booth.comments SET resolved = $3
+ WHERE id = $1 AND content_id = $2
+ RETURNING id, content_id, author_subject, body, anchor_start, anchor_end, anchor_quote, resolved, created_at`,
+		id, contentID, resolved).Scan(&c.ID, &c.ContentID, &c.AuthorSubject, &c.Body,
+		&c.Anchor.Start, &c.Anchor.End, &c.Anchor.Quote, &c.Resolved, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Comment{}, ErrNotFound
+	}
+	if err != nil {
+		return Comment{}, fmt.Errorf("content: set comment resolved: %w", err)
+	}
+	return c, nil
+}
+
 // --- review threads ---------------------------------------------------------
 
 // InsertThread stores a thread and its first message in one transaction — a

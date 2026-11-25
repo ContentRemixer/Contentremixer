@@ -13,8 +13,9 @@
 //	                    marketing voice")
 //	ai-tells          — AI-writing vocabulary red flags                  (warn)
 //	                    (skills/human-voice-review/SKILL.md, ISI-7183)
-//	seo-meta          — deterministic metadata checks from               (warn)
-//	                    skills/seo/SKILL.md (ISI-7183)
+//	seo-meta          — deterministic SEO checks from skills/seo/SKILL.md (warn)
+//	                    (ISI-7183 meta description/title; ISI-7807 adds
+//	                    keyword placement, heading hierarchy, schema presence)
 //
 // FAIL-CLOSED semantics (design §4): a single block violation sets
 // CheckResult.Passed = false and the run must open NO PR. warn violations are
@@ -199,32 +200,154 @@ func (c *Checker) Check(_ context.Context, m pipeline.Mix) (pipeline.CheckResult
 }
 
 // seoMetaCheck applies the deterministic subset of skills/seo/SKILL.md to the
-// Mix metadata. Every finding is SeverityWarn: the SEO skill advises on
-// discoverability, it never gates a run.
+// Mix. Every finding is SeverityWarn: the SEO skill advises on
+// discoverability, it never gates a run (ISI-7807: SEO stays warn-only; the
+// fail-closed gate is reserved for leaks).
 func seoMetaCheck(m pipeline.Mix) []pipeline.Violation {
 	var vs []pipeline.Violation
-	desc, _ := m.Meta["description"].(string)
+	warn := func(where, msg string) {
+		vs = append(vs, pipeline.Violation{
+			Rule:     RuleSEOMeta,
+			Match:    msg,
+			Severity: pipeline.SeverityWarn,
+			Where:    where,
+		})
+	}
+
+	// Metadata: description 140-160 chars, title tag <= 60.
+	desc := firstMetaString(m.Meta, "description", "meta_description")
 	if n := len(strings.TrimSpace(desc)); n < 140 || n > 160 {
 		msg := "meta description missing (seo skill: 140-160 chars, verb + payoff)"
 		if n > 0 {
 			msg = fmt.Sprintf("meta description is %d chars (want 140-160)", n)
 		}
-		vs = append(vs, pipeline.Violation{
-			Rule:     RuleSEOMeta,
-			Match:    msg,
-			Severity: pipeline.SeverityWarn,
-			Where:    "meta.description",
-		})
+		warn("meta.description", msg)
 	}
 	if n := len(strings.TrimSpace(m.Title)); n > 60 {
-		vs = append(vs, pipeline.Violation{
-			Rule:     RuleSEOMeta,
-			Match:    fmt.Sprintf("title is %d chars (want <= 60)", n),
-			Severity: pipeline.SeverityWarn,
-			Where:    "title",
-		})
+		warn("title", fmt.Sprintf("title is %d chars (want <= 60)", n))
 	}
+
+	// --- ISI-7807: keyword presence, heading hierarchy, schema presence. ---
+
+	// Keyword placement (SKILL: "Primary keyword: title, H1, first 100 words").
+	// Only opine when enriched metadata supplies the keyword (P1 SEOOptimizer):
+	// no primary_keyword, no opinion, so plain P0 output never warns (acceptance:
+	// no false positives on well-formed output).
+	if kw := firstMetaString(m.Meta, "primary_keyword", "meta_keyword", "keyword"); kw != "" {
+		lkw := strings.ToLower(strings.TrimSpace(kw))
+		if !strings.Contains(strings.ToLower(m.Title), lkw) {
+			warn("title", fmt.Sprintf("primary keyword %q absent from title (seo skill: keyword in title/H1)", kw))
+		}
+		if !strings.Contains(strings.ToLower(firstWords(m.Markdown, 100)), lkw) {
+			warn("markdown", fmt.Sprintf("primary keyword %q absent from the first 100 words (seo skill: keyword early)", kw))
+		}
+	}
+
+	// Heading hierarchy (SKILL: "One H1 only; descriptive H2/H3 hierarchy, no
+	// level skips"). Parsed from the body, ignoring fenced code so a shell
+	// "#!/bin/sh" or a python "# comment" inside ``` is never read as a heading.
+	levels := headingLevels(m.Markdown)
+	if n := countLevel(levels, 1); n != 1 {
+		warn("markdown", fmt.Sprintf("found %d H1 headings (seo skill: exactly one H1)", n))
+	}
+	if skip := firstHeadingSkip(levels); skip != "" {
+		warn("markdown", fmt.Sprintf("heading hierarchy skips a level (%s) (seo skill: no level skips)", skip))
+	}
+
+	// Schema presence (SKILL: "Schema.org: Article for posts, HowTo for
+	// tutorials"). Only long-form published formats are expected to ship a
+	// JSON-LD block; social/teleprompter output is not, so they never warn.
+	if schemaExpected(m.OutputFormat) && !hasJSONLD(m) {
+		warn("markdown", "no JSON-LD schema block (seo skill: Schema.org Article/HowTo for published posts)")
+	}
+
 	return vs
+}
+
+// firstMetaString returns the first non-empty string value among meta[keys...].
+func firstMetaString(meta map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := meta[k].(string); ok && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// firstWords returns the first n whitespace-delimited words of s.
+func firstWords(s string, n int) string {
+	f := strings.Fields(s)
+	if len(f) > n {
+		f = f[:n]
+	}
+	return strings.Join(f, " ")
+}
+
+// atxHeadingRe matches a CommonMark ATX heading: up to 3 leading spaces, 1-6
+// '#', then whitespace and at least one non-space char.
+var atxHeadingRe = regexp.MustCompile(`^ {0,3}(#{1,6})\s+\S`)
+
+// headingLevels returns the ATX heading levels (1-6) in document order,
+// skipping fenced (``` / ~~~) code blocks.
+func headingLevels(md string) []int {
+	var out []int
+	fenced := false
+	for _, line := range strings.Split(md, "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if mm := atxHeadingRe.FindStringSubmatch(line); mm != nil {
+			out = append(out, len(mm[1]))
+		}
+	}
+	return out
+}
+
+func countLevel(levels []int, lvl int) int {
+	n := 0
+	for _, l := range levels {
+		if l == lvl {
+			n++
+		}
+	}
+	return n
+}
+
+// firstHeadingSkip reports the first downward jump of more than one level
+// (e.g. H2 straight to H4). Climbing back up (H3 -> H2) is allowed.
+func firstHeadingSkip(levels []int) string {
+	prev := 0
+	for _, l := range levels {
+		if prev != 0 && l > prev+1 {
+			return fmt.Sprintf("H%d->H%d", prev, l)
+		}
+		prev = l
+	}
+	return ""
+}
+
+// schemaExpected reports whether a JSON-LD block is expected for this output
+// format. ponytail: scoped to the long-form published formats the SEO skill
+// names (posts, tutorials); upgrade path is a per-format schema-type config.
+func schemaExpected(format string) bool {
+	switch format {
+	case "blog", "tutorial":
+		return true
+	}
+	return false
+}
+
+// hasJSONLD reports whether the Mix carries a JSON-LD structured-data block,
+// either inline in the body or attached as enriched metadata (P1).
+func hasJSONLD(m pipeline.Mix) bool {
+	if strings.Contains(strings.ToLower(m.Markdown), "application/ld+json") {
+		return true
+	}
+	return firstMetaString(m.Meta, "schema", "json_ld", "jsonld", "structured_data") != ""
 }
 
 // matches runs one rule over one surface, deduping identical redacted hits

@@ -54,6 +54,11 @@ rules:
   # trivy:ignore:KSV-0041 — Secret write IS this component's designed,
   #   Admin-gated (requireAdmin), audited (§6.4) capability; the Role is
   #   namespaced and grants no patch/list/delete. Owner: DevOps (ISI-7783).
+  # trivy:ignore:KSV-0113 — "manage secrets" is the same designed capability:
+  #   the W2 handler is write-only by construction (POST-only route, no
+  #   list/delete verbs, no value ever returned — refs only), so a Role that
+  #   can create/update Secrets in its own namespace is the intended blast
+  #   radius. Owner: DevOps (ISI-7783).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "create", "update"]

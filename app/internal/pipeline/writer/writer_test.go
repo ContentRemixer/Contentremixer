@@ -532,6 +532,63 @@ func TestPromptIncludesSkillPack(t *testing.T) {
 	}
 }
 
+// seoBlogDraft has enough leading prose to produce a 140-160 char meta
+// description, plus a fenced code block and a link to prove both are stripped.
+const seoBlogDraft = `# Stop committing Kubernetes secrets to git the hard way
+
+Secrets leak into git far more often than teams admit, and the boring fix is
+cheaper than any after-the-fact rotation: wire a [pre-commit hook](https://example.com/hook) that
+rejects the commit before the token ever reaches a remote branch at all.
+
+## The fix
+
+` + "```bash" + `
+kubectl create secret generic models --from-literal=key=xxx
+` + "```" + `
+
+Rotate early, rotate often.
+`
+
+// TestMixMetaPopulatesSEODescription is the ISI-7805 acceptance for the meta
+// bug: the writer now populates Mix.Meta["description"] with a real 140-160
+// char summary (so the warn-only seo-meta checker rule stops firing blindly),
+// and code / headings / link URLs / the H1 title never leak into it.
+func TestMixMetaPopulatesSEODescription(t *testing.T) {
+	_, gen := captureGen(GenerateResponse{Content: seoBlogDraft, Model: "m"}, nil)
+	mix, err := newWriter(gen).Write(context.Background(), blogRunContext(), teleprompterSample())
+	if err != nil {
+		t.Fatalf("Write unexpected error: %v", err)
+	}
+	desc, ok := mix.Meta["description"].(string)
+	if !ok || desc == "" {
+		t.Fatalf("Meta.description missing/empty: %+v", mix.Meta)
+	}
+	if n := len(desc); n < 140 || n > 160 {
+		t.Fatalf("Meta.description is %d chars, want 140-160: %q", n, desc)
+	}
+	for _, bad := range []string{"kubectl", "## The fix", "https://example.com", "# Stop committing"} {
+		if strings.Contains(desc, bad) {
+			t.Fatalf("Meta.description leaked %q: %q", bad, desc)
+		}
+	}
+	if !strings.Contains(desc, "pre-commit hook") { // link anchor text kept
+		t.Fatalf("Meta.description dropped link anchor text: %q", desc)
+	}
+}
+
+// TestMetaDescriptionDegradesOnSparseBody: a prose-less draft leaves the key
+// unset (degrade, never fail) — no panic, no empty description.
+func TestMetaDescriptionDegradesOnSparseBody(t *testing.T) {
+	_, gen := captureGen(GenerateResponse{Content: "# Just a title and nothing else here\n", Model: "m"}, nil)
+	mix, err := newWriter(gen).Write(context.Background(), blogRunContext(), teleprompterSample())
+	if err != nil {
+		t.Fatalf("Write must not fail on a prose-less draft: %v", err)
+	}
+	if _, present := mix.Meta["description"]; present {
+		t.Fatalf("a prose-less draft must not set a description: %+v", mix.Meta)
+	}
+}
+
 func TestWriteDegradesWhenSkillMissing(t *testing.T) {
 	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
 	root := t.TempDir()

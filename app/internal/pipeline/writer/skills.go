@@ -26,9 +26,13 @@ import "strings"
 // blog-writing structure + human-voice-review (strip AI tells) + seo. This
 // wires the previously-unused human-voice-review and seo packs; visual-design
 // and workshop-builder stay reachable dynamically by name.
+//
+// tutorial layers the seo pack on top of technical-tutorial (ISI-7805): a
+// published tutorial is a public, search-indexed page, so it gets the same
+// keyword/metadata/structure discipline as a blog post.
 var skillComposition = map[string][]string{
 	"content-writer": {"blog-writing", "human-voice-review", "seo"},
-	"tutorial":       {"technical-tutorial"},
+	"tutorial":       {"technical-tutorial", "seo"},
 }
 
 // loadedPack is one resolved skill pack: its repo-relative SKILL.md path (the

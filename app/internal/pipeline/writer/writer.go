@@ -28,6 +28,7 @@ package writer
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -267,7 +268,7 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		OutputFormat: format,
 		Title:        title,
 		Markdown:     draft,
-		Meta:         mixMeta(now, rc, s, modelUsed, title),
+		Meta:         mixMeta(now, rc, s, modelUsed, title, draft),
 		ModelUsed:    modelUsed,
 	}, nil
 }
@@ -337,7 +338,7 @@ func userPrompt(rc pipeline.RunContext, s pipeline.Sample, overlay PersonaOverla
 // fields carried over, the source block, and the sample_clearance block
 // (design §5 — source path, source commit, model, input → output, recycle
 // issue), so clearance survives outside the PR.
-func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed, title string) map[string]any {
+func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed, title, draft string) map[string]any {
 	meta := map[string]any{
 		"title":         title,
 		"output_format": rc.OutputFormat,
@@ -365,8 +366,87 @@ func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed
 	if notes := strings.TrimSpace(rc.Notes); notes != "" {
 		meta["notes"] = notes
 	}
+	// SEO meta description (ISI-7805, skills/seo/SKILL.md): derive a real
+	// description from the draft so the warn-only seo-meta checker rule
+	// evaluates substance instead of firing blindly on every run (it reads a
+	// key the writer never set). Best-effort: a draft with no usable prose
+	// simply leaves the key unset — degrade, never fail.
+	if desc := metaDescription(draft); desc != "" {
+		meta["description"] = desc
+	}
 	return meta
 }
+
+// metaDescription derives an SEO meta description from the draft body
+// (skills/seo/SKILL.md: a 140-160 char verb + payoff summary). It drops the H1
+// title, every other heading, and fenced code blocks, then greedily packs the
+// leading prose words up to a 160-char ceiling — the first prose usually IS the
+// intent summary, so this lands in the 140-160 window for any real draft. When
+// the body is too sparse to reach 140 chars it returns the best available text:
+// a short-but-real description still beats the blind warning the checker fired
+// when the key was always absent, and seoMetaCheck then flags the genuine
+// shortfall rather than a phantom one.
+//
+// ponytail: whole-word packing from body prose, O(n) over the draft. Upgrade
+// path is parsing a model-emitted SEO/frontmatter block if the writer output
+// contract ever carries one.
+func metaDescription(draft string) string {
+	var prose []string
+	inFence := false
+	for _, line := range strings.Split(draft, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		prose = append(prose, stripInlineMarkdown(trimmed))
+	}
+	words := strings.Fields(strings.Join(prose, " "))
+	if len(words) == 0 {
+		return ""
+	}
+	const maxLen = 160
+	var b strings.Builder
+	for _, w := range words {
+		add := w
+		if b.Len() > 0 {
+			add = " " + w
+		}
+		if b.Len()+len(add) > maxLen {
+			break
+		}
+		b.WriteString(add)
+	}
+	// A single leading word longer than the ceiling: hard-cap on a rune
+	// boundary so the description stays non-empty and valid UTF-8.
+	if b.Len() == 0 {
+		r := []rune(words[0])
+		if len(r) > maxLen {
+			r = r[:maxLen]
+		}
+		return string(r)
+	}
+	return b.String()
+}
+
+// stripInlineMarkdown reduces a prose line to plain text for the meta
+// description: link syntax collapses to its anchor text (dropping the URL that
+// would otherwise blow the length budget), images are removed, and
+// emphasis/code markers are stripped. Intentionally light — descriptions are
+// advisory.
+func stripInlineMarkdown(s string) string {
+	s = mdImageRe.ReplaceAllString(s, "")
+	s = mdLinkRe.ReplaceAllString(s, "$1")
+	return strings.NewReplacer("**", "", "__", "", "`", "").Replace(s)
+}
+
+var (
+	mdImageRe = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+	mdLinkRe  = regexp.MustCompile(`\[([^\]]+)\]\([^)]*\)`)
+)
 
 // RenderMetaYAML serializes a Mix meta map the way the PR assembler
 // (subtask H) writes recycled/<slug>/meta.yaml.

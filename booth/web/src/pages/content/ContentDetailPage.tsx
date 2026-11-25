@@ -3,6 +3,11 @@ import { useParams, Link } from "react-router-dom";
 import {
   Badge,
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Select,
   SelectContent,
   SelectItem,
@@ -15,7 +20,14 @@ import {
   useToast,
 } from "../../ui";
 import type { BadgeTone } from "../../ui";
-import { ChevronRightIcon } from "../../components/icons";
+import {
+  ChevronRightIcon,
+  CommentIcon,
+  ContentIcon,
+  CopyIcon,
+  LayersIcon,
+  SparkleIcon,
+} from "../../components/icons";
 import { FullScreenLoader } from "../../components/Loader";
 import { ApiError } from "../../app/api";
 import { contentApi } from "./api";
@@ -49,6 +61,14 @@ interface Selection {
   left: number;
 }
 
+// Right-click context menu pinned to the viewport point the reviewer clicked.
+// It operates on the selection anchor captured at open time (M1, plan §6 P1).
+interface ContextMenuState {
+  anchor: Anchor;
+  x: number;
+  y: number;
+}
+
 export function ContentDetailPage() {
   const { id = "" } = useParams();
   const { toast } = useToast();
@@ -64,7 +84,11 @@ export function ContentDetailPage() {
   const [tab, setTab] = useState("comments");
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [pendingAnchor, setPendingAnchor] = useState<Anchor | null>(null);
+  // Seed text the comment composer opens with — pre-fills a pending @mention
+  // for the "Request content here" / "Ask an agent…" stubs (full UX in P2).
+  const [composerSeed, setComposerSeed] = useState("");
   const [illusAnchor, setIllusAnchor] = useState<Anchor | undefined>(undefined);
   const [illusOpen, setIllusOpen] = useState(false);
 
@@ -138,55 +162,83 @@ export function ContentDetailPage() {
     [content, highlights],
   );
 
-  // Capture a text selection in the reader and compute its anchor into bodyMd.
+  // Resolve the live reader selection to a bodyMd anchor plus its screen rect.
   // Offsets index the raw markdown (the W4 Anchor contract); indexOf resolves
   // the quote to its first occurrence — consistent with quote re-anchoring.
-  const onMouseUp = useCallback(() => {
-    if (!content || !readerRef.current) return;
+  const anchorFromSelection = useCallback((): { anchor: Anchor; rect: DOMRect } | null => {
+    if (!content || !readerRef.current) return null;
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-      setSelection(null);
-      return;
-    }
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
     const text = sel.toString();
-    if (!text.trim()) {
-      setSelection(null);
-      return;
-    }
-    if (sel.anchorNode && !readerRef.current.contains(sel.anchorNode)) {
-      setSelection(null);
-      return;
-    }
+    if (!text.trim()) return null;
+    if (sel.anchorNode && !readerRef.current.contains(sel.anchorNode)) return null;
     const start = content.bodyMd.indexOf(text);
-    if (start < 0) {
+    if (start < 0) return null;
+    return {
+      anchor: { start, end: start + text.length, quote: text },
+      rect: sel.getRangeAt(0).getBoundingClientRect(),
+    };
+  }, [content]);
+
+  // Hover/keyboard affordance: show the floating toolbar over the selection.
+  const onMouseUp = useCallback(() => {
+    const hit = anchorFromSelection();
+    if (!hit || !readerRef.current) {
       setSelection(null);
       return;
     }
-    const rect = sel.getRangeAt(0).getBoundingClientRect();
     const crect = readerRef.current.getBoundingClientRect();
     setSelection({
-      anchor: { start, end: start + text.length, quote: text },
-      top: rect.top - crect.top,
-      left: rect.left - crect.left + rect.width / 2,
+      anchor: hit.anchor,
+      top: hit.rect.top - crect.top,
+      left: hit.rect.left - crect.left + hit.rect.width / 2,
     });
-  }, [content]);
+  }, [anchorFromSelection]);
+
+  // Primary gesture (M1): right-click a selection → menu at the cursor. With no
+  // valid selection we fall through to the browser's native context menu.
+  const onContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const hit = anchorFromSelection();
+      if (!hit) return;
+      e.preventDefault();
+      setSelection(null);
+      setMenu({ anchor: hit.anchor, x: e.clientX, y: e.clientY });
+    },
+    [anchorFromSelection],
+  );
 
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
     setSelection(null);
   }
 
-  function startComment() {
-    if (!selection) return;
-    setPendingAnchor(selection.anchor);
+  // Menu/toolbar actions all operate on a resolved anchor. Each closes the
+  // transient surfaces (menu + floating toolbar) before opening its target.
+  function startComment(anchor: Anchor, seed = "") {
+    setComposerSeed(seed);
+    setPendingAnchor(anchor);
     setTab("comments");
+    setMenu(null);
     clearSelection();
   }
 
-  function startIllustration() {
-    const anchor = selection?.anchor;
+  function startIllustration(anchor?: Anchor) {
     setIllusAnchor(anchor);
     setIllusOpen(true);
+    setMenu(null);
+    clearSelection();
+  }
+
+  async function copyQuote(anchor: Anchor) {
+    setMenu(null);
+    const text = anchor.quote ?? content?.bodyMd.slice(anchor.start, anchor.end) ?? "";
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ tone: "success", title: "Copied to clipboard" });
+    } catch {
+      toast({ tone: "warning", title: "Couldn't copy", description: "Clipboard is unavailable." });
+    }
     clearSelection();
   }
 
@@ -197,6 +249,7 @@ export function ContentDetailPage() {
       const created = await contentApi.addComment(id, { body: text, anchor: pendingAnchor });
       setComments((prev) => [...prev, created]);
       setPendingAnchor(null);
+      setComposerSeed("");
       setActiveCommentId(created.id);
     } catch (err) {
       toast({
@@ -349,21 +402,24 @@ export function ContentDetailPage() {
         <div
           ref={readerRef}
           onMouseUp={onMouseUp}
+          onContextMenu={onContextMenu}
           className="relative rounded-lg border border-border bg-surface p-6 text-[15px] shadow-card sm:p-8"
         >
           {body}
 
+          {/* Secondary affordance: floating toolbar over the live selection.
+              Right-click (onContextMenu) is the primary gesture. */}
           {selection ? (
             <div
               className="absolute z-20 -translate-x-1/2 -translate-y-full"
               style={{ top: selection.top - 8, left: selection.left }}
             >
               <div className="flex items-center gap-1 rounded-lg border border-border bg-surface-raised p-1 shadow-card">
-                <Button variant="ghost" size="sm" onClick={startComment}>
+                <Button variant="ghost" size="sm" onClick={() => startComment(selection.anchor)}>
                   Comment
                 </Button>
                 <div className="h-4 w-px bg-border" />
-                <Button variant="ghost" size="sm" onClick={startIllustration}>
+                <Button variant="ghost" size="sm" onClick={() => startIllustration(selection.anchor)}>
                   Request illustration
                 </Button>
               </div>
@@ -384,11 +440,15 @@ export function ContentDetailPage() {
               <CommentsRail
                 comments={comments}
                 pendingAnchor={pendingAnchor}
+                composerSeed={composerSeed}
                 activeCommentId={activeCommentId}
                 busy={commentBusy}
                 onFocus={setActiveCommentId}
                 onSubmit={submitComment}
-                onCancelCompose={() => setPendingAnchor(null)}
+                onCancelCompose={() => {
+                  setPendingAnchor(null);
+                  setComposerSeed("");
+                }}
               />
             </TabsContent>
 
@@ -428,6 +488,39 @@ export function ContentDetailPage() {
           setTab("art");
         }}
       />
+
+      {/* Right-click context menu (M1). An invisible zero-size trigger is pinned
+          to the click point; Radix anchors the keyboard-navigable menu to it and
+          handles escape/outside-click dismissal. */}
+      <DropdownMenu open={!!menu} onOpenChange={(open) => !open && setMenu(null)}>
+        <DropdownMenuTrigger asChild>
+          <span
+            aria-hidden
+            className="pointer-events-none fixed h-0 w-0"
+            style={{ left: menu?.x ?? 0, top: menu?.y ?? 0 }}
+          />
+        </DropdownMenuTrigger>
+        {menu ? (
+          <DropdownMenuContent align="start" sideOffset={2} className="min-w-[13rem]">
+            <DropdownMenuItem onSelect={() => startComment(menu.anchor)}>
+              <CommentIcon size={15} /> Comment
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => startIllustration(menu.anchor)}>
+              <LayersIcon size={15} /> Request design here
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => startComment(menu.anchor, "@content ")}>
+              <ContentIcon size={15} /> Request content here
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => startComment(menu.anchor, "@agent ")}>
+              <SparkleIcon size={15} /> Ask an agent…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => copyQuote(menu.anchor)}>
+              <CopyIcon size={15} /> Copy
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        ) : null}
+      </DropdownMenu>
     </section>
   );
 }

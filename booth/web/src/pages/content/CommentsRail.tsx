@@ -11,6 +11,8 @@ export interface CommentsRailProps {
   comments: Comment[];
   /** Pending selection the composer will anchor a new comment to. */
   pendingAnchor: Anchor | null;
+  /** Seed text the composer opens with (e.g. a pre-filled @mention). */
+  composerSeed?: string;
   activeCommentId: string | null;
   busy: boolean;
   onFocus: (commentId: string) => void;
@@ -21,6 +23,7 @@ export interface CommentsRailProps {
 export function CommentsRail({
   comments,
   pendingAnchor,
+  composerSeed = "",
   activeCommentId,
   busy,
   onFocus,
@@ -37,7 +40,11 @@ export function CommentsRail({
             </p>
           ) : null}
           <CommentComposer
+            // Remount when the seed changes so a freshly picked menu action
+            // re-seeds the box even if the composer is already open.
+            key={`${pendingAnchor.start}:${composerSeed}`}
             autoFocus
+            initialValue={composerSeed}
             submitLabel="Comment"
             busy={busy}
             onSubmit={onSubmit}

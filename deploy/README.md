@@ -415,8 +415,36 @@ Gateway. Exposes the home WAN IP and is fragile on a dynamic IP; prefer Option C
    ```sh
    kubectl apply -f deploy/secrets/referencerepo.example.yaml
    ```
-5. **[owner OR agent-with-Webhooks-token]** Configure the repo webhook — GitHub →
-   repo Settings → Webhooks → Add webhook:
+5. **Configure the repo webhook.** Two paths — prefer **5a** (automated) for
+   repos we own; **5b** is the manual fallback and the only option for repos we
+   do not own.
+
+   **5a — [DevOps one-time + agent/Admin] Automated via Booth (ISI-7785, W3).**
+   Booth exposes `POST /v1/referencerepos/{name}/webhook` (Admin-gated). It reads
+   the repo's `spec.repo` and the stored HMAC (`spec.webhookSecretRef`, written by
+   the W2 secret path) and calls `POST /repos/{owner}/{repo}/hooks` itself —
+   Issues-only, `content_type: json`, HMAC set — idempotently (re-running updates
+   the existing hook instead of erroring). The HMAC is never echoed back.
+
+   This route is mounted **only** when DevOps has provisioned both env vars on the
+   Booth Deployment; without them the route is absent (404) and you fall back to
+   5b:
+   - `BOOTH_WEBHOOK_TOKEN` — a GitHub token **with the Webhooks permission**
+     (distinct from the per-repo PAT, which intentionally lacks it; the default
+     ProxOps `GITHUB_TOKEN` also lacks it — see step 3). **DevOps provisions and
+     stores this.**
+   - `BOOTH_WEBHOOK_PUBLIC_URL` — the full public delivery URL, e.g.
+     `https://<edge>/github/webhook` (the Option C/A/B host above). Injected via
+     config; the concrete edge host stays out of this public repo.
+
+   Then, in the Admin UI → Reference repos → **Install webhook**, or:
+   ```sh
+   curl -X POST -H "Authorization: Bearer $BOOTH_ADMIN_SESSION" \
+     https://<booth-host>/v1/referencerepos/<cr-name>/webhook
+   ```
+
+   **5b — [owner OR agent-with-Webhooks-token] Manual.** GitHub → repo Settings →
+   Webhooks → Add webhook:
    - Payload URL: `https://recycler.<domain>/github/webhook`
    - Content type: `application/json`
    - Secret: the `$WEBHOOK_SECRET` from step 3

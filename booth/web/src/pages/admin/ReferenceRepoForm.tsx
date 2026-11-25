@@ -140,6 +140,52 @@ export function EditReferenceRepoButton({
   );
 }
 
+// InstallWebhookButton registers (or idempotently re-registers) the GitHub
+// `issues` webhook for an existing ReferenceRepo (ISI-7785, W3). It POSTs to the
+// server path the W3 Registrar mounts ONLY when DevOps has provisioned a
+// Webhooks-permission token and the public edge URL; a 404 therefore means the
+// automated path is not configured, and the admin should register manually
+// (deploy/README fallback). A 409 means the repo's Secrets have not been written
+// yet (W2). No secret value is ever sent or shown — the server reads the stored
+// HMAC itself.
+export function InstallWebhookButton({ repo, path }: { repo: CrObject; path: string }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  async function install() {
+    setBusy(true);
+    try {
+      const res = await api.post<{ hookId: number; created: boolean; deliveryUrl: string }>(
+        `${path}/${encodeURIComponent(repo.metadata.name)}/webhook`,
+      );
+      toast({
+        title: res.created ? "Webhook installed" : "Webhook updated",
+        description: `GitHub hook #${res.hookId} → ${res.deliveryUrl}`,
+        tone: "success",
+      });
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      if (status === 404) {
+        toast({
+          title: "Automated registration not configured",
+          description: "Register the webhook manually — see deploy/README.md (Webhooks token + public edge required).",
+          tone: "warning",
+        });
+      } else if (status === 409) {
+        toast({ title: "Save repo secrets first", description: "The webhook HMAC secret has not been written yet.", tone: "warning" });
+      } else {
+        toast({ title: "Webhook registration failed", description: e instanceof Error ? e.message : "request failed", tone: "warning" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button variant="ghost" size="sm" onClick={install} loading={busy}>
+      Install webhook
+    </Button>
+  );
+}
+
 function ReferenceRepoDialog({
   mode,
   repo,

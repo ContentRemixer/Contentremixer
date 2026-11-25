@@ -1,7 +1,7 @@
 import { Badge, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import { UsersPanel } from "./admin/UsersPanel";
 import { CrPanel, type CrObject } from "./admin/CrPanel";
-import { NewReferenceRepoButton, EditReferenceRepoButton } from "./admin/ReferenceRepoForm";
+import { NewReferenceRepoButton, EditReferenceRepoButton, InstallWebhookButton } from "./admin/ReferenceRepoForm";
 
 // AdminPage is the C1–C4 admin console (W6 / ISI-7213). Four Admin-only surfaces:
 // Users & roles (brand-new CRUD API), plus Personas / Reference repos / Model
@@ -77,7 +77,10 @@ export function AdminPage() {
               <NewReferenceRepoButton path="/v1/referencerepos" onSaved={refresh} />
             )}
             rowActions={(o, refresh) => (
-              <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
+              <>
+                <InstallWebhookButton repo={o} path="/v1/referencerepos" />
+                <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
+              </>
             )}
           />
         </TabsContent>

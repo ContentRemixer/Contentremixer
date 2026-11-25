@@ -40,6 +40,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/webhook"
 )
 
 func main() {
@@ -131,6 +132,13 @@ func run() error {
 	// is granted in deploy. Always wired — the create flow needs it to produce a
 	// working tokenRef+webhookSecretRef with no kubectl step.
 	srv = srv.WithReferenceRepoSecrets(secrets.New(k8s, namespace, auditor))
+	// Automated GitHub webhook registration for the reference-repo create flow
+	// (ISI-7776 W3). Mounted only when DevOps has provisioned a Webhooks-permission
+	// token AND the public delivery edge (W4) is configured; otherwise the route
+	// is absent and the webhook is registered manually (deploy/README fallback).
+	if reg := buildWebhookRegistrar(k8s, namespace, auditor, log); reg != nil {
+		srv = srv.WithReferenceRepoWebhook(reg)
+	}
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -250,6 +258,25 @@ func buildApproveStore(st *store.Store, auditor audit.Logger, log *slog.Logger) 
 	refl := approve.NewGitHubReflector(token, os.Getenv("BOOTH_GITHUB_API_URL"))
 	log.Info("dual-approval enabled")
 	return approve.New(st, refl, auditor)
+}
+
+// buildWebhookRegistrar wires automated GitHub webhook registration (ISI-7776
+// W3). It needs BOTH a GitHub token WITH the Webhooks permission
+// (BOOTH_WEBHOOK_TOKEN — distinct from the per-repo PAT, which lacks it) and the
+// public delivery URL of the W4 edge (BOOTH_WEBHOOK_PUBLIC_URL, e.g.
+// https://<edge>/github/webhook — injected via config, never committed). With
+// either missing it returns nil and the route stays unmounted, leaving the
+// manual deploy/README registration path as the fallback. BOOTH_GITHUB_API_URL
+// (shared with dual-approval) overrides the REST base for tests / Enterprise.
+func buildWebhookRegistrar(k8s client.Client, namespace string, auditor audit.Logger, log *slog.Logger) *webhook.Registrar {
+	token := os.Getenv("BOOTH_WEBHOOK_TOKEN")
+	publicURL := os.Getenv("BOOTH_WEBHOOK_PUBLIC_URL")
+	if token == "" || publicURL == "" {
+		log.Info("webhook auto-registration disabled: BOOTH_WEBHOOK_TOKEN and BOOTH_WEBHOOK_PUBLIC_URL both required")
+		return nil
+	}
+	log.Info("webhook auto-registration enabled", "deliveryUrl", publicURL)
+	return webhook.New(k8s, namespace, token, publicURL, os.Getenv("BOOTH_GITHUB_API_URL"), auditor)
 }
 
 // buildContentStore wires the content-collaboration gating store from a

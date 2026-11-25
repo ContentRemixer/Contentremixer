@@ -75,6 +75,16 @@ func TestAgentValidate_DefaultPerKind(t *testing.T) {
 	if _, err := v.ValidateCreate(context.Background(), other); err != nil {
 		t.Fatalf("a default for a different kind must be allowed: %v", err)
 	}
+
+	// Updating the existing default agent in place (same name+UID — e.g. the
+	// Skills… editor PUTs it back with skillPacks changed) must self-skip via the
+	// UID match, not trip the one-default-per-kind check against itself.
+	edited := agent("coding", contentremixerv1alpha1.SkillKindCoding, true)
+	edited.UID = "coding-uid"
+	edited.Spec.SkillPacks = []string{"concise"}
+	if _, err := v.ValidateUpdate(context.Background(), existing, edited); err != nil {
+		t.Fatalf("editing the existing default agent in place must be allowed: %v", err)
+	}
 }
 
 func TestAgentValidate_ModelProfile(t *testing.T) {

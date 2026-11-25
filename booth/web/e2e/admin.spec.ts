@@ -213,10 +213,11 @@ test.describe("Admin console", () => {
     await expect(page.getByText("New agent")).toBeVisible();
     await page.getByPlaceholder("coding-fast").fill("coding-fast");
     await page.getByPlaceholder("Coding Specialist (fast)").fill("Coding Specialist (fast)");
-    // Add a skill pack chip via free text.
+    // Add a skill pack chip via free text (the chip exposes an accessible
+    // "Remove skill pack <name>" button we can assert on without the × noise).
     await page.getByPlaceholder("add a pack, e.g. concise").fill("concise");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByText("concise", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Remove skill pack concise" })).toBeVisible();
 
     const postReq = page.waitForRequest(
       (r) => r.method() === "POST" && /\/v1\/agents$/.test(r.url()),
@@ -252,8 +253,8 @@ test.describe("Admin console", () => {
 
     await page.getByRole("button", { name: "Skills…", exact: true }).click();
     await expect(page.getByText("Skills — content-writer")).toBeVisible();
-    // Existing pack chip is shown; add another.
-    await expect(page.getByText("blog-writing", { exact: true })).toBeVisible();
+    // Existing pack chip is shown (assert via its remove button); add another.
+    await expect(page.getByRole("button", { name: "Remove skill pack blog-writing" })).toBeVisible();
     await page.getByPlaceholder("add a pack, e.g. concise").fill("seo");
     await page.getByRole("button", { name: "Add", exact: true }).click();
 

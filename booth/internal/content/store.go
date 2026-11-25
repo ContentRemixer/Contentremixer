@@ -130,21 +130,32 @@ type CreateReviewRequest struct {
 	Body     string `json:"body"`
 }
 
-// CreateIllustrationRequestPayload is the POST /v1/illustration-requests
-// payload. ContentID addresses the document (the collection route carries no
-// path id). AssignedAgent defaults to the Graphic Designer (plan §3.2 B3).
+// CreateIllustrationRequestPayload is the POST /v1/agent-requests (and the
+// back-compat /v1/illustration-requests) payload. ContentID addresses the
+// document (the collection route carries no path id). AssignedAgent defaults to
+// the Graphic Designer (plan §3.2 B3); Kind defaults to design (the original
+// illustration flow). ThreadID, when set, links the request to the review
+// thread the mention was made in — the deliverable posts back into that thread
+// (ISI-7820). The FE sends this only when a comment carries an explicit
+// "Request …" action; a bare @mention notifies without creating a request.
 type CreateIllustrationRequestPayload struct {
-	ContentID     string             `json:"contentId"`
-	Brief         string             `json:"brief"`
-	Anchor        *appcontent.Anchor `json:"anchor"`
-	AssignedAgent string             `json:"assignedAgent"`
+	ContentID     string                      `json:"contentId"`
+	Brief         string                      `json:"brief"`
+	Anchor        *appcontent.Anchor          `json:"anchor"`
+	AssignedAgent string                      `json:"assignedAgent"`
+	Kind          appcontent.AgentRequestKind `json:"kind"`
+	ThreadID      string                      `json:"threadId"`
 }
 
-// UpdateIllustrationRequestPayload is the PATCH /v1/illustration-requests/{id}
-// payload. Nil fields keep the stored value.
+// UpdateIllustrationRequestPayload is the PATCH /v1/agent-requests/{id} (and the
+// back-compat /v1/illustration-requests/{id}) payload. Nil/empty fields keep
+// the stored value. Deliverable, when set alongside a transition to
+// "delivered", is the agent's result: it is posted back into the linked thread
+// as an isAgent message (ISI-7820 result callback; P4 renders it).
 type UpdateIllustrationRequestPayload struct {
 	Status        *appcontent.IllustrationStatus `json:"status"`
 	AssignedAgent *string                        `json:"assignedAgent"`
+	Deliverable   string                         `json:"deliverable"`
 }
 
 // --- contents ---------------------------------------------------------------
@@ -388,6 +399,29 @@ func (s *Store) CreateIllustrationRequest(ctx context.Context, sess auth.Session
 	if req.Anchor != nil && (req.Anchor.Start < 0 || req.Anchor.End < req.Anchor.Start) {
 		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: anchor must satisfy 0 <= start <= end", ErrBadRequest)
 	}
+	kind := req.Kind
+	if kind == "" {
+		kind = appcontent.KindDesign // back-compat: no kind == illustration
+	}
+	if !appcontent.ValidAgentRequestKind(kind) {
+		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: unknown request kind %q", ErrBadRequest, kind)
+	}
+	// A linked thread must belong to this same document — the deliverable posts
+	// back into it, so cross-document linkage would leak a reply across tenants.
+	if req.ThreadID != "" {
+		t, err := s.db.GetThread(ctx, req.ThreadID)
+		if errors.Is(err, ErrNotFound) {
+			// A client-supplied, unknown thread is a bad request, not a 404 on
+			// the request resource being created.
+			return appcontent.IllustrationRequest{}, fmt.Errorf("%w: thread %s not found", ErrBadRequest, req.ThreadID)
+		}
+		if err != nil {
+			return appcontent.IllustrationRequest{}, err
+		}
+		if t.ContentID != contentID {
+			return appcontent.IllustrationRequest{}, fmt.Errorf("%w: thread %s does not belong to content %s", ErrBadRequest, req.ThreadID, contentID)
+		}
+	}
 	assignee := req.AssignedAgent
 	if assignee == "" {
 		assignee = appcontent.DefaultAssigneeAgent
@@ -397,9 +431,11 @@ func (s *Store) CreateIllustrationRequest(ctx context.Context, sess auth.Session
 		ContentID:     contentID,
 		OwnerSubject:  sess.Subject,
 		AssignedAgent: assignee,
+		Kind:          kind,
 		Status:        appcontent.IllustrationRequested,
 		Brief:         req.Brief,
 		Anchor:        req.Anchor,
+		ThreadID:      req.ThreadID,
 	}
 	if err := s.db.InsertIllustrationRequest(ctx, r); err != nil {
 		s.audit(ctx, sess, verbCreate, kindIllustration, r.ID, false)
@@ -478,7 +514,36 @@ func (s *Store) UpdateIllustrationRequest(ctx context.Context, sess auth.Session
 	}
 	if req.Status != nil && !allowedTransition(isAdmin, isOwner, isAssignee, r.Status, *req.Status) {
 		s.audit(ctx, sess, verbUpdate, kindIllustration, id, false)
-		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: cannot move illustration request from %s to %s", ErrBadRequest, r.Status, *req.Status)
+		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: cannot move agent request from %s to %s", ErrBadRequest, r.Status, *req.Status)
+	}
+	// Result callback (ISI-7820): a deliverable is only meaningful on the move
+	// to "delivered" and needs a linked thread to post into. Validate both
+	// BEFORE transitioning so a stray deliverable can never silently vanish.
+	deliveringToThread := req.Deliverable != "" && req.Status != nil && *req.Status == appcontent.IllustrationDelivered
+	if req.Deliverable != "" && !deliveringToThread {
+		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: a deliverable may only accompany a transition to %q", ErrBadRequest, appcontent.IllustrationDelivered)
+	}
+	if deliveringToThread && r.ThreadID == "" {
+		return appcontent.IllustrationRequest{}, fmt.Errorf("%w: request %s has no linked thread to deliver into", ErrBadRequest, id)
+	}
+	// Post the agent's deliverable back into the linked thread as an isAgent
+	// message FIRST — if that write fails the status stays put (fail-closed: no
+	// "delivered" without its deliverable). The author is the delivering agent.
+	if deliveringToThread {
+		msg := appcontent.ReviewMessage{
+			// Deterministic id keyed on the request: InsertMessage is
+			// ON CONFLICT DO NOTHING, so a retried delivery (status write
+			// failed after the message committed) never double-posts.
+			ID:            "deliver-" + r.ID,
+			ThreadID:      r.ThreadID,
+			AuthorSubject: sess.Subject,
+			Body:          req.Deliverable,
+			IsAgent:       true,
+		}
+		if err := s.db.InsertMessage(ctx, msg); err != nil {
+			s.audit(ctx, sess, verbUpdate, kindIllustration, id, false)
+			return appcontent.IllustrationRequest{}, err
+		}
 	}
 	out, err := s.db.UpdateIllustrationRequest(ctx, id, req.Status, req.AssignedAgent)
 	if err != nil {

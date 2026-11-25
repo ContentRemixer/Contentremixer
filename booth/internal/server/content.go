@@ -28,10 +28,16 @@ func (s *Server) mountContent(mux *http.ServeMux) {
 	mux.Handle("GET /v1/content/{id}/reviews", s.protect(s.listReviews))
 	mux.Handle("POST /v1/content/{id}/reviews", s.protect(s.createReview))
 	mux.Handle("POST /v1/content/{id}/reviews/{threadId}/resolve", s.protect(s.resolveReview))
-	mux.Handle("GET /v1/illustration-requests", s.protect(s.listIllustrationRequests))
-	mux.Handle("POST /v1/illustration-requests", s.protect(s.createIllustrationRequest))
-	mux.Handle("GET /v1/illustration-requests/{id}", s.protect(s.getIllustrationRequest))
-	mux.Handle("PATCH /v1/illustration-requests/{id}", s.protect(s.updateIllustrationRequest))
+	// Agent-request work queue (ISI-7820). The /v1/agent-requests names are the
+	// generalized surface; the /v1/illustration-requests names are kept as
+	// back-compat aliases to the same handlers so the existing illustration
+	// flow and any in-flight clients keep working.
+	for _, prefix := range []string{"/v1/agent-requests", "/v1/illustration-requests"} {
+		mux.Handle("GET "+prefix, s.protect(s.listIllustrationRequests))
+		mux.Handle("POST "+prefix, s.protect(s.createIllustrationRequest))
+		mux.Handle("GET "+prefix+"/{id}", s.protect(s.getIllustrationRequest))
+		mux.Handle("PATCH "+prefix+"/{id}", s.protect(s.updateIllustrationRequest))
+	}
 }
 
 func (s *Server) listContents(w http.ResponseWriter, r *http.Request) {

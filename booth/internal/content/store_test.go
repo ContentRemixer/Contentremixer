@@ -172,6 +172,13 @@ func (f *fakeRepo) InsertMessage(_ context.Context, m appcontent.ReviewMessage) 
 	if f.fail {
 		return errRepo
 	}
+	// Mirror the store's ON CONFLICT (id) DO NOTHING: a message id already
+	// present is a no-op (idempotent delivery retry, ISI-7820).
+	for _, existing := range f.messages[m.ThreadID] {
+		if existing.ID == m.ID {
+			return nil
+		}
+	}
 	f.messages[m.ThreadID] = append(f.messages[m.ThreadID], m)
 	return nil
 }
@@ -565,6 +572,124 @@ func TestGate_IllustrationTransitions(t *testing.T) {
 	}
 	if _, err := s.GetIllustrationRequest(ctx, agent, r.ID); err != nil {
 		t.Fatalf("agent get: %v", err)
+	}
+}
+
+// TestGate_AgentRequestKindAndDelivery covers the ISI-7820 generalization:
+// typed kinds (default design, back-compat), thread linkage validated against
+// the parent document, and the result-callback write path (delivering an agent
+// request posts its deliverable back into the linked thread as an isAgent
+// message).
+func TestGate_AgentRequestKindAndDelivery(t *testing.T) {
+	s, _, _ := newTestGate()
+	ctx := context.Background()
+	alice := devrel("alice")
+	doc := mustCreate(t, s, alice, "A1")
+
+	// Back-compat: no kind defaults to design.
+	def, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "hero"})
+	if err != nil {
+		t.Fatalf("create default: %v", err)
+	}
+	if def.Kind != appcontent.KindDesign {
+		t.Fatalf("default kind: want design, got %q", def.Kind)
+	}
+
+	// Unknown kind is rejected.
+	if _, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "x", Kind: "bogus"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("bad kind: want ErrBadRequest, got %v", err)
+	}
+
+	// A mention-as-work request: kind=content, linked to a review thread.
+	thread, err := s.CreateReview(ctx, alice, doc.ID, CreateReviewRequest{Subject: "Para 2", Body: "@DevRel Writer please expand this"})
+	if err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+	writer := "DevRel Writer"
+	req, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{
+		Brief: "expand paragraph 2", Kind: appcontent.KindContent,
+		AssignedAgent: writer, ThreadID: thread.ID,
+		Anchor: &appcontent.Anchor{Start: 0, End: 5},
+	})
+	if err != nil {
+		t.Fatalf("create content request: %v", err)
+	}
+	if req.Kind != appcontent.KindContent || req.ThreadID != thread.ID {
+		t.Fatalf("content request wrong: %+v", req)
+	}
+	// It lands in the assignee's work queue.
+	q, err := s.ListIllustrationRequests(ctx, admin("root"), writer, "")
+	if err != nil || len(q) != 1 || q[0].ID != req.ID {
+		t.Fatalf("writer queue: %v %+v", err, q)
+	}
+
+	// Cross-document thread linkage is rejected.
+	other := mustCreate(t, s, alice, "A2")
+	if _, err := s.CreateIllustrationRequest(ctx, alice, other.ID, CreateIllustrationRequestPayload{Brief: "x", ThreadID: thread.ID}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("cross-doc thread: want ErrBadRequest, got %v", err)
+	}
+	// An unknown thread id is a bad request (not a 404 on the created resource).
+	if _, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "x", ThreadID: "no-such-thread"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("unknown thread: want ErrBadRequest, got %v", err)
+	}
+
+	agent := devrel(writer)
+	delivered := appcontent.IllustrationDelivered
+	inProgress := appcontent.IllustrationInProgress
+
+	// A deliverable not accompanying a delivered transition is rejected.
+	if _, err := s.UpdateIllustrationRequest(ctx, agent, req.ID, UpdateIllustrationRequestPayload{Status: &inProgress, Deliverable: "oops"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("deliverable on non-delivered: want ErrBadRequest, got %v", err)
+	}
+	// A deliverable on a request with no linked thread is rejected.
+	if _, err := s.UpdateIllustrationRequest(ctx, devrel(appcontent.DefaultAssigneeAgent), def.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "no thread"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("deliverable without thread: want ErrBadRequest, got %v", err)
+	}
+
+	// The happy path: the agent delivers; the result posts back as an isAgent
+	// message in the linked thread.
+	if _, err := s.UpdateIllustrationRequest(ctx, agent, req.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "Here is the expanded copy."}); err != nil {
+		t.Fatalf("agent deliver: %v", err)
+	}
+	threads, err := s.ListReviewThreads(ctx, alice, doc.ID)
+	if err != nil {
+		t.Fatalf("list threads: %v", err)
+	}
+	var got *appcontent.ReviewMessage
+	for i := range threads {
+		if threads[i].ID != thread.ID {
+			continue
+		}
+		msgs := threads[i].Messages
+		got = &msgs[len(msgs)-1]
+	}
+	if got == nil {
+		t.Fatal("linked thread not found")
+	}
+	if !got.IsAgent || got.Body != "Here is the expanded copy." || got.AuthorSubject != writer {
+		t.Fatalf("deliverable message wrong: %+v", got)
+	}
+
+	// Idempotent redelivery: an admin re-delivering (delivered→delivered, legal
+	// for admins) with the same deliverable must NOT double-post — the message
+	// id is deterministic and InsertMessage is ON CONFLICT DO NOTHING.
+	if _, err := s.UpdateIllustrationRequest(ctx, admin("root"), req.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "Here is the expanded copy."}); err != nil {
+		t.Fatalf("admin redeliver: %v", err)
+	}
+	threads2, _ := s.ListReviewThreads(ctx, alice, doc.ID)
+	for _, th := range threads2 {
+		if th.ID != thread.ID {
+			continue
+		}
+		agentMsgs := 0
+		for _, m := range th.Messages {
+			if m.IsAgent {
+				agentMsgs++
+			}
+		}
+		if agentMsgs != 1 {
+			t.Fatalf("redelivery double-posted: want 1 agent message, got %d", agentMsgs)
+		}
 	}
 }
 

@@ -90,12 +90,29 @@ func TestStore_CommentsAndThreads(t *testing.T) {
 	if err := st.InsertThread(ctx, th, first); err != nil {
 		t.Fatalf("insert thread: %v", err)
 	}
-	if err := st.InsertMessage(ctx, ReviewMessage{ID: "g2", ThreadID: "t1", AuthorSubject: "bob", Body: "reply"}); err != nil {
+	// An agent-authored deliverable (ISI-7820 result callback) round-trips its
+	// is_agent flag.
+	if err := st.InsertMessage(ctx, ReviewMessage{ID: "g2", ThreadID: "t1", AuthorSubject: "Graphic Designer", Body: "reply", IsAgent: true}); err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
 	threads, err := st.ListThreads(ctx, "c1")
 	if err != nil || len(threads) != 1 || len(threads[0].Messages) != 2 {
 		t.Fatalf("list threads: %v %+v", err, threads)
+	}
+	msgs := threads[0].Messages
+	if msgs[0].IsAgent {
+		t.Fatalf("human opening message flagged is_agent: %+v", msgs[0])
+	}
+	if !msgs[1].IsAgent {
+		t.Fatalf("agent reply missing is_agent: %+v", msgs[1])
+	}
+	// Re-inserting the same message id is a no-op (ON CONFLICT DO NOTHING) — the
+	// idempotency the ISI-7820 deliverable callback relies on for safe retries.
+	if err := st.InsertMessage(ctx, ReviewMessage{ID: "g2", ThreadID: "t1", AuthorSubject: "Graphic Designer", Body: "dup", IsAgent: true}); err != nil {
+		t.Fatalf("idempotent reinsert: %v", err)
+	}
+	if again, _ := st.ListThreads(ctx, "c1"); len(again[0].Messages) != 2 {
+		t.Fatalf("duplicate message id created a second row: %d", len(again[0].Messages))
 	}
 	if err := st.SetThreadStatus(ctx, "t1", ThreadResolved); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -113,14 +130,21 @@ func TestStore_IllustrationRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// r1 is a thread-linked content request (ISI-7820): kind + thread_id must
+	// round-trip.
+	if err := st.InsertThread(ctx, ReviewThread{ID: "t1", ContentID: "c1", Subject: "s", Status: ThreadOpen, CreatedBy: "alice"},
+		ReviewMessage{ID: "g1", ThreadID: "t1", AuthorSubject: "alice", Body: "@DevRel Writer expand"}); err != nil {
+		t.Fatalf("insert thread: %v", err)
+	}
 	r := IllustrationRequest{
 		ID: "r1", ContentID: "c1", OwnerSubject: "alice",
-		AssignedAgent: DefaultAssigneeAgent, Status: IllustrationRequested,
-		Brief: "hero", Anchor: &Anchor{Start: 1, End: 4},
+		AssignedAgent: DefaultAssigneeAgent, Kind: KindContent, Status: IllustrationRequested,
+		Brief: "hero", Anchor: &Anchor{Start: 1, End: 4}, ThreadID: "t1",
 	}
 	if err := st.InsertIllustrationRequest(ctx, r); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
+	// r2 omits Kind — the store must default it to design (back-compat).
 	if err := st.InsertIllustrationRequest(ctx, IllustrationRequest{
 		ID: "r2", ContentID: "c1", OwnerSubject: "bob", AssignedAgent: "agent-x",
 		Status: IllustrationRequested, Brief: "second",
@@ -131,6 +155,12 @@ func TestStore_IllustrationRequests(t *testing.T) {
 	got, err := st.GetIllustrationRequest(ctx, "r1")
 	if err != nil || got.Anchor == nil || got.Anchor.Start != 1 {
 		t.Fatalf("get (anchor round-trip): %v %+v", err, got)
+	}
+	if got.Kind != KindContent || got.ThreadID != "t1" {
+		t.Fatalf("kind/thread round-trip: %+v", got)
+	}
+	if r2, err := st.GetIllustrationRequest(ctx, "r2"); err != nil || r2.Kind != KindDesign {
+		t.Fatalf("default kind: want design, got %+v (%v)", r2, err)
 	}
 	if _, err := st.GetIllustrationRequest(ctx, "missing"); err != ErrNotFound {
 		t.Fatalf("missing: want ErrNotFound, got %v", err)

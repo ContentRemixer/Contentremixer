@@ -55,23 +55,35 @@ CREATE TABLE IF NOT EXISTS booth.review_messages (
     thread_id      TEXT        NOT NULL REFERENCES booth.review_threads(id) ON DELETE CASCADE,
     author_subject TEXT        NOT NULL,
     body           TEXT        NOT NULL,
+    is_agent       BOOLEAN     NOT NULL DEFAULT false,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS review_messages_thread_idx ON booth.review_messages (thread_id);
+-- ISI-7820: deliverables an agent posts back into a thread are is_agent rows.
+ALTER TABLE booth.review_messages ADD COLUMN IF NOT EXISTS is_agent BOOLEAN NOT NULL DEFAULT false;
 
--- Illustration requests + the assign-to-agent work queue (assigned_agent is
--- the queue key: GET /v1/illustration-requests?assignee=…).
+-- Agent requests + the assign-to-agent work queue (assigned_agent is the queue
+-- key: GET /v1/agent-requests?assignee=…). The table keeps its original name
+-- (illustration_requests) for back-compat; "kind" generalizes it (ISI-7820):
+-- kind=design is the original illustration flow, thread_id links the request to
+-- the review thread a mention was made in so the deliverable posts back there.
 CREATE TABLE IF NOT EXISTS booth.illustration_requests (
     id             TEXT        PRIMARY KEY,
     content_id     TEXT        NOT NULL REFERENCES booth.contents(id) ON DELETE CASCADE,
     owner_subject  TEXT        NOT NULL,
     assigned_agent TEXT        NOT NULL,
+    kind           TEXT        NOT NULL DEFAULT 'design',
     status         TEXT        NOT NULL DEFAULT 'requested',
     brief          TEXT        NOT NULL,
     anchor         JSONB,
+    thread_id      TEXT        REFERENCES booth.review_threads(id) ON DELETE SET NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Upgrade path for DBs created before ISI-7820 (ADD COLUMN IF NOT EXISTS is a
+-- no-op once applied).
+ALTER TABLE booth.illustration_requests ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'design';
+ALTER TABLE booth.illustration_requests ADD COLUMN IF NOT EXISTS thread_id TEXT REFERENCES booth.review_threads(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS illustration_requests_assignee_idx
     ON booth.illustration_requests (assigned_agent, status);
 CREATE INDEX IF NOT EXISTS illustration_requests_owner_idx

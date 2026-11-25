@@ -85,10 +85,38 @@ func ValidIllustrationStatus(s IllustrationStatus) bool {
 	return false
 }
 
-// DefaultAssigneeAgent is the agent persona a new illustration request is
-// assigned to when the caller does not name one (plan §3.2 B3: "request
-// illustration" assigns the Graphic Designer).
+// DefaultAssigneeAgent is the agent persona a new agent request is assigned to
+// when the caller does not name one (plan §3.2 B3: "request illustration"
+// assigns the Graphic Designer; a kind=design request keeps that default).
 const DefaultAssigneeAgent = "Graphic Designer"
+
+// AgentRequestKind types an anchored work request by the agent discipline it
+// routes to (ISI-7820 / ISI-7780 plan §6 P3). It is the generalization of the
+// original illustration-only request: kind=design IS today's illustration flow,
+// and the other kinds route the same anchored-work machinery to other agents.
+type AgentRequestKind string
+
+const (
+	// KindDesign — an illustration/graphics request (the original flow;
+	// defaults to the Graphic Designer). Back-compat: a request with no kind
+	// is treated as design.
+	KindDesign AgentRequestKind = "design"
+	// KindContent — a writing/content request (e.g. the DevRel Writer).
+	KindContent AgentRequestKind = "content"
+	// KindReview — a review request (e.g. the Code Reviewer).
+	KindReview AgentRequestKind = "review"
+	// KindGeneric — an untyped request routed purely by assigned agent.
+	KindGeneric AgentRequestKind = "generic"
+)
+
+// ValidAgentRequestKind reports whether k is a known request kind.
+func ValidAgentRequestKind(k AgentRequestKind) bool {
+	switch k {
+	case KindDesign, KindContent, KindReview, KindGeneric:
+		return true
+	}
+	return false
+}
 
 // Content is one working document (the B3 reader model). OwnerSubject is the
 // tenancy key the Booth gate evaluates §6.3 against.
@@ -138,28 +166,43 @@ type ReviewThread struct {
 	UpdatedAt time.Time       `json:"updatedAt"`
 }
 
-// ReviewMessage is one reply inside a peer-review thread.
+// ReviewMessage is one reply inside a peer-review thread. IsAgent marks a
+// message authored by an agent — in particular the deliverable an assigned
+// agent posts back into the thread when it completes an AgentRequest (ISI-7820
+// result callback). Its inline rendering is ISI-7821 (P4); P3 only persists it.
 type ReviewMessage struct {
 	ID            string    `json:"id"`
 	ThreadID      string    `json:"threadId"`
 	AuthorSubject string    `json:"author"`
 	Body          string    `json:"body"`
+	IsAgent       bool      `json:"isAgent"`
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-// IllustrationRequest is one "request illustration" work item (plan §3.2 B3).
+// AgentRequest is one anchored, tracked work request routed to an agent's
+// work-queue (ISI-7820; the generalization of the original illustration
+// request, plan §3.2 B3 + §6 P3). Kind types the discipline (design/content/
+// review/generic); kind=design reproduces the original illustration behavior.
 // OwnerSubject is the requester; AssignedAgent is the agent persona working the
-// item — the agent work queue (GET /v1/illustration-requests?assignee=…) lists
-// by it, and the gate treats the assignee as a §6.3 clause-2 owner of the work
-// item itself.
-type IllustrationRequest struct {
+// item — the agent work queue (GET /v1/agent-requests?assignee=…) lists by it,
+// and the gate treats the assignee as a §6.3 clause-2 owner of the work item.
+// ThreadID, when set, links the request to the peer-review thread the mention
+// was made in, so the agent's deliverable posts back into that same thread.
+type AgentRequest struct {
 	ID            string             `json:"id"`
 	ContentID     string             `json:"contentId"`
 	OwnerSubject  string             `json:"owner"`
 	AssignedAgent string             `json:"assignedAgent"`
+	Kind          AgentRequestKind   `json:"kind"`
 	Status        IllustrationStatus `json:"status"`
 	Brief         string             `json:"brief"`
 	Anchor        *Anchor            `json:"anchor,omitempty"`
+	ThreadID      string             `json:"threadId,omitempty"`
 	CreatedAt     time.Time          `json:"createdAt"`
 	UpdatedAt     time.Time          `json:"updatedAt"`
 }
+
+// IllustrationRequest is the back-compat name for AgentRequest: the original
+// illustration flow is an AgentRequest with Kind=design. Existing callers,
+// tests, and the FE type keep compiling against this alias.
+type IllustrationRequest = AgentRequest

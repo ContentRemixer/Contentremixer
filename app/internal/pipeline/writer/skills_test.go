@@ -43,6 +43,25 @@ func TestResolveSkillPacksComposesContentWriter(t *testing.T) {
 	}
 }
 
+func TestResolveSkillPacksComposesTutorialWithSEO(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureTree(t, root, allContentPacks())
+	packs := resolveSkillPacks(fixtureFS{root: root}, "tutorial")
+
+	wantNames := []string{
+		"skills/technical-tutorial/SKILL.md",
+		"skills/seo/SKILL.md",
+	}
+	if len(packs) != len(wantNames) {
+		t.Fatalf("tutorial composed %d packs, want %d: %+v", len(packs), len(wantNames), packs)
+	}
+	for i, want := range wantNames {
+		if packs[i].name != want {
+			t.Fatalf("pack %d = %q, want %q (seo layers after technical-tutorial)", i, packs[i].name, want)
+		}
+	}
+}
+
 func TestResolveSkillPacksDegradesMissing(t *testing.T) {
 	root := t.TempDir()
 	// Only one of content-writer's three packs is present.
@@ -171,8 +190,14 @@ func TestWriteSkillOverridesFormat(t *testing.T) {
 	if !strings.Contains(last.System, "TUTORIAL_MARKER") {
 		t.Fatalf("explicit skill=tutorial did not load technical-tutorial:\n%s", last.System)
 	}
-	if strings.Contains(last.System, "BLOGWRITING_MARKER") || strings.Contains(last.System, "SEO_MARKER") {
-		t.Fatalf("blog format default leaked despite explicit skill override:\n%s", last.System)
+	// seo is shared with the tutorial stack (ISI-7805), so it is NOT a
+	// content-writer-only marker; blog-writing + human-voice-review are.
+	if strings.Contains(last.System, "BLOGWRITING_MARKER") || strings.Contains(last.System, "HUMANVOICE_MARKER") {
+		t.Fatalf("content-writer stack leaked despite explicit skill=tutorial override:\n%s", last.System)
+	}
+	// tutorial now layers seo on top of technical-tutorial (ISI-7805).
+	if !strings.Contains(last.System, "SEO_MARKER") {
+		t.Fatalf("tutorial skill must layer the seo pack:\n%s", last.System)
 	}
 	// Style guide is still the blog style (format-driven, skill-independent).
 	if !strings.Contains(last.System, "styles/blog.md") {

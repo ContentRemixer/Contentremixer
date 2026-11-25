@@ -2,6 +2,7 @@ import { Badge, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import { UsersPanel } from "./admin/UsersPanel";
 import { CrPanel, type CrObject } from "./admin/CrPanel";
 import { NewReferenceRepoButton, EditReferenceRepoButton } from "./admin/ReferenceRepoForm";
+import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
 
 // AdminPage is the C1–C4 admin console (W6 / ISI-7213). Four Admin-only surfaces:
 // Users & roles (brand-new CRUD API), plus Personas / Reference repos / Model
@@ -110,30 +111,72 @@ export function AdminPage() {
         </TabsContent>
 
         <TabsContent value="agents">
+          <p className="mb-3 text-sm text-text-muted">
+            Agents marked <Badge tone="success">Default</Badge> are seeded and reproduce the platform's built-in
+            team. You can add extra agents and edit any agent's skill packs below.
+          </p>
           <CrPanel
             path="/v1/agents"
             title="Agents"
-            subtitle="The default specialists the content pipeline runs. Admin-only, read-only here — editing and teams land in a later release (ISI-7803)."
+            subtitle="The specialists the content pipeline runs. Admin-only."
             columns={[
               { header: "Name", cell: (o) => o.metadata.name },
               { header: "Role", cell: (o) => str(o, "spec.role") || "—" },
-              { header: "Skill kind", cell: (o) => str(o, "spec.skillKind") || "—" },
-              { header: "Model", cell: (o) => str(o, "spec.modelProfile") || "default" },
-              { header: "Actor", cell: (o) => str(o, "spec.actorTemplate") || "content" },
+              { header: "Skill kind", cell: (o) => <Badge tone="info">{str(o, "spec.skillKind") || "—"}</Badge> },
+              { header: "Skill packs", cell: (o) => <PacksCell o={o} /> },
+              { header: "Model", cell: (o) => str(o, "spec.modelProfile") || <span className="text-text-muted">default</span> },
+              {
+                header: "Actor",
+                cell: (o) =>
+                  str(o, "spec.actorTemplate") === "media" ? (
+                    <Badge tone="warning">media</Badge>
+                  ) : (
+                    <span className="text-text-muted">content</span>
+                  ),
+              },
               {
                 header: "Default",
                 cell: (o) =>
-                  str(o, "spec.default") === "true" ? <Badge tone="info">default</Badge> : "—",
+                  str(o, "spec.default") === "true" ? <Badge tone="success">Default</Badge> : "",
               },
             ]}
-            // Read-only in P1 (ISI-7802): the default Agents are seeded on boot and
-            // shown here so an admin can "see the default agents". Create/edit is
-            // ISI-7803; the seeds are delete-guarded defaults, so no inline create.
-            createNote="The default agents are seeded automatically. Editing arrives in a later release."
+            // Create (ISI-7803 "add extra agents") + per-row "Skills…" scoped editor
+            // ("modify skills"). No new backend route — both use the generic
+            // /v1/agents CRUD. The seeded default:true rows are delete-guarded (UX
+            // only; the seeder re-creates a missing default on next boot).
+            customCreate={(refresh) => <NewAgentButton path="/v1/agents" onSaved={refresh} />}
+            rowActions={(o, refresh) => (
+              <EditAgentSkillsButton agent={o} path="/v1/agents" onSaved={refresh} />
+            )}
+            deleteGuard={(o) =>
+              str(o, "spec.default") === "true"
+                ? "Default agents are seeded and cannot be deleted. Add an extra agent of the same skill kind instead."
+                : null
+            }
           />
         </TabsContent>
       </Tabs>
     </section>
+  );
+}
+
+// PacksCell renders spec.skillPacks[] as up to three chips, then "+N", or "—".
+function PacksCell({ o }: { o: CrObject }) {
+  const raw = (o.spec?.skillPacks as unknown[]) ?? [];
+  const packs = raw.filter((p): p is string => typeof p === "string" && p.trim() !== "");
+  if (packs.length === 0) return <span className="text-text-muted">—</span>;
+  const shown = packs.slice(0, 3);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {shown.map((p) => (
+        <span key={p} className="rounded border border-border px-1.5 py-0.5 text-xs">
+          {p}
+        </span>
+      ))}
+      {packs.length > shown.length && (
+        <span className="text-xs text-text-muted">+{packs.length - shown.length}</span>
+      )}
+    </span>
   );
 }
 

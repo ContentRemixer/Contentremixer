@@ -135,15 +135,18 @@ type Engine struct {
 // NewEngine builds an engine over an explicit skill set (tests supply fakes).
 func NewEngine(skills ...Skill) *Engine { return &Engine{skills: skills} }
 
-// DefaultEngine wires the five P3-4 scaffold skills in DAG order.
+// DefaultEngine wires the five P3-4 scaffold skills in DAG order. The skill set
+// is derived from the ISI-7803 skill-kind registry (defaultKinds) so this and
+// the registry cannot drift — the kinds are compile-time constants that are
+// registered by construction, so the lookup never fails (a drift would be caught
+// by TestRegistryMatchesKnownSkillKinds first).
 func DefaultEngine() *Engine {
-	return NewEngine(
-		NewArchitectSkill(),
-		NewResearchSkill(),
-		NewCodingSkill(),
-		NewObservabilitySkill(),
-		NewGraphicSkill(),
-	)
+	eng, err := EngineForKinds(defaultKinds...)
+	if err != nil {
+		// Unreachable: defaultKinds are the registry's own keys.
+		panic(err)
+	}
+	return eng
 }
 
 // Orchestrate runs this engine's skills for rc.

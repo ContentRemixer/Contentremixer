@@ -41,6 +41,14 @@ type RunContext struct {
 	// => the writer derives a default skill from OutputFormat (the pre-seam
 	// path), so an unset Skill is byte-for-byte unchanged.
 	Skill string
+	// SkillPacks is the explicit, ordered skill-pack override for this run,
+	// sourced from the selected Agent.spec.skillPacks[] (ISI-7803). When
+	// non-empty it REPLACES the writer's catalog composition for the resolved
+	// skill (skillComposition in writer/skills.go), making composition config an
+	// admin edits on an Agent rather than a Go-map edit. Empty => the catalog
+	// default for the skill applies, byte-for-byte unchanged. Pack resolution
+	// stays degrade-never-gate: an unknown/empty pack is skipped, never fatal.
+	SkillPacks []string
 	// Notes is the free-text angle/audience guidance from the issue form.
 	Notes string
 	// ModelName is the LiteLLM alias to use (system default unless overridden).

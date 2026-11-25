@@ -187,3 +187,10 @@ export const LayersIcon = (p: IconProps) => (
     <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
   </svg>
 );
+
+export const CopyIcon = (p: IconProps) => (
+  <svg {...base(p)}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);

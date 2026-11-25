@@ -85,6 +85,8 @@ export interface CommentComposerProps {
   onSubmit: (body: string) => void;
   onCancel?: () => void;
   autoFocus?: boolean;
+  /** Seed text the box opens with — used to pre-fill a pending @mention. */
+  initialValue?: string;
 }
 
 /** Textarea + submit; clears on send. Reused by the thread reply box. */
@@ -95,8 +97,9 @@ export function CommentComposer({
   onSubmit,
   onCancel,
   autoFocus,
+  initialValue = "",
 }: CommentComposerProps) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const canSend = value.trim().length > 0 && !busy;
   return (
     <form

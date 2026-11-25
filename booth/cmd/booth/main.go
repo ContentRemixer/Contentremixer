@@ -37,6 +37,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/seed"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
@@ -85,6 +86,14 @@ func run() error {
 
 	auditor := audit.NewSlogLogger(log)
 	st := store.New(k8s, namespace, auditor)
+
+	// Seed the default Agents + AgentTeams (ISI-7800 §6 / ISI-7802), create-if-
+	// absent so admin edits are never clobbered. Best-effort: a failure (e.g. the
+	// Booth SA's RBAC for the new kinds not yet applied) is logged, not fatal —
+	// nothing reads AgentTeam until the P3 engine loader, so Booth still serves.
+	if err := seed.Defaults(context.Background(), k8s, namespace, log); err != nil {
+		log.Warn("agent/team seed incomplete", slog.Any("err", err))
+	}
 
 	// Scraper-review surface (ISI-7207): wired only when a Postgres DSN is
 	// configured (the live pgvector PG, ISI-7148). Without it, Booth boots as the

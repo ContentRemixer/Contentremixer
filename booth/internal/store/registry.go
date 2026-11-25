@@ -94,6 +94,49 @@ var DevRelPersonaKind = ResourceKind{
 	},
 }
 
+// AgentKind — admin-only platform config (ISI-7800 §2, admin-portal "manage
+// agents"). One registration buys CRUD + §6.3 gating + audit; the read-only
+// Agents tab (ISI-7802) lists these, CRUD UI + validating webhook land in
+// ISI-7803.
+var AgentKind = ResourceKind{
+	Kind:      "Agent",
+	AdminOnly: true,
+	newObject: func() client.Object { return &v1alpha1.Agent{} },
+	newList:   func() client.ObjectList { return &v1alpha1.AgentList{} },
+	ownerOf: func(o client.Object) string {
+		return o.(*v1alpha1.Agent).Spec.Owner.Subject
+	},
+	items: func(l client.ObjectList) []client.Object {
+		src := l.(*v1alpha1.AgentList).Items
+		out := make([]client.Object, len(src))
+		for i := range src {
+			out[i] = &src[i]
+		}
+		return out
+	},
+}
+
+// AgentTeamKind — admin-only orchestration DAG (ISI-7800 §3). Registered now so
+// the seed set persists and lists; nothing reads teams until the P3 engine
+// loader (ISI-7804).
+var AgentTeamKind = ResourceKind{
+	Kind:      "AgentTeam",
+	AdminOnly: true,
+	newObject: func() client.Object { return &v1alpha1.AgentTeam{} },
+	newList:   func() client.ObjectList { return &v1alpha1.AgentTeamList{} },
+	ownerOf: func(o client.Object) string {
+		return o.(*v1alpha1.AgentTeam).Spec.Owner.Subject
+	},
+	items: func(l client.ObjectList) []client.Object {
+		src := l.(*v1alpha1.AgentTeamList).Items
+		out := make([]client.Object, len(src))
+		for i := range src {
+			out[i] = &src[i]
+		}
+		return out
+	},
+}
+
 // ReferenceRepoKind — admin-only platform config (design §2.2, §6.1).
 var ReferenceRepoKind = ResourceKind{
 	Kind:      "ReferenceRepo",

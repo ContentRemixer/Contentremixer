@@ -18,6 +18,8 @@ resources:
   - crds/contentremixer.io_modelprofiles.yaml
   - crds/contentremixer.io_referencerepos.yaml
   - crds/contentremixer.io_devrelpersonas.yaml
+  - crds/contentremixer.io_agents.yaml
+  - crds/contentremixer.io_agentteams.yaml
   - operator/serviceaccount.yaml
   - operator/rbac.yaml
   - operator/certificates.yaml

@@ -106,6 +106,14 @@ func TestStore_CommentsAndThreads(t *testing.T) {
 	if !msgs[1].IsAgent {
 		t.Fatalf("agent reply missing is_agent: %+v", msgs[1])
 	}
+	// Re-inserting the same message id is a no-op (ON CONFLICT DO NOTHING) — the
+	// idempotency the ISI-7820 deliverable callback relies on for safe retries.
+	if err := st.InsertMessage(ctx, ReviewMessage{ID: "g2", ThreadID: "t1", AuthorSubject: "Graphic Designer", Body: "dup", IsAgent: true}); err != nil {
+		t.Fatalf("idempotent reinsert: %v", err)
+	}
+	if again, _ := st.ListThreads(ctx, "c1"); len(again[0].Messages) != 2 {
+		t.Fatalf("duplicate message id created a second row: %d", len(again[0].Messages))
+	}
 	if err := st.SetThreadStatus(ctx, "t1", ThreadResolved); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

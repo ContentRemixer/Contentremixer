@@ -294,9 +294,14 @@ func (s *Store) InsertMessage(ctx context.Context, m ReviewMessage) error {
 		return fmt.Errorf("content: begin message tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// ON CONFLICT DO NOTHING makes the insert idempotent by id: a deliverable
+	// posted with a deterministic id (see the gate's result callback) is never
+	// double-posted if the agent retries a partially-applied delivery. Normal
+	// replies use random ids and never collide (ISI-7820).
 	if _, err := tx.Exec(ctx, `
 INSERT INTO booth.review_messages (id, thread_id, author_subject, body, is_agent, created_at)
-VALUES ($1, $2, $3, $4, $5, now())`,
+VALUES ($1, $2, $3, $4, $5, now())
+ON CONFLICT (id) DO NOTHING`,
 		m.ID, m.ThreadID, m.AuthorSubject, m.Body, m.IsAgent); err != nil {
 		return fmt.Errorf("content: insert message: %w", err)
 	}

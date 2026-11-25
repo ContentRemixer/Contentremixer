@@ -410,6 +410,11 @@ func (s *Store) CreateIllustrationRequest(ctx context.Context, sess auth.Session
 	// back into it, so cross-document linkage would leak a reply across tenants.
 	if req.ThreadID != "" {
 		t, err := s.db.GetThread(ctx, req.ThreadID)
+		if errors.Is(err, ErrNotFound) {
+			// A client-supplied, unknown thread is a bad request, not a 404 on
+			// the request resource being created.
+			return appcontent.IllustrationRequest{}, fmt.Errorf("%w: thread %s not found", ErrBadRequest, req.ThreadID)
+		}
 		if err != nil {
 			return appcontent.IllustrationRequest{}, err
 		}
@@ -526,7 +531,10 @@ func (s *Store) UpdateIllustrationRequest(ctx context.Context, sess auth.Session
 	// "delivered" without its deliverable). The author is the delivering agent.
 	if deliveringToThread {
 		msg := appcontent.ReviewMessage{
-			ID:            newID(),
+			// Deterministic id keyed on the request: InsertMessage is
+			// ON CONFLICT DO NOTHING, so a retried delivery (status write
+			// failed after the message committed) never double-posts.
+			ID:            "deliver-" + r.ID,
 			ThreadID:      r.ThreadID,
 			AuthorSubject: sess.Subject,
 			Body:          req.Deliverable,

@@ -172,6 +172,13 @@ func (f *fakeRepo) InsertMessage(_ context.Context, m appcontent.ReviewMessage) 
 	if f.fail {
 		return errRepo
 	}
+	// Mirror the store's ON CONFLICT (id) DO NOTHING: a message id already
+	// present is a no-op (idempotent delivery retry, ISI-7820).
+	for _, existing := range f.messages[m.ThreadID] {
+		if existing.ID == m.ID {
+			return nil
+		}
+	}
 	f.messages[m.ThreadID] = append(f.messages[m.ThreadID], m)
 	return nil
 }
@@ -621,6 +628,10 @@ func TestGate_AgentRequestKindAndDelivery(t *testing.T) {
 	if _, err := s.CreateIllustrationRequest(ctx, alice, other.ID, CreateIllustrationRequestPayload{Brief: "x", ThreadID: thread.ID}); !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("cross-doc thread: want ErrBadRequest, got %v", err)
 	}
+	// An unknown thread id is a bad request (not a 404 on the created resource).
+	if _, err := s.CreateIllustrationRequest(ctx, alice, doc.ID, CreateIllustrationRequestPayload{Brief: "x", ThreadID: "no-such-thread"}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("unknown thread: want ErrBadRequest, got %v", err)
+	}
 
 	agent := devrel(writer)
 	delivered := appcontent.IllustrationDelivered
@@ -657,6 +668,28 @@ func TestGate_AgentRequestKindAndDelivery(t *testing.T) {
 	}
 	if !got.IsAgent || got.Body != "Here is the expanded copy." || got.AuthorSubject != writer {
 		t.Fatalf("deliverable message wrong: %+v", got)
+	}
+
+	// Idempotent redelivery: an admin re-delivering (delivered→delivered, legal
+	// for admins) with the same deliverable must NOT double-post — the message
+	// id is deterministic and InsertMessage is ON CONFLICT DO NOTHING.
+	if _, err := s.UpdateIllustrationRequest(ctx, admin("root"), req.ID, UpdateIllustrationRequestPayload{Status: &delivered, Deliverable: "Here is the expanded copy."}); err != nil {
+		t.Fatalf("admin redeliver: %v", err)
+	}
+	threads2, _ := s.ListReviewThreads(ctx, alice, doc.ID)
+	for _, th := range threads2 {
+		if th.ID != thread.ID {
+			continue
+		}
+		agentMsgs := 0
+		for _, m := range th.Messages {
+			if m.IsAgent {
+				agentMsgs++
+			}
+		}
+		if agentMsgs != 1 {
+			t.Fatalf("redelivery double-posted: want 1 agent message, got %d", agentMsgs)
+		}
 	}
 }
 

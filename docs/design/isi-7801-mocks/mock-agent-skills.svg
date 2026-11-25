@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="660" viewBox="0 0 880 660" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
+  <style>
+    .bg{fill:#0f172a}.dim{fill:#000000;fill-opacity:.45}.card{fill:#1e293b}.border{stroke:#334155;stroke-width:1}
+    .field{fill:#0f172a;stroke:#334155;stroke-width:1}
+    .h{fill:#f1f5f9}.t{fill:#e2e8f0}.m{fill:#94a3b8}.hd{fill:#64748b}
+    .lbl{fill:#cbd5e1;font-size:11px;letter-spacing:.03em}
+    .chip{fill:#334155}.chiptxt{fill:#cbd5e1}.chipx{fill:#94a3b8}
+    .chipWarn{fill:#2b2410;stroke:#5a3a10;stroke-width:1}.chipWtx{fill:#fcd34d}
+    .req{fill:#f87171}
+    .btn{fill:#334155}.btntx{fill:#e2e8f0}
+    .accent{fill:#6366f1}.accenttx{fill:#ffffff}
+    .caret{fill:#64748b}
+    text{font-size:13px}
+  </style>
+  <rect class="bg" width="880" height="660"/>
+  <rect class="dim" width="880" height="660"/>
+
+  <!-- dialog card -->
+  <rect class="card border" x="200" y="34" width="480" height="584" rx="10"/>
+
+  <!-- header -->
+  <text class="h" x="224" y="66" font-size="15" font-weight="600">Add agent</text>
+  <text class="m" x="224" y="86" font-size="11">Create an extra specialist. Seeded Default agents are not created here.</text>
+  <line class="border" x1="224" y1="98" x2="656" y2="98"/>
+
+  <!-- Name -->
+  <text class="lbl" x="224" y="122">NAME <tspan class="req">*</tspan></text>
+  <rect class="field" x="224" y="128" width="432" height="30" rx="6"/>
+  <text class="t" x="234" y="148" font-size="12">coding-fast</text>
+  <text class="hd" x="224" y="174" font-size="10.5">metadata.name · DNS-1123 lower-kebab</text>
+
+  <!-- Role -->
+  <text class="lbl" x="224" y="198">ROLE <tspan class="req">*</tspan></text>
+  <rect class="field" x="224" y="204" width="432" height="30" rx="6"/>
+  <text class="t" x="234" y="224" font-size="12">Coding Specialist (fast)</text>
+
+  <!-- Skill kind + Actor (two columns) -->
+  <text class="lbl" x="224" y="264">SKILL KIND <tspan class="req">*</tspan></text>
+  <rect class="field" x="224" y="270" width="208" height="30" rx="6"/>
+  <text class="t" x="234" y="290" font-size="12">coding</text>
+  <path class="caret" d="M412 284 l10 0 l-5 6 z"/>
+  <text class="hd" x="224" y="316" font-size="10.5">closed enum — 6 known kinds</text>
+
+  <text class="lbl" x="448" y="264">ACTOR TEMPLATE</text>
+  <rect class="field" x="448" y="270" width="208" height="30" rx="6"/>
+  <text class="t" x="458" y="290" font-size="12">content</text>
+  <path class="caret" d="M636 284 l10 0 l-5 6 z"/>
+  <text class="hd" x="448" y="316" font-size="10.5">content (default) / media</text>
+
+  <!-- Model profile -->
+  <text class="lbl" x="224" y="342">MODEL PROFILE</text>
+  <rect class="field" x="224" y="348" width="432" height="30" rx="6"/>
+  <text class="t" x="234" y="368" font-size="12">glm-cheap</text>
+  <path class="caret" d="M636 362 l10 0 l-5 6 z"/>
+  <text class="hd" x="224" y="394" font-size="10.5">live ModelProfile litellmNames + leading "default" (mirrors webhook A2)</text>
+
+  <!-- Skill packs (SkillPacksField) -->
+  <text class="lbl" x="224" y="420">SKILL PACKS <tspan class="m" font-size="10.5">— the "Modify skills" multiselect</tspan></text>
+  <rect class="field" x="224" y="426" width="432" height="52" rx="6"/>
+  <rect class="chip" x="234" y="436" width="80" height="20" rx="10"/><text class="chiptxt" x="242" y="450" font-size="11">concise</text><text class="chipx" x="302" y="450" font-size="11">×</text>
+  <rect class="chipWarn" x="322" y="436" width="104" height="20" rx="10"/><text class="chipWtx" x="330" y="450" font-size="11">house-style</text><text class="chipWtx" x="412" y="450" font-size="11">×</text>
+  <text class="m" x="234" y="472" font-size="11">+ add pack…</text>
+  <path class="caret" d="M636 446 l10 0 l-5 6 z"/>
+  <text class="hd" x="224" y="496" font-size="10.5">options discovered from reference repo (GET /v1/skillpacks); free-text allowed.</text>
+  <text class="chipWtx" x="224" y="511" font-size="10.5">"house-style" not found in reference repo — ignored at run time (never blocks save).</text>
+
+  <!-- Description -->
+  <text class="lbl" x="224" y="535">DESCRIPTION</text>
+  <rect class="field" x="224" y="541" width="432" height="30" rx="6"/>
+  <text class="hd" x="234" y="561" font-size="11">optional free-text context…</text>
+
+  <!-- footer buttons -->
+  <rect class="btn" x="470" y="580" width="80" height="30" rx="7"/><text class="btntx" x="493" y="600" font-size="12">Cancel</text>
+  <rect class="accent" x="558" y="580" width="98" height="30" rx="7"/><text class="accenttx" x="580" y="600" font-size="12">Create</text>
+
+  <!-- note below card -->
+  <text class="hd" x="200" y="644" font-size="11">POST /v1/agents · spec.default always false (only the seeder sets Default; webhook A3 ≤ 1 per kind) · Admin-only → PanelForbidden otherwise</text>
+</svg>

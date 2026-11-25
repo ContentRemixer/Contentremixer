@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="520" viewBox="0 0 880 520" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
+  <style>
+    .bg{fill:#0f172a}.card{fill:#1e293b}.border{stroke:#334155;stroke-width:1}
+    .h{fill:#f1f5f9}.t{fill:#e2e8f0}.m{fill:#94a3b8}.hd{fill:#64748b}
+    .chip{fill:#334155}.chiptxt{fill:#cbd5e1}
+    .badgeI{fill:#1e3a5f}.badgeItx{fill:#7dd3fc}
+    .badgeS{fill:#14532d}.badgeStx{fill:#86efac}
+    .badgeW{fill:#5a3a10}.badgeWtx{fill:#fcd34d}
+    .btn{fill:#334155}.btntx{fill:#e2e8f0}
+    .btnD{fill:#3f1d2b}.btnDtx{fill:#fca5a5}
+    .btnDoff{fill:#273244}.btnDofftx{fill:#64748b}
+    .accent{fill:#6366f1}.accenttx{fill:#ffffff}
+    text{font-size:13px}.hdr{font-size:11px;letter-spacing:.06em}
+  </style>
+  <rect class="bg" width="880" height="520"/>
+  <!-- tabs -->
+  <text class="m" x="24" y="34" font-size="12">Users &amp; roles</text>
+  <text class="m" x="120" y="34" font-size="12">Personas</text>
+  <text class="m" x="196" y="34" font-size="12">Reference repos</text>
+  <text class="m" x="308" y="34" font-size="12">Model profiles</text>
+  <text class="h" x="414" y="34" font-size="12" font-weight="600">Agents</text>
+  <text class="m" x="474" y="34" font-size="12">Orchestration</text>
+  <rect class="accent" x="412" y="42" width="56" height="2"/>
+  <line class="border" x1="24" y1="44" x2="856" y2="44"/>
+
+  <!-- card -->
+  <rect class="card border" x="24" y="64" width="832" height="436" rx="8"/>
+  <!-- card header -->
+  <text class="h" x="44" y="94" font-size="15" font-weight="600">Agents</text>
+  <text class="m" x="44" y="114" font-size="12">Configured specialists. Agents marked Default are seeded and reproduce the platform's built-in team.</text>
+  <rect class="accent" x="788" y="80" width="48" height="28" rx="6"/>
+  <text class="accenttx" x="800" y="98" font-size="12">New</text>
+
+  <!-- table header -->
+  <line class="border" x1="44" y1="130" x2="836" y2="130"/>
+  <text class="hd hdr" x="44" y="150">ROLE</text>
+  <text class="hd hdr" x="214" y="150">SKILL KIND</text>
+  <text class="hd hdr" x="330" y="150">SKILL PACKS</text>
+  <text class="hd hdr" x="486" y="150">MODEL</text>
+  <text class="hd hdr" x="590" y="150">ACTOR</text>
+  <text class="hd hdr" x="664" y="150">DEFAULT</text>
+  <text class="hd hdr" x="762" y="150" text-anchor="end" transform="translate(74,0)">ACTIONS</text>
+  <line class="border" x1="44" y1="160" x2="836" y2="160"/>
+
+  <!-- rows -->
+  <!-- row template helper done manually -->
+  <!-- row 1 architect (seeded default) -->
+  <g>
+    <text class="t" x="44" y="186">System Architect</text>
+    <rect class="badgeI" x="214" y="174" width="66" height="18" rx="4"/><text class="badgeItx" x="220" y="186" font-size="11">architect</text>
+    <text class="m" x="330" y="186">—</text>
+    <text class="m" x="486" y="186">default</text>
+    <text class="m" x="590" y="186">content</text>
+    <rect class="badgeS" x="664" y="174" width="56" height="18" rx="4"/><text class="badgeStx" x="670" y="186" font-size="11">Default</text>
+    <rect class="btn" x="738" y="172" width="44" height="22" rx="5"/><text class="btntx" x="746" y="187" font-size="11">Skills</text>
+    <rect class="btnDoff" x="788" y="172" width="48" height="22" rx="5"/><text class="btnDofftx" x="794" y="187" font-size="11">Delete</text>
+    <line class="border" x1="44" y1="202" x2="836" y2="202"/>
+  </g>
+  <!-- row 2 coding (seeded default) -->
+  <g transform="translate(0,46)">
+    <text class="t" x="44" y="186">Coding Specialist</text>
+    <rect class="badgeI" x="214" y="174" width="52" height="18" rx="4"/><text class="badgeItx" x="220" y="186" font-size="11">coding</text>
+    <rect class="chip" x="330" y="174" width="52" height="18" rx="9"/><text class="chiptxt" x="337" y="186" font-size="11">verbose</text>
+    <text class="m" x="486" y="186">default</text>
+    <text class="m" x="590" y="186">content</text>
+    <rect class="badgeS" x="664" y="174" width="56" height="18" rx="4"/><text class="badgeStx" x="670" y="186" font-size="11">Default</text>
+    <rect class="btn" x="738" y="172" width="44" height="22" rx="5"/><text class="btntx" x="746" y="187" font-size="11">Skills</text>
+    <rect class="btnDoff" x="788" y="172" width="48" height="22" rx="5"/><text class="btnDofftx" x="794" y="187" font-size="11">Delete</text>
+    <line class="border" x1="44" y1="202" x2="836" y2="202"/>
+  </g>
+  <!-- row 3 graphic (seeded default, media) -->
+  <g transform="translate(0,92)">
+    <text class="t" x="44" y="186">Graphic Designer</text>
+    <rect class="badgeI" x="214" y="174" width="56" height="18" rx="4"/><text class="badgeItx" x="220" y="186" font-size="11">graphic</text>
+    <text class="m" x="330" y="186">—</text>
+    <text class="m" x="486" y="186">default</text>
+    <rect class="badgeW" x="590" y="174" width="46" height="18" rx="4"/><text class="badgeWtx" x="596" y="186" font-size="11">media</text>
+    <rect class="badgeS" x="664" y="174" width="56" height="18" rx="4"/><text class="badgeStx" x="670" y="186" font-size="11">Default</text>
+    <rect class="btn" x="738" y="172" width="44" height="22" rx="5"/><text class="btntx" x="746" y="187" font-size="11">Skills</text>
+    <rect class="btnDoff" x="788" y="172" width="48" height="22" rx="5"/><text class="btnDofftx" x="794" y="187" font-size="11">Delete</text>
+    <line class="border" x1="44" y1="202" x2="836" y2="202"/>
+  </g>
+  <!-- row 4 coding-fast (admin added) -->
+  <g transform="translate(0,138)">
+    <text class="t" x="44" y="186">Coding Specialist (fast)</text>
+    <rect class="badgeI" x="214" y="174" width="52" height="18" rx="4"/><text class="badgeItx" x="220" y="186" font-size="11">coding</text>
+    <rect class="chip" x="330" y="174" width="50" height="18" rx="9"/><text class="chiptxt" x="337" y="186" font-size="11">concise</text>
+    <text class="t" x="486" y="186">glm-cheap</text>
+    <text class="m" x="590" y="186">content</text>
+    <text class="m" x="664" y="186"></text>
+    <rect class="btn" x="738" y="172" width="44" height="22" rx="5"/><text class="btntx" x="746" y="187" font-size="11">Skills</text>
+    <rect class="btnD" x="788" y="172" width="48" height="22" rx="5"/><text class="btnDtx" x="794" y="187" font-size="11">Delete</text>
+    <line class="border" x1="44" y1="202" x2="836" y2="202"/>
+  </g>
+
+  <!-- footnotes -->
+  <text class="m" x="44" y="392" font-size="11">Default rows: Delete disabled (seeded, cannot be removed) · admin-added rows: Delete enabled.</text>
+  <text class="m" x="44" y="410" font-size="11">"Skills…" row action opens the skill-packs editor (GET → swap spec.skillPacks → PUT).</text>
+  <text class="hd" x="44" y="486" font-size="11">GET/POST/DELETE /v1/agents · Admin-only (non-Admin → PanelForbidden)</text>
+</svg>

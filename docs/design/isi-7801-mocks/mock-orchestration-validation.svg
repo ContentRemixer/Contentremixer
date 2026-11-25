@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="660" viewBox="0 0 880 660" font-family="ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif">
+  <style>
+    .bg{fill:#0f172a}.card{fill:#1e293b}.border{stroke:#334155;stroke-width:1}
+    .field{fill:#0f172a;stroke:#334155;stroke-width:1}
+    .fieldErr{fill:#1f0f12;stroke:#ef4444;stroke-width:1.5}
+    .h{fill:#f1f5f9}.t{fill:#e2e8f0}.m{fill:#94a3b8}.hd{fill:#64748b}
+    .lbl{fill:#cbd5e1;font-size:11px;letter-spacing:.03em}
+    .banner{fill:#3f1d2b;stroke:#7f1d1d;stroke-width:1}
+    .err{fill:#fca5a5}.errb{fill:#f87171}
+    .pillWarn{fill:#5a3a10}.pillWtx{fill:#fcd34d}
+    .btn{fill:#334155}.btntx{fill:#e2e8f0}
+    .btnOff{fill:#273244}.btnOfftx{fill:#64748b}
+    .rm{fill:#94a3b8}.caret{fill:#64748b}.arrow{stroke:#64748b;stroke-width:1.5;fill:none}
+    .arrowErr{stroke:#ef4444;stroke-width:1.5;fill:none}
+    text{font-size:13px}.hdr{font-size:11px;letter-spacing:.06em}
+  </style>
+  <rect class="bg" width="880" height="660"/>
+
+  <!-- tabs -->
+  <text class="m" x="24" y="34" font-size="12">Users &amp; roles</text>
+  <text class="m" x="120" y="34" font-size="12">Personas</text>
+  <text class="m" x="196" y="34" font-size="12">Reference repos</text>
+  <text class="m" x="308" y="34" font-size="12">Model profiles</text>
+  <text class="m" x="414" y="34" font-size="12">Agents</text>
+  <text class="h" x="474" y="34" font-size="12" font-weight="600">Orchestration</text>
+  <rect class="accent" fill="#6366f1" x="472" y="42" width="84" height="2"/>
+  <line class="border" x1="24" y1="44" x2="856" y2="44"/>
+
+  <!-- card -->
+  <rect class="card border" x="24" y="64" width="832" height="568" rx="8"/>
+  <text class="h" x="44" y="94" font-size="15" font-weight="600">Edit team · marketing-flow (draft)</text>
+  <text class="hd" x="700" y="94" font-size="11">client-side pre-submit checks</text>
+  <line class="border" x1="44" y1="104" x2="836" y2="104"/>
+
+  <!-- validation banner -->
+  <rect class="banner" x="44" y="118" width="792" height="74" rx="8"/>
+  <text class="errb" x="60" y="142" font-size="13" font-weight="600">✕  This team can't be saved — 2 problems</text>
+  <text class="err" x="60" y="164" font-size="12">• Cycle (T6): plan → write → plan. Hand-offs must flow one way — remove one edge.</text>
+  <text class="err" x="60" y="183" font-size="12">• Orphan (T7): node "qa" is never reached from the entry node.</text>
+
+  <!-- ENTRY -->
+  <text class="lbl" x="44" y="222">ENTRY NODE</text>
+  <rect class="field" x="44" y="228" width="200" height="28" rx="6"/>
+  <text class="t" x="54" y="247" font-size="12">plan</text>
+  <path class="caret" d="M224 239 l10 0 l-5 6 z"/>
+
+  <!-- NODES -->
+  <text class="hd hdr" x="44" y="286">NODES  (id → agent)</text>
+  <g font-size="12">
+    <rect class="field" x="44" y="296" width="130" height="26" rx="5"/><text class="t" x="52" y="313">plan</text>
+    <rect class="field" x="182" y="296" width="300" height="26" rx="5"/><text class="t" x="190" y="313">System Architect — architect</text><path class="caret" d="M462 307 l10 0 l-5 6 z"/>
+    <text class="rm" x="494" y="314" font-size="14">×</text>
+
+    <rect class="field" x="44" y="328" width="130" height="26" rx="5"/><text class="t" x="52" y="345">write</text>
+    <rect class="field" x="182" y="328" width="300" height="26" rx="5"/><text class="t" x="190" y="345">Coding Specialist — coding</text><path class="caret" d="M462 339 l10 0 l-5 6 z"/>
+    <text class="rm" x="494" y="346" font-size="14">×</text>
+
+    <rect class="field" x="44" y="360" width="130" height="26" rx="5"/><text class="t" x="52" y="377">art</text>
+    <rect class="field" x="182" y="360" width="300" height="26" rx="5"/><text class="t" x="190" y="377">Graphic Designer — graphic</text><path class="caret" d="M462 371 l10 0 l-5 6 z"/>
+    <text class="rm" x="494" y="378" font-size="14">×</text>
+
+    <!-- orphan node row -->
+    <rect class="field" x="44" y="392" width="130" height="26" rx="5"/><text class="t" x="52" y="409">qa</text>
+    <rect class="field" x="182" y="392" width="300" height="26" rx="5"/><text class="t" x="190" y="409">Researcher — research</text><path class="caret" d="M462 403 l10 0 l-5 6 z"/>
+    <rect class="pillWarn" x="510" y="394" width="92" height="22" rx="11"/><text class="pillWtx" x="519" y="409" font-size="11">unreachable</text>
+    <text class="rm" x="620" y="410" font-size="14">×</text>
+  </g>
+  <text x="44" y="446" font-size="11" fill="#818cf8">+ Add node</text>
+
+  <!-- HANDOFFS -->
+  <text class="hd hdr" x="44" y="478">HANDOFFS  (from → to)</text>
+  <g font-size="12">
+    <rect class="field" x="44" y="488" width="150" height="26" rx="5"/><text class="t" x="52" y="505">plan</text><path class="caret" d="M176 499 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M204 501 l20 0 M218 496 l6 5 l-6 5"/>
+    <rect class="field" x="234" y="488" width="150" height="26" rx="5"/><text class="t" x="242" y="505">write</text><path class="caret" d="M366 499 l10 0 l-5 6 z"/>
+    <text class="rm" x="396" y="506" font-size="14">×</text>
+
+    <rect class="field" x="44" y="520" width="150" height="26" rx="5"/><text class="t" x="52" y="537">plan</text><path class="caret" d="M176 531 l10 0 l-5 6 z"/>
+    <path class="arrow" d="M204 533 l20 0 M218 528 l6 5 l-6 5"/>
+    <rect class="field" x="234" y="520" width="150" height="26" rx="5"/><text class="t" x="242" y="537">art</text><path class="caret" d="M366 531 l10 0 l-5 6 z"/>
+    <text class="rm" x="396" y="538" font-size="14">×</text>
+
+    <!-- offending cycle edge (red) -->
+    <rect class="fieldErr" x="44" y="552" width="150" height="26" rx="5"/><text class="err" x="52" y="569">write</text><path class="caret" d="M176 563 l10 0 l-5 6 z"/>
+    <path class="arrowErr" d="M204 565 l20 0 M218 560 l6 5 l-6 5"/>
+    <rect class="fieldErr" x="234" y="552" width="150" height="26" rx="5"/><text class="err" x="242" y="569">plan</text><path class="caret" d="M366 563 l10 0 l-5 6 z"/>
+    <text class="errb" x="396" y="570" font-size="14">×</text>
+    <text class="err" x="430" y="569" font-size="11">← creates the cycle</text>
+  </g>
+  <text x="44" y="604" font-size="11" fill="#818cf8">+ Add handoff</text>
+
+  <!-- footer: Save DISABLED -->
+  <rect class="btn" x="640" y="588" width="80" height="28" rx="7"/><text class="btntx" x="662" y="607" font-size="12">Cancel</text>
+  <rect class="btnOff" x="728" y="588" width="98" height="28" rx="7"/><text class="btnOfftx" x="748" y="607" font-size="12">Save</text>
+
+  <!-- note below card -->
+  <text class="hd" x="24" y="650" font-size="11">Client checks mirror webhook T1–T7 for fast feedback; the server stays authoritative — a 422 Invalid is shown verbatim in the error slot.</text>
+</svg>

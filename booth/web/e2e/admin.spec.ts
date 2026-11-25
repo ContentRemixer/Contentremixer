@@ -56,15 +56,20 @@ test.describe("Admin console", () => {
     status: { routeCount: 1 },
   });
 
-  test("Admin edits labelRoutes and the PUT preserves the Secret refs", async ({ page }) => {
+  // ISI-7782: the bespoke edit form edits repo/prTarget/labelRoutes while the
+  // token/webhook Secret refs are preserved untouched (never surfaced) via the
+  // full-object round-trip — same contract ISI-7514 established for routes.
+  test("Admin edits a reference repo and the PUT preserves the Secret refs", async ({ page }) => {
     await installApi(page, defaults({ session: ADMIN, repos: [repoFixture()] }));
     await page.goto("/admin");
     await page.getByRole("tab", { name: "Reference repos" }).click();
     await expect(page.getByRole("cell", { name: "acme-docs", exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Edit routes" }).click();
-    await expect(page.getByText("Label routes — acme-docs")).toBeVisible();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await expect(page.getByText("Edit reference repo — acme-docs")).toBeVisible();
     await expect(page.getByPlaceholder("recycle:blog").first()).toHaveValue("recycle:blog");
+    // Secret refs are not surfaced in the edit form (W2 boundary).
+    await expect(page.getByPlaceholder("gh-token")).toHaveCount(0);
 
     // Add a second route and fill its label.
     await page.getByRole("button", { name: "Add route" }).click();
@@ -73,7 +78,7 @@ test.describe("Admin console", () => {
     const putReq = page.waitForRequest(
       (r) => r.method() === "PUT" && /\/v1\/referencerepos\/acme-docs$/.test(r.url()),
     );
-    await page.getByRole("button", { name: "Save routes" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     const body = (await putReq).postDataJSON();
 
     // Secret refs round-tripped untouched…
@@ -88,11 +93,74 @@ test.describe("Admin console", () => {
     await installApi(page, defaults({ session: ADMIN, repos: [repoFixture()] }));
     await page.goto("/admin");
     await page.getByRole("tab", { name: "Reference repos" }).click();
-    await page.getByRole("button", { name: "Edit routes" }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
 
     await page.getByRole("button", { name: "Add route" }).click();
     await page.getByPlaceholder("recycle:blog").nth(1).fill("recycle:blog"); // duplicate
 
-    await expect(page.getByRole("button", { name: "Save routes" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  });
+
+  // ISI-7782: the bespoke create form POSTs the full nested spec (repo, Secret
+  // refs by name+key, prTarget, ≥1 labelRoute) the generic CrPanel cannot build.
+  test("Admin creates a reference repo with the bespoke form", async ({ page }) => {
+    await installApi(page, defaults({ session: ADMIN, repos: [] }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Reference repos" }).click();
+
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await expect(page.getByText("New reference repo")).toBeVisible();
+
+    await page.getByPlaceholder("contentremixer-docs").fill("acme-docs");
+    await page.getByPlaceholder("owner/name").fill("acme/docs");
+    await page.getByPlaceholder("gh-token").fill("gh-token");
+    await page.getByPlaceholder("pat").fill("pat");
+    await page.getByPlaceholder("gh-hook").fill("gh-hook");
+    await page.getByPlaceholder("secret").fill("secret");
+    await page.getByPlaceholder("recycle:blog").fill("recycle:blog");
+
+    const postReq = page.waitForRequest(
+      (r) => r.method() === "POST" && /\/v1\/referencerepos$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const body = (await postReq).postDataJSON();
+
+    expect(body.metadata.name).toBe("acme-docs");
+    expect(body.spec.repo).toBe("acme/docs");
+    expect(body.spec.tokenRef).toEqual({ name: "gh-token", key: "pat" });
+    expect(body.spec.webhookSecretRef).toEqual({ name: "gh-hook", key: "secret" });
+    expect(body.spec.labelRoutes).toHaveLength(1);
+    expect(body.spec.labelRoutes[0].label).toBe("recycle:blog");
+  });
+
+  // Done-when: admission-webhook validation errors surface in the form.
+  test("a webhook rejection surfaces in the create form", async ({ page }) => {
+    await installApi(page, defaults({ session: ADMIN, repos: [] }));
+    // Per-test override AFTER installApi so it runs first (most-recently-added).
+    await page.route("**/v1/referencerepos", async (route, req) => {
+      if (req.method() === "POST") {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "admission webhook denied: labelRoutes[0].label is required" }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Reference repos" }).click();
+
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByPlaceholder("contentremixer-docs").fill("acme-docs");
+    await page.getByPlaceholder("owner/name").fill("acme/docs");
+    await page.getByPlaceholder("gh-token").fill("gh-token");
+    await page.getByPlaceholder("pat").fill("pat");
+    await page.getByPlaceholder("gh-hook").fill("gh-hook");
+    await page.getByPlaceholder("secret").fill("secret");
+    await page.getByPlaceholder("recycle:blog").fill("recycle:blog");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+
+    await expect(page.getByText(/admission webhook denied/)).toBeVisible();
   });
 });

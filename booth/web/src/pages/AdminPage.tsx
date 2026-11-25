@@ -1,7 +1,7 @@
 import { Badge, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import { UsersPanel } from "./admin/UsersPanel";
 import { CrPanel, type CrObject } from "./admin/CrPanel";
-import { EditRoutesButton } from "./admin/LabelRoutesEditor";
+import { NewReferenceRepoButton, EditReferenceRepoButton } from "./admin/ReferenceRepoForm";
 
 // AdminPage is the C1–C4 admin console (W6 / ISI-7213). Four Admin-only surfaces:
 // Users & roles (brand-new CRUD API), plus Personas / Reference repos / Model
@@ -65,14 +65,19 @@ export function AdminPage() {
               { header: "Repo", cell: (o) => str(o, "spec.repo") || "—" },
               { header: "Routes", cell: (o) => str(o, "status.routeCount") || "0" },
             ]}
-            // No inline create: a ReferenceRepo carries token/webhook Secret refs
-            // authored via GitOps/kubectl, not a web form. But the label→format
-            // routing (spec.labelRoutes, §3) IS editable in-place — the editor
-            // round-trips the object so the Secret refs stay untouched/unshown
-            // (ISI-7514). Server stays authoritative (§6.3 + admission webhook).
-            createNote="Reference repos are provisioned via GitOps. None are registered yet."
+            // Bespoke create/edit form (ISI-7782): a ReferenceRepo's nested
+            // tokenRef / webhookSecretRef / prTarget / labelRoutes cannot be
+            // expressed by CrPanel's flat CreateDialog. The form references
+            // existing Secrets by name+key (values stay GitOps/W2-managed) and
+            // round-trips the object on edit so Secret refs stay untouched/unshown
+            // (builds on ISI-7514's labelRoutes editor). Server stays
+            // authoritative (§6.3 + admission webhook); its errors surface inline.
+            createNote="No reference repos registered yet. Use “New” to create one."
+            customCreate={(refresh) => (
+              <NewReferenceRepoButton path="/v1/referencerepos" onSaved={refresh} />
+            )}
             rowActions={(o, refresh) => (
-              <EditRoutesButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
+              <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
             )}
           />
         </TabsContent>

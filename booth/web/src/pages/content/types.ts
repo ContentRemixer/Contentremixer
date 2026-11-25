@@ -41,14 +41,46 @@ export interface Content {
   updatedAt: string;
 }
 
+export type MentionKind = "agent" | "person";
+
+/**
+ * A structured @mention span on a comment (plan §6 P2). Mirrors
+ * app/content.Mention: kind+ref name the directory entry, label is the display
+ * name captured at mention time, and [start,end) point at the
+ * `[@label](<kind>://<ref>)` machine form in the comment body. Persisted so P3
+ * can resolve mentions server-side without re-parsing prose.
+ */
+export interface Mention {
+  kind: MentionKind;
+  ref: string;
+  label: string;
+  start: number;
+  end: number;
+}
+
 export interface Comment {
   id: string;
   contentId: string;
   author: string;
   body: string;
   anchor: Anchor;
+  mentions?: Mention[];
   resolved: boolean;
   createdAt: string;
+}
+
+/** One row of the @mention directory (GET /v1/mention-directory). */
+export interface MentionEntry {
+  id: string;
+  name: string;
+  role?: string;
+  isAgent: boolean;
+}
+
+/** The @mention directory: agents and people as separate groups. */
+export interface MentionDirectory {
+  agents: MentionEntry[];
+  people: MentionEntry[];
 }
 
 export interface ReviewMessage {
@@ -98,6 +130,8 @@ export interface UpdateContentRequest {
 export interface CreateCommentRequest {
   body: string;
   anchor: Anchor;
+  /** Structured @mention spans parsed from body at submit (plan §6 P2). */
+  mentions?: Mention[];
 }
 
 export interface CreateReviewRequest {

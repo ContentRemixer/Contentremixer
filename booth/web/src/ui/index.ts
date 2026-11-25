@@ -77,12 +77,17 @@ export {
   CommentMark,
   CommentThread,
   CommentComposer,
+  parseMentions,
+  renderMentionBody,
 } from "./InlineComment";
 export type {
   InlineCommentItem,
   InlineCommentAuthor,
   CommentThreadProps,
   CommentComposerProps,
+  Mentionable,
+  MentionSpan,
+  MentionKind,
 } from "./InlineComment";
 
 export { ReviewPanel, ReviewStatusBadge } from "./ReviewPanel";

@@ -414,6 +414,54 @@ func TestGate_CommentsGateOnParentContent(t *testing.T) {
 	}
 }
 
+func TestGate_CommentMentions(t *testing.T) {
+	s, repo, _ := newTestGate()
+	ctx := context.Background()
+	mine := mustCreate(t, s, devrel("alice"), "A1")
+
+	// An unknown mention kind is rejected.
+	if _, err := s.CreateComment(ctx, devrel("alice"), mine.ID, CreateCommentRequest{
+		Body:     "hi [@x](team://x)",
+		Mentions: []appcontent.Mention{{Kind: "team", Ref: "x", Label: "x"}},
+	}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("unknown mention kind: want ErrBadRequest, got %v", err)
+	}
+	// A mention missing its ref is rejected.
+	if _, err := s.CreateComment(ctx, devrel("alice"), mine.ID, CreateCommentRequest{
+		Body:     "hi",
+		Mentions: []appcontent.Mention{{Kind: appcontent.MentionAgent, Label: "x"}},
+	}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("mention missing ref: want ErrBadRequest, got %v", err)
+	}
+	// A reversed span is rejected.
+	if _, err := s.CreateComment(ctx, devrel("alice"), mine.ID, CreateCommentRequest{
+		Body:     "hi",
+		Mentions: []appcontent.Mention{{Kind: appcontent.MentionAgent, Ref: "graphic-designer", Label: "Graphic Designer", Start: 5, End: 2}},
+	}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("reversed mention span: want ErrBadRequest, got %v", err)
+	}
+
+	// A valid agent+person mention is persisted as structured spans.
+	body := "ping [@Graphic Designer](agent://graphic-designer) and [@alice](person://alice)"
+	c, err := s.CreateComment(ctx, devrel("alice"), mine.ID, CreateCommentRequest{
+		Body: body,
+		Mentions: []appcontent.Mention{
+			{Kind: appcontent.MentionAgent, Ref: "graphic-designer", Label: "Graphic Designer", Start: 5, End: 50},
+			{Kind: appcontent.MentionPerson, Ref: "alice", Label: "alice", Start: 55, End: 78},
+		},
+	})
+	if err != nil {
+		t.Fatalf("comment with mentions: %v", err)
+	}
+	if len(c.Mentions) != 2 || c.Mentions[0].Ref != "graphic-designer" || c.Mentions[1].Kind != appcontent.MentionPerson {
+		t.Fatalf("mentions not attached: %+v", c.Mentions)
+	}
+	// The spans round-trip through the repository.
+	if stored := repo.comments[c.ID]; len(stored.Mentions) != 2 {
+		t.Fatalf("mentions not persisted: %+v", stored.Mentions)
+	}
+}
+
 func TestGate_ReviewThreads(t *testing.T) {
 	s, _, _ := newTestGate()
 	ctx := context.Background()

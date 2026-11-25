@@ -75,6 +75,9 @@ func (s *Server) Handler() http.Handler {
 	// Admin-only Users & Roles CRUD (plan §3.2 A1/Admin, W6). Gated by an
 	// explicit Admin-role check in each handler (users have no per-row owner).
 	s.mountUsers(mux)
+	// Read-only @mention directory the comment composer sources (plan §6 P2,
+	// ISI-7819): fixed agent personas + the username roster, any authed reader.
+	s.mountDirectory(mux)
 	// Scraper-review surface (plan §3.2), gated by scrapejobs.Store.
 	s.mountScrapeJobs(mux)
 	// Content-collaboration surface (ISI-7208, plan §3.2 B3), gated by

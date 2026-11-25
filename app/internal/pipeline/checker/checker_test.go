@@ -212,7 +212,8 @@ func TestSEOMetaWarns(t *testing.T) {
 	}
 
 	ok := cleanDraft()
-	ok.Meta["description"] = strings.Repeat("d", 150) // 140-160: no warn
+	ok.Meta["description"] = strings.Repeat("d", 150)        // 140-160: no warn
+	ok.Meta["json_ld"] = `{"@context":"https://schema.org"}` // schema present
 	res2, err := New().Check(context.Background(), ok)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -222,4 +223,150 @@ func TestSEOMetaWarns(t *testing.T) {
 			t.Fatalf("seo-clean draft still warns: %+v", v)
 		}
 	}
+}
+
+// --- ISI-7807: keyword placement, heading hierarchy, schema presence ---
+
+// TestSEOKeywordPlacement: a supplied primary_keyword missing from the title
+// and the first 100 words warns; present everywhere it does not. No keyword
+// supplied => no opinion (no false positive on un-enriched P0 output).
+func TestSEOKeywordPlacement(t *testing.T) {
+	// present in title + lead: no keyword warn.
+	m := cleanDraft()
+	m.Meta["primary_keyword"] = "kubernetes secrets"
+	res, err := New().Check(context.Background(), m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Passed {
+		t.Fatalf("keyword rule flipped Passed: %+v", res.Violations)
+	}
+	for _, v := range res.Violations {
+		if v.Rule == RuleSEOMeta && strings.Contains(v.Match, "primary keyword") {
+			t.Fatalf("keyword present but warned: %+v", v)
+		}
+	}
+
+	// absent from title + body: two keyword warns, still warn-only.
+	m2 := cleanDraft()
+	m2.Meta["primary_keyword"] = "serverless functions"
+	res2, _ := New().Check(context.Background(), m2)
+	if !res2.Passed {
+		t.Fatalf("keyword rule must never block: %+v", res2.Violations)
+	}
+	var titleKW, leadKW bool
+	for _, v := range res2.Violations {
+		if v.Rule != RuleSEOMeta || !strings.Contains(v.Match, "primary keyword") {
+			continue
+		}
+		switch v.Where {
+		case "title":
+			titleKW = true
+		case "markdown":
+			leadKW = true
+		}
+	}
+	if !titleKW || !leadKW {
+		t.Fatalf("missing keyword did not warn on title+lead: %+v", res2.Violations)
+	}
+
+	// no keyword in meta: no keyword warn at all.
+	res3, _ := New().Check(context.Background(), cleanDraft())
+	for _, v := range res3.Violations {
+		if v.Rule == RuleSEOMeta && strings.Contains(v.Match, "primary keyword") {
+			t.Fatalf("un-enriched draft produced a keyword warn: %+v", v)
+		}
+	}
+}
+
+// TestSEOHeadingHierarchy: zero/multiple H1 and a level skip each warn, all
+// warn-only; a '#' inside a fenced code block is not read as a heading.
+func TestSEOHeadingHierarchy(t *testing.T) {
+	// two H1 + a H2->H4 skip.
+	m := cleanDraft()
+	m.Markdown = strings.Join([]string{
+		"# First title",
+		"## Section",
+		"#### Too deep",
+		"# Second title",
+	}, "\n")
+	res, err := New().Check(context.Background(), m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Passed {
+		t.Fatalf("heading rule must never block: %+v", res.Violations)
+	}
+	var multiH1, skip bool
+	for _, v := range res.Violations {
+		if v.Rule != RuleSEOMeta {
+			continue
+		}
+		if strings.Contains(v.Match, "H1 headings") {
+			multiH1 = true
+		}
+		if strings.Contains(v.Match, "skips a level") {
+			skip = true
+		}
+	}
+	if !multiH1 || !skip {
+		t.Fatalf("expected multi-H1 + level-skip warns: %+v", res.Violations)
+	}
+
+	// '#' inside a code fence is not a heading: single real H1, no heading warn.
+	m2 := cleanDraft()
+	m2.Markdown = strings.Join([]string{
+		"# Only title",
+		"```bash",
+		"#!/bin/sh",
+		"# not a heading",
+		"```",
+		"## A section",
+		"### A subsection",
+	}, "\n")
+	res2, _ := New().Check(context.Background(), m2)
+	for _, v := range res2.Violations {
+		if v.Rule == RuleSEOMeta && (strings.Contains(v.Match, "H1 headings") || strings.Contains(v.Match, "skips a level")) {
+			t.Fatalf("well-formed headings warned: %+v", v)
+		}
+	}
+}
+
+// TestSEOSchemaPresence: a blog with no JSON-LD warns (warn-only); a social
+// post never warns; an inline application/ld+json block satisfies the rule.
+func TestSEOSchemaPresence(t *testing.T) {
+	blog := cleanDraft() // OutputFormat "blog", no schema
+	res, err := New().Check(context.Background(), blog)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Passed {
+		t.Fatalf("schema rule must never block: %+v", res.Violations)
+	}
+	if !hasSchemaWarn(res.Violations) {
+		t.Fatalf("blog without schema did not warn: %+v", res.Violations)
+	}
+
+	social := cleanDraft()
+	social.OutputFormat = "social"
+	res2, _ := New().Check(context.Background(), social)
+	if hasSchemaWarn(res2.Violations) {
+		t.Fatalf("social format should not expect schema: %+v", res2.Violations)
+	}
+
+	inline := cleanDraft()
+	inline.Markdown += "\n\n<script type=\"application/ld+json\">{}</script>"
+	res3, _ := New().Check(context.Background(), inline)
+	if hasSchemaWarn(res3.Violations) {
+		t.Fatalf("inline JSON-LD should satisfy schema rule: %+v", res3.Violations)
+	}
+}
+
+func hasSchemaWarn(vs []pipeline.Violation) bool {
+	for _, v := range vs {
+		if v.Rule == RuleSEOMeta && strings.Contains(v.Match, "JSON-LD") {
+			return true
+		}
+	}
+	return false
 }

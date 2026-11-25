@@ -42,6 +42,8 @@ export interface MockData {
   personas: Record<string, unknown>[];
   repos: Record<string, unknown>[];
   models: Record<string, unknown>[];
+  /** default Agent CRs for the read-only Agents tab (ISI-7802). */
+  agents: Record<string, unknown>[];
   // --- DevRel onboarding + persona management (D6/D7, ISI-7361/7362) -------
   /** synthesized style profiles keyed by persona name; GET → 404 when absent (D3). */
   styleProfiles: Record<string, Record<string, unknown>>;
@@ -68,6 +70,7 @@ export function defaults(overrides: Partial<MockData> = {}): MockData {
     personas: [],
     repos: [],
     models: [],
+    agents: [],
     styleProfiles: {},
     contentTest: null,
     promote: null,
@@ -201,6 +204,7 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
       }
     }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
+    if (p === "/v1/agents" && method === "GET") return json(route, 200, data.agents);
 
     // --- DevRel persona CRUD (D5/D7) ---------------------------------------
     // POST creates the caller's persona; the server stamps owner from the

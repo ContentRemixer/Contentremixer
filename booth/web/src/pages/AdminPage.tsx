@@ -14,7 +14,7 @@ export function AdminPage() {
       <header className="mb-6">
         <h1 className="text-xl font-semibold text-text">Admin</h1>
         <p className="mt-1 text-sm text-text-muted">
-          Platform configuration — personas, reference repos, model profiles, and users &amp; roles.
+          Platform configuration — personas, reference repos, model profiles, agents, and users &amp; roles.
         </p>
       </header>
 
@@ -24,6 +24,7 @@ export function AdminPage() {
           <TabsTrigger value="personas">Personas</TabsTrigger>
           <TabsTrigger value="repos">Reference repos</TabsTrigger>
           <TabsTrigger value="models">Model profiles</TabsTrigger>
+          <TabsTrigger value="agents">Agents</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users">
@@ -105,6 +106,30 @@ export function AdminPage() {
                 spec: { provider: v.provider, model: v.model, litellmName: v.litellmName },
               }),
             }}
+          />
+        </TabsContent>
+
+        <TabsContent value="agents">
+          <CrPanel
+            path="/v1/agents"
+            title="Agents"
+            subtitle="The default specialists the content pipeline runs. Admin-only, read-only here — editing and teams land in a later release (ISI-7803)."
+            columns={[
+              { header: "Name", cell: (o) => o.metadata.name },
+              { header: "Role", cell: (o) => str(o, "spec.role") || "—" },
+              { header: "Skill kind", cell: (o) => str(o, "spec.skillKind") || "—" },
+              { header: "Model", cell: (o) => str(o, "spec.modelProfile") || "default" },
+              { header: "Actor", cell: (o) => str(o, "spec.actorTemplate") || "content" },
+              {
+                header: "Default",
+                cell: (o) =>
+                  str(o, "spec.default") === "true" ? <Badge tone="info">default</Badge> : "—",
+              },
+            ]}
+            // Read-only in P1 (ISI-7802): the default Agents are seeded on boot and
+            // shown here so an admin can "see the default agents". Create/edit is
+            // ISI-7803; the seeds are delete-guarded defaults, so no inline create.
+            createNote="The default agents are seeded automatically. Editing arrives in a later release."
           />
         </TabsContent>
       </Tabs>

@@ -26,8 +26,12 @@ metadata:
     app.kubernetes.io/name: booth
     app.kubernetes.io/part-of: contentremixer
 rules:
+  #   - Agent + AgentTeam: the admin-portal "manage agents" kinds (ISI-7800 §2/§3).
+  #     Granted now so the ISI-7802 read-only Agents tab lists them and the boot
+  #     seeder (booth/internal/seed) can create-if-absent the default set; CRUD UI
+  #     + validating webhooks follow in ISI-7803.
   - apiGroups: ["contentremixer.io"]
-    resources: ["modelprofiles", "referencerepos", "devrelpersonas"]
+    resources: ["modelprofiles", "referencerepos", "devrelpersonas", "agents", "agentteams"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
   # devrelpersonas/status: the persona-validate action (ISI-7359) writes the
   # `Validated` status condition — the cheap declarative mirror of the

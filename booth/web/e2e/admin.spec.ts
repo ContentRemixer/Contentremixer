@@ -163,4 +163,34 @@ test.describe("Admin console", () => {
 
     await expect(page.getByText(/admission webhook denied/)).toBeVisible();
   });
+
+  // ISI-7802: the read-only Agents tab lists the seeded default specialists over
+  // /v1/agents (CrPanel, no create). Delivers the "see the default agents" ask.
+  test("switching to the Agents tab lists the seeded default agents", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({
+        session: ADMIN,
+        agents: [
+          {
+            metadata: { name: "architect" },
+            spec: { role: "System Architect", skillKind: "architect", modelProfile: "default", actorTemplate: "content", default: true },
+          },
+          {
+            metadata: { name: "graphic" },
+            spec: { role: "Graphic Designer", skillKind: "graphic", modelProfile: "default", actorTemplate: "media", default: true },
+          },
+        ],
+      }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Agents" }).click();
+    await expect(page.getByText("The default specialists the content pipeline runs.", { exact: false })).toBeVisible();
+    // "architect"/"graphic" appear in BOTH the Name and Skill-kind columns, so
+    // assert on the unique Role and Actor cells to avoid a strict-mode match.
+    await expect(page.getByRole("cell", { name: "architect", exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("cell", { name: "System Architect", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Graphic Designer", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "media", exact: true })).toBeVisible();
+  });
 });

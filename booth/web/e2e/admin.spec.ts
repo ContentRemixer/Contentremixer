@@ -186,9 +186,11 @@ test.describe("Admin console", () => {
     await page.goto("/admin");
     await page.getByRole("tab", { name: "Agents" }).click();
     await expect(page.getByText("The default specialists the content pipeline runs.", { exact: false })).toBeVisible();
-    await expect(page.getByRole("cell", { name: "architect", exact: true })).toBeVisible();
+    // "architect"/"graphic" appear in BOTH the Name and Skill-kind columns, so
+    // assert on the unique Role and Actor cells to avoid a strict-mode match.
+    await expect(page.getByRole("cell", { name: "architect", exact: true }).first()).toBeVisible();
     await expect(page.getByRole("cell", { name: "System Architect", exact: true })).toBeVisible();
-    await expect(page.getByRole("cell", { name: "graphic", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Graphic Designer", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "media", exact: true })).toBeVisible();
   });
 });

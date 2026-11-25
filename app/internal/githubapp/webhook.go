@@ -251,8 +251,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 // installation.id (ISI-7836). The returned string is a Bearer credential the
 // REST calls downstream (ack comment, PR assembly) accept identically.
 func (s *Server) resolveToken(ctx context.Context, repoCR *contentremixerv1alpha1.ReferenceRepo, ev *issuesEvent) (string, error) {
-	if repoCR.Spec.TokenRef.Name != "" {
-		tok, err := s.secretValue(ctx, repoCR.Namespace, repoCR.Spec.TokenRef)
+	if repoCR.Spec.TokenRef != nil {
+		tok, err := s.secretValue(ctx, repoCR.Namespace, *repoCR.Spec.TokenRef)
 		if err != nil {
 			return "", err
 		}

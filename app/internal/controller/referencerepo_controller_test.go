@@ -17,7 +17,7 @@ func referenceRepo(name string) *contentremixerv1alpha1.ReferenceRepo {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: contentremixerv1alpha1.ReferenceRepoSpec{
 			Repo:             "ContentRemixer/Contentremixer",
-			TokenRef:         contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"},
+			TokenRef:         &contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"},
 			WebhookSecretRef: contentremixerv1alpha1.SecretKeyRef{Name: "github-webhook", Key: "hmac"},
 			LabelRoutes:      starterRoutes(),
 		},
@@ -81,7 +81,7 @@ var _ = Describe("ReferenceRepo controller + webhook (envtest)", func() {
 		_ = k8sClient.Create(ctx, hook) // may already exist from a prior spec
 
 		rr := referenceRepo("crate-app")
-		rr.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{} // no PAT
+		rr.Spec.TokenRef = nil // no PAT
 		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
 
 		got := &contentremixerv1alpha1.ReferenceRepo{}
@@ -99,7 +99,7 @@ var _ = Describe("ReferenceRepo controller + webhook (envtest)", func() {
 		rr := referenceRepo("crate-no-secret")
 		// Unique Secret names that do NOT exist (the shared github-pat /
 		// github-webhook Secrets from the first spec do exist).
-		rr.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{Name: "missing-pat", Key: "token"}
+		rr.Spec.TokenRef = &contentremixerv1alpha1.SecretKeyRef{Name: "missing-pat", Key: "token"}
 		rr.Spec.WebhookSecretRef = contentremixerv1alpha1.SecretKeyRef{Name: "missing-webhook", Key: "hmac"}
 		Expect(k8sClient.Create(ctx, rr)).To(Succeed())
 
@@ -181,7 +181,7 @@ var _ = Describe("ReferenceRepo controller + webhook (envtest)", func() {
 
 	It("defaults inputFormat to auto and PRTarget to main/recycle/", func() {
 		rr := referenceRepo("crate-defaults")
-		rr.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
+		rr.Spec.TokenRef = &contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
 		rr.Spec.WebhookSecretRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-webhook", Key: "hmac"}
 		rr.Spec.LabelRoutes = []contentremixerv1alpha1.LabelRoute{
 			{Label: "recycle:blog", OutputFormat: "blog"}, // InputFormat left empty -> default auto

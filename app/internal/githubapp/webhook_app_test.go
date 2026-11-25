@@ -45,7 +45,7 @@ func newAppServer(t *testing.T, minter InstallationTokenSource) (*Server, *recor
 	repo := starterRepo()
 	repo.ObjectMeta = metav1.ObjectMeta{Name: "crate", Namespace: testNS}
 	repo.Spec.WebhookSecretRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-webhook", Key: "hmac"}
-	repo.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{} // no PAT → App path
+	repo.Spec.TokenRef = nil // no PAT → App path
 
 	hookSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: testNS},

@@ -59,15 +59,24 @@ func (s *Server) writeReferenceRepoSecrets(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, res)
 }
 
-// writeSecretErr maps secret-write failures: a missing token or an invalid repo
-// name (the Secret name the apiserver rejects) are the caller's fault → 400;
-// anything else is an internal/k8s error → 500.
+// writeSecretErr maps secret-write failures. A missing token or an invalid repo
+// name (the Secret name the apiserver rejects) are the caller's fault → 400; a
+// name collision with an unmanaged Secret → 409; a transient/forbidden k8s
+// failure → 503 (the service can't reach/act on the apiserver right now, not the
+// caller's fault — mirrors ISI-7568's persona-validate mapping); anything else
+// → 500.
 func (s *Server) writeSecretErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, secrets.ErrTokenRequired):
 		writeError(w, http.StatusBadRequest, "token is required")
 	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
 		writeError(w, http.StatusBadRequest, "invalid reference-repo name")
+	case errors.Is(err, secrets.ErrNameConflict):
+		writeError(w, http.StatusConflict, "a secret with that name already exists and is not managed by booth")
+	case apierrors.IsForbidden(err), apierrors.IsServerTimeout(err), apierrors.IsTimeout(err),
+		apierrors.IsTooManyRequests(err), apierrors.IsServiceUnavailable(err), apierrors.IsInternalError(err):
+		s.log.Error("booth secret write unavailable", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "secret store temporarily unavailable")
 	default:
 		s.log.Error("booth secret write error", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

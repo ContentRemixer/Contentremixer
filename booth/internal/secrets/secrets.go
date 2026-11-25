@@ -42,6 +42,11 @@ const (
 // read the repo, ack, or open PRs, so an empty token is a 400, not a silent write.
 var ErrTokenRequired = errors.New("secrets: token is required")
 
+// ErrNameConflict means a Secret of the derived name already exists but was not
+// created by Booth (no managed-by=booth label). Handlers map it to 409 — the
+// write path refuses to overwrite credentials it does not own.
+var ErrNameConflict = errors.New("secrets: name conflicts with an unmanaged secret")
+
 // Ref is the (name, key) pointer the create flow drops into spec.tokenRef /
 // spec.webhookSecretRef. It serialises to the same shape as the CRD's
 // v1alpha1.SecretKeyRef — deliberately, so W1 can forward it verbatim.
@@ -91,6 +96,15 @@ func (wr *Writer) Write(ctx context.Context, sess auth.Session, repoName, token,
 	exists := err == nil
 	if err != nil && !apierrors.IsNotFound(err) {
 		return Result{}, err
+	}
+
+	// Never clobber a Secret of this name that Booth did not create: the write
+	// path only ever (re)writes its own managed Secrets. A name collision with an
+	// unrelated Secret is a conflict the Admin must resolve, not a silent
+	// overwrite of someone else's credentials.
+	if exists && sec.Labels["app.kubernetes.io/managed-by"] != "booth" {
+		wr.audit(ctx, sess, "update", name, false)
+		return Result{}, ErrNameConflict
 	}
 
 	// Resolve the HMAC value to persist. Supplied wins; otherwise reuse the one

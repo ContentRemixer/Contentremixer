@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -114,5 +115,23 @@ func TestWriteRejectsEmptyToken(t *testing.T) {
 	_, err := wr.Write(context.Background(), admin(), "gadwall", "", "")
 	if !errors.Is(err, ErrTokenRequired) {
 		t.Fatalf("err = %v, want ErrTokenRequired", err)
+	}
+}
+
+// A pre-existing Secret of the derived name that Booth did not create must not be
+// overwritten — the write refuses with ErrNameConflict.
+func TestWriteRefusesUnmanagedSecret(t *testing.T) {
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: SecretName("pintail"), Namespace: ns},
+		Data:       map[string][]byte{"someone-elses": []byte("value")},
+	}
+	wr, c := newWriter(t, foreign)
+	_, err := wr.Write(context.Background(), admin(), "pintail", "pat", "")
+	if !errors.Is(err, ErrNameConflict) {
+		t.Fatalf("err = %v, want ErrNameConflict", err)
+	}
+	// The foreign Secret is untouched.
+	if got := storedValue(t, c, SecretName("pintail"), KeyToken); got != "" {
+		t.Fatalf("foreign secret was mutated: token=%q", got)
 	}
 }

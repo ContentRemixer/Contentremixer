@@ -75,6 +75,7 @@ type Repository interface {
 
 	InsertComment(ctx context.Context, c appcontent.Comment) error
 	ListComments(ctx context.Context, contentID string) ([]appcontent.Comment, error)
+	SetCommentResolved(ctx context.Context, id, contentID string, resolved bool) (appcontent.Comment, error)
 
 	InsertThread(ctx context.Context, t appcontent.ReviewThread, first appcontent.ReviewMessage) error
 	GetThread(ctx context.Context, id string) (appcontent.ReviewThread, error)
@@ -119,6 +120,12 @@ type UpdateContentRequest struct {
 type CreateCommentRequest struct {
 	Body   string            `json:"body"`
 	Anchor appcontent.Anchor `json:"anchor"`
+}
+
+// ResolveCommentRequest is the POST /v1/content/{id}/comments/{commentId}/resolve
+// payload. A nil Resolved defaults to resolving (true); send false to reopen.
+type ResolveCommentRequest struct {
+	Resolved *bool `json:"resolved"`
 }
 
 // CreateReviewRequest is the POST /v1/content/{id}/reviews payload. An empty
@@ -293,6 +300,22 @@ func (s *Store) CreateComment(ctx context.Context, sess auth.Session, contentID 
 		return appcontent.Comment{}, err
 	}
 	s.audit(ctx, sess, verbCreate, kindComment, c.ID, true)
+	return c, nil
+}
+
+// ResolveComment toggles a comment's resolved flag (ISI-7821 P4). The comment
+// must belong to the addressed document, and the caller must be §6.3-authorized
+// to update collaboration on it (same verb/kind as any comment mutation).
+func (s *Store) ResolveComment(ctx context.Context, sess auth.Session, contentID, commentID string, resolved bool) (appcontent.Comment, error) {
+	if _, err := s.authorizedContent(ctx, sess, contentID, verbUpdate, kindComment); err != nil {
+		return appcontent.Comment{}, err
+	}
+	c, err := s.db.SetCommentResolved(ctx, commentID, contentID, resolved)
+	if err != nil {
+		s.audit(ctx, sess, verbUpdate, kindComment, commentID, false)
+		return appcontent.Comment{}, err
+	}
+	s.audit(ctx, sess, verbUpdate, kindComment, commentID, true)
 	return c, nil
 }
 

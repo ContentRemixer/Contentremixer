@@ -4,8 +4,8 @@ import type { Comment, Anchor } from "./types";
 
 // Comments rail for the B3 reader: the list of anchored inline comments plus,
 // when the reader has a live selection, a composer to file a new one against it.
-// Comments are standalone anchored notes (the W4 model has no reply/resolve on
-// comments — peer-review threads cover discussion), so each renders read-only.
+// Comments are standalone anchored notes (no replies — peer-review threads
+// cover discussion); each can be resolved/reopened individually (ISI-7821 P4).
 
 export interface CommentsRailProps {
   comments: Comment[];
@@ -13,9 +13,13 @@ export interface CommentsRailProps {
   pendingAnchor: Anchor | null;
   activeCommentId: string | null;
   busy: boolean;
+  /** Comment currently awaiting a resolve/reopen round-trip. */
+  busyCommentId: string | null;
   onFocus: (commentId: string) => void;
   onSubmit: (body: string) => void;
   onCancelCompose: () => void;
+  /** Toggle a comment's resolved flag (ISI-7821 P4). */
+  onResolve: (commentId: string, resolved: boolean) => void;
 }
 
 export function CommentsRail({
@@ -23,9 +27,11 @@ export function CommentsRail({
   pendingAnchor,
   activeCommentId,
   busy,
+  busyCommentId,
   onFocus,
   onSubmit,
   onCancelCompose,
+  onResolve,
 }: CommentsRailProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -63,7 +69,8 @@ export function CommentsRail({
           <CommentThread
             quote={c.anchor.quote}
             resolved={c.resolved}
-            className="w-full cursor-pointer"
+            busy={busyCommentId === c.id}
+            className="w-full"
             comments={[
               {
                 id: c.id,
@@ -72,6 +79,8 @@ export function CommentsRail({
                 timeLabel: timeAgo(c.createdAt),
               },
             ]}
+            onResolve={c.resolved ? undefined : () => onResolve(c.id, true)}
+            onReopen={c.resolved ? () => onResolve(c.id, false) : undefined}
           />
           <div className="mt-1 px-1">
             <Button variant="ghost" size="sm" onClick={() => onFocus(c.id)}>

@@ -103,9 +103,12 @@ export function ReviewThreadList({
                 busy={busyThreadId === t.id}
                 comments={t.messages.map((m) => ({
                   id: m.id,
-                  author: { name: m.author, isAgent: false },
+                  author: { name: m.author, isAgent: m.isAgent },
                   body: m.body,
                   timeLabel: timeAgo(m.createdAt),
+                  // An agent only posts into a thread via a delivered
+                  // AgentRequest callback (ISI-7820), so isAgent ⇒ "Delivered".
+                  badge: m.isAgent ? "Delivered" : undefined,
                 }))}
                 onReply={resolved ? undefined : (b) => onReply(t.id, b)}
                 onResolve={resolved ? undefined : () => onResolve(t.id)}

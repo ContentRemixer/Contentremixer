@@ -8,6 +8,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  ReviewPanel,
   Tabs,
   TabsContent,
   TabsList,
@@ -69,6 +70,7 @@ export function ContentDetailPage() {
   const [illusOpen, setIllusOpen] = useState(false);
 
   const [commentBusy, setCommentBusy] = useState(false);
+  const [busyCommentId, setBusyCommentId] = useState<string | null>(null);
   const [busyThreadId, setBusyThreadId] = useState<string | null>(null);
   const [reviewCreating, setReviewCreating] = useState(false);
   const [illusBusyId, setIllusBusyId] = useState<string | null>(null);
@@ -206,6 +208,18 @@ export function ContentDetailPage() {
       });
     } finally {
       setCommentBusy(false);
+    }
+  }
+
+  async function resolveComment(commentId: string, resolved: boolean) {
+    setBusyCommentId(commentId);
+    try {
+      const updated = await contentApi.resolveComment(id, commentId, resolved);
+      setComments((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    } catch (err) {
+      toast({ tone: "warning", title: "Could not update comment", description: errMsg(err) });
+    } finally {
+      setBusyCommentId(null);
     }
   }
 
@@ -386,13 +400,30 @@ export function ContentDetailPage() {
                 pendingAnchor={pendingAnchor}
                 activeCommentId={activeCommentId}
                 busy={commentBusy}
+                busyCommentId={busyCommentId}
                 onFocus={setActiveCommentId}
                 onSubmit={submitComment}
                 onCancelCompose={() => setPendingAnchor(null)}
+                onResolve={resolveComment}
               />
             </TabsContent>
 
-            <TabsContent value="review" className="mt-4">
+            <TabsContent value="review" className="mt-4 flex flex-col gap-4">
+              {/* M5 document-level peer review: Approve / Request changes drive
+                  the document status (the existing publish gate); a free-text
+                  note opens a review thread so nothing is dropped. ponytail:
+                  no per-reviewer verdict store yet — the roll-up reflects doc
+                  status only; a dedicated verdict table is a follow-up. */}
+              <ReviewPanel
+                reviews={[]}
+                summary={content.status === "approved" ? "approved" : "pending"}
+                busy={statusBusy || reviewCreating}
+                onSubmitReview={(verdict, note) => {
+                  if (verdict === "approved") void changeStatus("approved");
+                  else if (verdict === "changes-requested") void changeStatus("in_review");
+                  else if (note.trim()) void createReview("Review note", note.trim());
+                }}
+              />
               <ReviewThreadList
                 threads={reviews}
                 busyThreadId={busyThreadId}

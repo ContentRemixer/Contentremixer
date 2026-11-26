@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -25,6 +26,7 @@ func (s *Server) mountContent(mux *http.ServeMux) {
 	mux.Handle("DELETE /v1/content/{id}", s.protect(s.deleteContent))
 	mux.Handle("GET /v1/content/{id}/comments", s.protect(s.listComments))
 	mux.Handle("POST /v1/content/{id}/comments", s.protect(s.createComment))
+	mux.Handle("POST /v1/content/{id}/comments/{commentId}/resolve", s.protect(s.resolveComment))
 	mux.Handle("GET /v1/content/{id}/reviews", s.protect(s.listReviews))
 	mux.Handle("POST /v1/content/{id}/reviews", s.protect(s.createReview))
 	mux.Handle("POST /v1/content/{id}/reviews/{threadId}/resolve", s.protect(s.resolveReview))
@@ -153,6 +155,33 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, c)
+}
+
+// resolveComment toggles one inline comment's resolved flag (ISI-7821 P4,
+// distinct from the review-THREAD resolve). The optional body {"resolved":bool}
+// defaults to resolving; an absent/empty body resolves, and {"resolved":false}
+// reopens.
+func (s *Server) resolveComment(w http.ResponseWriter, r *http.Request) {
+	sess, ok := session(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	resolved := true
+	var req content.ResolveCommentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Resolved != nil {
+		resolved = *req.Resolved
+	}
+	c, err := s.content.ResolveComment(r.Context(), sess, r.PathValue("id"), r.PathValue("commentId"), resolved)
+	if err != nil {
+		s.writeContentErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) listReviews(w http.ResponseWriter, r *http.Request) {

@@ -8,6 +8,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 
@@ -27,16 +28,17 @@ import (
 
 // Server wires the auth provider, the gating stores, and the route table.
 type Server struct {
-	auth        *auth.Provider
-	store       *store.Store
-	scrape      *scrapejobs.Store
-	content     *content.Store
-	contentTest *contenttest.Store
-	promote     *promote.Store
-	tutorial    *tutorialrun.Store
-	approve     *approve.Store
-	refSecrets  *secrets.Writer
-	log         *slog.Logger
+	auth         *auth.Provider
+	store        *store.Store
+	scrape       *scrapejobs.Store
+	content      *content.Store
+	contentTest  *contenttest.Store
+	promote      *promote.Store
+	tutorial     *tutorialrun.Store
+	approve      *approve.Store
+	refSecrets   *secrets.Writer
+	skillPacksFS fs.FS
+	log          *slog.Logger
 }
 
 // WithTutorialRuns attaches the P3-4 multi-skill orchestration store (ISI-7152)
@@ -124,6 +126,11 @@ func (s *Server) Handler() http.Handler {
 	// W2): Admin writes tokenRef+webhookSecretRef values server-side; only the
 	// refs come back. Mounted only when a secrets.Writer is wired.
 	s.mountReferenceRepoSecrets(mux)
+	// Read-only skill-pack discovery + default composition (ISI-7856): the Agent
+	// "Skills…" editor lists real packs and shows each skill's default stack.
+	// Always mounted — the composition is static Go data; discovery degrades to an
+	// empty catalog when no reference-repo filesystem is wired.
+	s.mountSkillPacks(mux)
 
 	// Static SPA (ISI-7206, W0): the embedded Vite/React build, served from the
 	// Booth binary (embed.FS, §2). Registered on the root pattern so it is the

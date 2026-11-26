@@ -140,6 +140,12 @@ func run() error {
 	// is granted in deploy. Always wired — the create flow needs it to produce a
 	// working tokenRef+webhookSecretRef with no kubectl step.
 	srv = srv.WithReferenceRepoSecrets(secrets.New(k8s, namespace, auditor))
+	// Read-only skill-pack discovery (ISI-7856): GET /v1/skillpacks lists the packs
+	// under <BOOTH_SKILLS_DIR>/*/SKILL.md so the Agent "Skills…" editor suggests
+	// real packs. The image COPYs the repo-root skills/ to /skills (see
+	// booth/Dockerfile) and the deployment sets BOOTH_SKILLS_DIR=/skills.
+	// Degrade-never: a missing directory just yields an empty catalog.
+	srv = srv.WithSkillPacks(os.DirFS(envOr("BOOTH_SKILLS_DIR", "/skills")))
 
 	httpServer := &http.Server{
 		Addr:              addr,

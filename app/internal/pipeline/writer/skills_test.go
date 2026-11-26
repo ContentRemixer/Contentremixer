@@ -2,6 +2,7 @@ package writer
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,31 @@ func TestDefaultSkillLockstepWithV1alpha1(t *testing.T) {
 	// of the guard is that it stays style-only (empty skill) end to end.
 	if got := contentremixerv1alpha1.DefaultSkill(FormatShort); got != "" {
 		t.Fatalf("short must default to the empty (style-only) skill, got %q", got)
+	}
+}
+
+// TestSkillCompositionLockstepWithV1alpha1 is the ISI-7856 drift guard: the
+// writer's private skillComposition map (the one that actually drives which
+// packs a run loads) and the CRD-level v1alpha1.SkillComposition (the copy Booth
+// surfaces on GET /v1/skillpacks so the UI can show the per-skill default) MUST
+// describe the same composition. If they drift, operators would be shown a
+// default that is not what the writer loads.
+func TestSkillCompositionLockstepWithV1alpha1(t *testing.T) {
+	if !reflect.DeepEqual(skillComposition, contentremixerv1alpha1.SkillComposition) {
+		t.Fatalf("skill-composition table drift: writer skillComposition = %v, v1alpha1.SkillComposition = %v (they must agree — ISI-7856)",
+			skillComposition, contentremixerv1alpha1.SkillComposition)
+	}
+	// The dynamic single-pack fallback (a skill absent from the map resolves to a
+	// single pack of its own name) must also match. The empty skill is excluded:
+	// resolveSkillPacks guards it before ever calling packDirsForSkill, so the two
+	// helpers are only ever exercised with a non-empty skill.
+	for _, skill := range []string{"content-writer", "tutorial", "visual-design", "workshop-builder"} {
+		writer := packDirsForSkill(skill)
+		crd := contentremixerv1alpha1.PackDirsForSkill(skill)
+		if !reflect.DeepEqual(writer, crd) {
+			t.Fatalf("pack-dirs drift for skill %q: writer packDirsForSkill = %v, v1alpha1.PackDirsForSkill = %v (they must agree — ISI-7856)",
+				skill, writer, crd)
+		}
 	}
 }
 

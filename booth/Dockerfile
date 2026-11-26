@@ -27,6 +27,11 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
 # UID 65532, matching the operator's nonroot layout.
 FROM gcr.io/distroless/static:nonroot
 COPY --from=builder /booth /booth
+# Skill-pack catalog (ISI-7856): the repo-root skills/ is read-only reference
+# content GET /v1/skillpacks discovers. Copied from the build context (repo root)
+# so Booth can serve the catalog without a reference-repo clone. BOOTH_SKILLS_DIR
+# points the server here (deploy/base/booth/deployment.yaml).
+COPY skills/ /skills/
 EXPOSE 8080
 USER 65532:65532
 ENTRYPOINT ["/booth"]

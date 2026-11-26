@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogBody,
   DialogContent,
@@ -47,56 +48,128 @@ const ACTOR_TEMPLATES = ["content", "media"] as const;
 // NAME_PATTERN is the metadata.name (RFC 1123 label) the apiserver enforces.
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
-// ---- skillPacks chips --------------------------------------------------------
+// ---- skill-pack catalog (ISI-7856 W1) ----------------------------------------
 
-// SkillPacksField is the "modify skills" multiselect: current packs as removable
-// chips + a free-text add. Discovery (GET /v1/skillpacks from the reference repo)
-// is a flagged follow-up (UX spec §1.4); until it lands this degrades to
-// free-text-with-suggestions, which is contract-correct anyway — the CRD says
-// unknown packs degrade (warn) at run time, they never gate. So a typed-but-
-// unknown pack is allowed and only hinted, never blocked. Dedup + trim + order
-// preserved (the CRD is listType=atomic).
+// Pack mirrors one row of GET /v1/skillpacks .packs (booth/internal/skillpacks).
+// title/description degrade to the name when the SKILL.md omits them.
+interface Pack {
+  name: string;
+  title?: string;
+  description?: string;
+}
+
+// SkillPacksData is the GET /v1/skillpacks read model (ISI-7856): the discovered
+// catalog, the explicit per-content-format default composition (keyed by the
+// format / agent handle — e.g. "content-writer", "tutorial" — NOT the skillKind
+// enum, see writer/skills.go resolveSkillPacks), and whether an unlisted key
+// falls back to a single pack named after the key.
+interface SkillPacksData {
+  packs: Pack[];
+  defaults: Record<string, string[]>;
+  dynamicFallback: boolean;
+}
+
+// useSkillPacks fetches the catalog + default composition once. Degrade-never:
+// a load error (endpoint absent on an older Booth, or Admin-gate miss) leaves an
+// empty catalog + failed:true so the dialog still works as free-text and the
+// empty state can explain it — never a worse state than before W1 (spec §2).
+function useSkillPacks(): { data: SkillPacksData; failed: boolean; loaded: boolean } {
+  const [data, setData] = useState<SkillPacksData>({ packs: [], defaults: {}, dynamicFallback: false });
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    api
+      .get<SkillPacksData | null>("/v1/skillpacks")
+      .then((d) =>
+        setData({
+          packs: Array.isArray(d?.packs) ? d!.packs : [],
+          defaults: d?.defaults ?? {},
+          dynamicFallback: !!d?.dynamicFallback,
+        }),
+      )
+      .catch(() => setFailed(true))
+      .finally(() => setLoaded(true));
+  }, []);
+  return { data, failed, loaded };
+}
+
+// defaultPacksFor resolves the ordered default composition the platform runs for
+// an agent before any override. The composition is keyed by the agent handle /
+// content format (spec §2 example "content-writer → […]"), so we look the name up
+// directly; an unlisted name degrades to the dynamic single-pack rule the server
+// advertises. The seeded writer agent is named "content-writer", which hits the
+// explicit entry; hand-created agents hit the single-pack fallback.
+function defaultPacksFor(name: string, data: SkillPacksData): string[] {
+  const explicit = data.defaults[name];
+  if (explicit && explicit.length) return explicit;
+  return data.dynamicFallback && name ? [name] : [];
+}
+
+// ---- skillPacks editor (your packs: picker + removable chips) ----------------
+
+// SkillPacksField is the editable "Your skill packs" overlay: removable chips for
+// the chosen packs + a searchable catalog picker (ISI-7856) + a free-text escape
+// hatch for packs not yet in the catalog. An override, when non-empty, REPLACES
+// the default composition at run time (writer/skills.go resolveSkillPacks); the
+// replace is made visually unambiguous by DefaultPacksSection above. Dedup + trim
+// + order preserved (the CRD is listType=atomic); unknown packs are hinted, never
+// blocked (they degrade — warn — at run time, never gate).
 export function SkillPacksField({
   packs,
   onChange,
-  suggestions = [],
+  catalog = [],
 }: {
   packs: string[];
   onChange: (next: string[]) => void;
-  suggestions?: string[];
+  catalog?: Pack[];
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
 
+  const catalogNames = new Set(catalog.map((p) => p.name));
   function add(raw: string) {
     const v = raw.trim();
-    if (!v) return;
-    if (packs.includes(v)) {
+    if (!v || packs.includes(v)) {
       setDraft("");
       return;
     }
     onChange([...packs, v]);
     setDraft("");
   }
-  function remove(i: number) {
-    onChange(packs.filter((_, j) => j !== i));
+  function toggle(name: string) {
+    onChange(packs.includes(name) ? packs.filter((p) => p !== name) : [...packs, name]);
   }
+  function remove(name: string) {
+    onChange(packs.filter((p) => p !== name));
+  }
+
+  const q = query.trim().toLowerCase();
+  const filtered = catalog.filter(
+    (p) =>
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      (p.title ?? "").toLowerCase().includes(q) ||
+      (p.description ?? "").toLowerCase().includes(q),
+  );
 
   return (
     <div className="space-y-2">
+      {/* chosen packs as removable chips */}
       <div className="flex flex-wrap gap-2">
         {packs.length === 0 ? (
-          <span className="text-sm text-text-muted">No skill packs — the skill's catalog default applies.</span>
+          <span className="text-sm text-text-muted">No added packs — this agent uses its default packs.</span>
         ) : (
-          packs.map((p, i) => {
-            const unknown = suggestions.length > 0 && !suggestions.includes(p);
+          packs.map((p) => {
+            const unknown = catalog.length > 0 && !catalogNames.has(p);
             return (
               <span
                 key={p}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-text"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-text"
               >
                 {p}
                 {unknown && (
-                  <span className="text-text-muted" title="not found in reference repo — will be ignored at run time">
+                  <span className="text-text-muted" title="Not in the skill-pack catalog — ignored at run time.">
                     (?)
                   </span>
                 )}
@@ -104,7 +177,7 @@ export function SkillPacksField({
                   type="button"
                   aria-label={`Remove skill pack ${p}`}
                   className="text-text-muted hover:text-text"
-                  onClick={() => remove(i)}
+                  onClick={() => remove(p)}
                 >
                   ×
                 </button>
@@ -113,30 +186,138 @@ export function SkillPacksField({
           })
         )}
       </div>
-      <div className="flex gap-2">
-        <Input
-          value={draft}
-          placeholder="add a pack, e.g. concise"
-          list={suggestions.length ? "skillpack-suggestions" : undefined}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add(draft);
-            }
-          }}
-        />
-        {suggestions.length > 0 && (
-          <datalist id="skillpack-suggestions">
-            {suggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        )}
-        <Button type="button" variant="ghost" size="sm" onClick={() => add(draft)} disabled={!draft.trim()}>
-          Add
+
+      {!pickerOpen ? (
+        <Button type="button" variant="ghost" size="sm" onClick={() => setPickerOpen(true)}>
+          + Add packs
         </Button>
+      ) : (
+        <div className="space-y-2 rounded-md border border-border p-2">
+          <Input
+            value={query}
+            placeholder="Search packs…"
+            aria-label="Search packs"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {catalog.length > 0 ? (
+            <ul role="listbox" aria-label="Skill packs" className="max-h-48 space-y-1 overflow-y-auto">
+              {filtered.length === 0 ? (
+                <li className="px-1 py-1 text-xs text-text-muted">No packs match "{query}".</li>
+              ) : (
+                filtered.map((p) => {
+                  const checked = packs.includes(p.name);
+                  return (
+                    <li key={p.name}>
+                      {/* One click target per option: a focusable button toggles
+                          the pack (Enter/Space parity); the Checkbox is a purely
+                          visual indicator so clicking anywhere toggles once. */}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={checked}
+                        className="flex w-full items-start gap-2 rounded-md px-1 py-1 text-left hover:bg-surface"
+                        onClick={() => toggle(p.name)}
+                      >
+                        <Checkbox checked={checked} tabIndex={-1} aria-hidden className="pointer-events-none mt-0.5" />
+                        <span>
+                          <span className="block text-sm font-medium text-text">{p.title || p.name}</span>
+                          {p.description && <span className="block text-xs text-text-muted">{p.description}</span>}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          ) : (
+            <p className="text-xs text-text-muted">The pack catalog is unavailable — add packs by name below.</p>
+          )}
+          {/* escape hatch: packs not (yet) in the catalog */}
+          <div className="space-y-1 border-t border-border pt-2">
+            <span className="text-xs text-text-muted">Can't find it? Add by name</span>
+            <div className="flex gap-2">
+              <Input
+                value={draft}
+                placeholder="e.g. concise"
+                aria-label="Add pack by name"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    add(draft);
+                  }
+                }}
+              />
+              <Button type="button" variant="ghost" size="sm" onClick={() => add(draft)} disabled={!draft.trim()}>
+                Add
+              </Button>
+            </div>
+            <span className="text-xs text-text-muted">Unknown packs are kept, but ignored at run time.</span>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPickerOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- default composition (read-only) + replace banner ------------------------
+
+// DefaultPacksSection renders the read-only default composition (spec §3 D1) so a
+// default agent never looks unequipped. When the agent has override packs the
+// defaults are struck-through + tagged "⊘ replaced" and a warn banner states the
+// replace plainly (State C) — no silent swap. Removing the last override returns
+// to State A with no save (live preview). The chips are not focusable and carry
+// no ×: they are not editable here.
+function DefaultPacksSection({
+  defaultPacks,
+  kind,
+  overridden,
+  failed,
+}: {
+  defaultPacks: string[];
+  kind: string;
+  overridden: boolean;
+  failed: boolean;
+}) {
+  if (failed) {
+    return <p className="text-sm text-text-muted">Using the default skill packs for this skill.</p>;
+  }
+  if (defaultPacks.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium text-text">{overridden ? "Default skill packs (overridden)" : "Default skill packs"}</span>
       </div>
+      <div
+        className="flex flex-wrap gap-2"
+        aria-label={`Default skill packs from the ${kind} skill (read-only)`}
+      >
+        {defaultPacks.map((p) => (
+          <span
+            key={p}
+            className={
+              "inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-0.5 text-xs " +
+              (overridden ? "text-text-muted line-through" : "text-text")
+            }
+          >
+            {p}
+            {overridden && <span className="text-text-muted no-underline">⊘ replaced</span>}
+          </span>
+        ))}
+      </div>
+      {overridden ? (
+        <p className="rounded-md border border-warn/40 bg-warn/10 px-2 py-1 text-xs text-warn">
+          ⚠ Your packs replace the {kind} default. The {defaultPacks.length} default pack
+          {defaultPacks.length === 1 ? "" : "s"} above will NOT run — only the packs you choose below run.
+        </p>
+      ) : (
+        <p className="text-xs text-text-muted">These run as-is. The {kind} skill composes them for you.</p>
+      )}
     </div>
   );
 }
@@ -239,6 +420,7 @@ function CreateAgentDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const models = useModelProfiles();
+  const { data: skillPacks } = useSkillPacks();
 
   const invalid = validateAgent(f);
   function set<K extends keyof CreateState>(key: K, value: CreateState[K]) {
@@ -341,8 +523,17 @@ function CreateAgentDialog({
               </Select>
             )}
           </Field>
-          <Field label="Skill packs" hint="Prompt packs layered on the skill. Override the catalog default; unknown packs are ignored at run time.">
-            {() => <SkillPacksField packs={f.skillPacks} onChange={(next) => set("skillPacks", next)} />}
+          <Field
+            label="Skill packs"
+            hint="Optional prompt add-ons. Leave empty to use this skill's default packs; adding any replaces that default for this agent. Unknown packs are ignored at run time."
+          >
+            {() => (
+              <SkillPacksField
+                packs={f.skillPacks}
+                onChange={(next) => set("skillPacks", next)}
+                catalog={skillPacks.packs}
+              />
+            )}
           </Field>
           <Field label="Description" hint="Optional operator context.">
             {({ id }) => (
@@ -414,6 +605,10 @@ function EditSkillsDialog({
   const [packs, setPacks] = useState<string[]>(() => toPacks(agent));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { data: skillPacks, failed } = useSkillPacks();
+
+  const kind = typeof agent.spec?.skillKind === "string" ? agent.spec.skillKind : "?";
+  const defaultPacks = defaultPacksFor(agent.metadata.name, skillPacks);
 
   async function submit() {
     setBusy(true);
@@ -444,11 +639,22 @@ function EditSkillsDialog({
       <DialogContent title={`Skills — ${agent.metadata.name}`}>
         <DialogBody className="space-y-4">
           <p className="text-sm text-text-muted">
-            Skill packs layered on top of the{" "}
-            <Badge tone="info">{typeof agent.spec?.skillKind === "string" ? agent.spec.skillKind : "?"}</Badge> skill.
-            They override the catalog composition for this agent's runs. Unknown packs are ignored at run time.
+            A skill pack is an optional prompt add-on. This agent's skill is <Badge tone="info">{kind}</Badge>, which
+            already runs a default set of packs (shown below). Any packs you add here replace that default for this
+            agent's runs; unknown packs are ignored at run time.
           </p>
-          <SkillPacksField packs={packs} onChange={setPacks} />
+          <DefaultPacksSection
+            defaultPacks={defaultPacks}
+            kind={kind}
+            overridden={packs.length > 0}
+            failed={failed}
+          />
+          <div className="space-y-1">
+            <span className="text-sm font-medium text-text">
+              Your skill packs <span className="text-xs font-normal text-text-muted">(optional)</span>
+            </span>
+            <SkillPacksField packs={packs} onChange={setPacks} catalog={skillPacks.packs} />
+          </div>
           {err && <p className="text-sm text-warn">{err}</p>}
         </DialogBody>
         <DialogFooter>

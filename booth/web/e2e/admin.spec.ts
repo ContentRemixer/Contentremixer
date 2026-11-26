@@ -133,6 +133,57 @@ test.describe("Admin console", () => {
     expect(body.spec.labelRoutes[0].label).toBe("recycle:blog");
   });
 
+  // ISI-7897 (W4): the guided onboarding wizard sequences the existing steps —
+  // create (W1) → install (W2) → seed (W3) → verify — carrying the created repo
+  // forward so the later steps address it. Done-when: the four steps advance,
+  // the create still POSTs the bespoke spec, and the verify step deep-links the
+  // repo's PRs derived from the just-created spec.repo.
+  test("Admin onboards a repo via the guided wizard", async ({ page }) => {
+    await installApi(page, defaults({ session: ADMIN, repos: [] }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Reference repos" }).click();
+
+    await page.getByRole("button", { name: "Onboard a repo" }).click();
+    await expect(page.getByText("Onboard a reference repo")).toBeVisible();
+
+    // Step ① — create via the reused bespoke form.
+    await page.getByRole("button", { name: "Create reference repo" }).click();
+    await page.getByPlaceholder("contentremixer-docs").fill("acme-docs");
+    await page.getByPlaceholder("owner/name").fill("acme/docs");
+    await page.getByPlaceholder("gh-token").fill("gh-token");
+    await page.getByPlaceholder("pat").fill("pat");
+    await page.getByPlaceholder("gh-hook").fill("gh-hook");
+    await page.getByPlaceholder("secret").fill("secret");
+    await page.getByPlaceholder("recycle:blog").fill("recycle:blog");
+
+    const postReq = page.waitForRequest(
+      (r) => r.method() === "POST" && /\/v1\/referencerepos$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    expect((await postReq).postDataJSON().metadata.name).toBe("acme-docs");
+
+    // Step ② — install (auto-advanced on create); the reused W2 control appears.
+    await expect(page.getByRole("heading", { name: "Install the GitHub App" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Install GitHub App" })).toBeVisible();
+    await page.getByRole("button", { name: "Next" }).click();
+
+    // Step ③ — seed (reused W3 control).
+    await expect(page.getByRole("heading", { name: "Seed template issues" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Seed template issues" })).toBeVisible();
+    await page.getByRole("button", { name: "Next" }).click();
+
+    // Step ④ — verify: the PR deep link is derived from the created spec.repo.
+    await expect(page.getByRole("heading", { name: "Verify the first recycle PR" })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Open pull requests on GitHub/ })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/docs/pulls",
+    );
+    await page.getByRole("button", { name: "Finish" }).click();
+
+    // Finishing closes the wizard back to the panel.
+    await expect(page.getByText("Onboard a reference repo")).toBeHidden();
+  });
+
   // Done-when: admission-webhook validation errors surface in the form.
   test("a webhook rejection surfaces in the create form", async ({ page }) => {
     await installApi(page, defaults({ session: ADMIN, repos: [] }));

@@ -33,7 +33,9 @@ const GITHUB_APP_SLUG =
   (import.meta.env.VITE_GITHUB_APP_SLUG as string | undefined)?.trim() || "contentremixer-recycler";
 const INSTALL_APP_URL = `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`;
 
-function isAppInstalled(repo: CrObject): boolean {
+// Exported so the guided onboarding wizard (ISI-7897, W4) can gate its
+// "Install GitHub App" step on the same status signal this file renders.
+export function isAppInstalled(repo: CrObject): boolean {
   return (repo.status as Record<string, unknown> | undefined)?.appInstalled === true;
 }
 
@@ -229,7 +231,11 @@ export function SeedTemplateIssuesButton({ repo }: { repo: CrObject }) {
   );
 }
 
-function ReferenceRepoDialog({
+// Exported so the onboarding wizard (ISI-7897, W4) can host step ① (repo
+// details) with the exact create validation/submit the Admin panel uses, rather
+// than duplicating the nested-spec form. onSaved carries the created name so the
+// wizard can load the fresh CrObject and advance to the install/seed steps.
+export function ReferenceRepoDialog({
   mode,
   repo,
   path,
@@ -240,7 +246,9 @@ function ReferenceRepoDialog({
   repo: CrObject | null;
   path: string;
   onClose: () => void;
-  onSaved: () => void;
+  // Receives the saved object's metadata.name. Callers that only need a reload
+  // (the Admin panel's refresh) can ignore the argument — assignable as before.
+  onSaved: (name: string) => void;
 }) {
   const { toast } = useToast();
   const [f, setF] = useState<FormState>(() => initialState(repo));
@@ -293,7 +301,7 @@ function ReferenceRepoDialog({
         });
       }
       toast({ title: mode === "create" ? "Reference repo created" : "Reference repo saved", tone: "success" });
-      onSaved();
+      onSaved(mode === "create" ? f.name.trim() : repo!.metadata.name);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : e instanceof Error ? e.message : "request failed");
       setBusy(false);

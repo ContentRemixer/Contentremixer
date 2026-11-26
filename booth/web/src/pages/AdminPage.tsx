@@ -7,6 +7,7 @@ import {
   InstallGithubAppButton,
   SeedTemplateIssuesButton,
 } from "./admin/ReferenceRepoForm";
+import { OnboardRepoButton } from "./admin/RepoOnboardWizard";
 import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
 import { NewTeamButton, EditTeamButton } from "./admin/TeamForm";
 
@@ -94,7 +95,10 @@ export function AdminPage() {
             // authoritative (§6.3 + admission webhook); its errors surface inline.
             createNote="No reference repos registered yet. Use “New” to create one."
             customCreate={(refresh) => (
-              <NewReferenceRepoButton path="/v1/referencerepos" onSaved={refresh} />
+              <div className="flex items-center gap-2">
+                <OnboardRepoButton onComplete={refresh} />
+                <NewReferenceRepoButton path="/v1/referencerepos" onSaved={refresh} />
+              </div>
             )}
             rowActions={(o, refresh) => (
               <div className="flex items-center gap-2">

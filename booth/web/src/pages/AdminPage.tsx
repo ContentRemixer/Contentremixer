@@ -5,6 +5,7 @@ import {
   NewReferenceRepoButton,
   EditReferenceRepoButton,
   InstallGithubAppButton,
+  SeedTemplateIssuesButton,
 } from "./admin/ReferenceRepoForm";
 import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
 import { NewTeamButton, EditTeamButton } from "./admin/TeamForm";
@@ -98,6 +99,7 @@ export function AdminPage() {
             rowActions={(o, refresh) => (
               <div className="flex items-center gap-2">
                 <InstallGithubAppButton repo={o} />
+                <SeedTemplateIssuesButton repo={o} />
                 <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
               </div>
             )}

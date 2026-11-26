@@ -37,6 +37,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/seed"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/seedissues"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/teamengine"
@@ -140,6 +141,10 @@ func run() error {
 	// is granted in deploy. Always wired — the create flow needs it to produce a
 	// working tokenRef+webhookSecretRef with no kubectl step.
 	srv = srv.WithReferenceRepoSecrets(secrets.New(k8s, namespace, auditor))
+	// Template-issue seeding for onboarding (ISI-7896, W3). Reuses the Booth SA's
+	// k8s client to read the ReferenceRepo CR + its PAT Secret, then seeds the
+	// versioned pack into the repo. Admin-gated + idempotent; always wired.
+	srv = srv.WithReferenceRepoSeeder(seedissues.New(k8s, namespace, auditor))
 	// Read-only skill-pack discovery (ISI-7856): GET /v1/skillpacks lists the packs
 	// under <BOOTH_SKILLS_DIR>/*/SKILL.md so the Agent "Skills…" editor suggests
 	// real packs. The image COPYs the repo-root skills/ to /skills (see

@@ -21,6 +21,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/seedissues"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 	"github.com/ContentRemixer/Contentremixer/booth/web"
@@ -37,6 +38,7 @@ type Server struct {
 	tutorial     *tutorialrun.Store
 	approve      *approve.Store
 	refSecrets   *secrets.Writer
+	seeder       *seedissues.Seeder
 	skillPacksFS fs.FS
 	log          *slog.Logger
 }
@@ -126,6 +128,9 @@ func (s *Server) Handler() http.Handler {
 	// W2): Admin writes tokenRef+webhookSecretRef values server-side; only the
 	// refs come back. Mounted only when a secrets.Writer is wired.
 	s.mountReferenceRepoSecrets(mux)
+	// Template-issue seeding for the onboarding flow (ISI-7896). Mounted only
+	// when a seeder is wired; Admin-gated and idempotent.
+	s.mountReferenceRepoSeeder(mux)
 	// Read-only skill-pack discovery + default composition (ISI-7856): the Agent
 	// "Skills…" editor lists real packs and shows each skill's default stack.
 	// Always mounted — the composition is static Go data; discovery degrades to an

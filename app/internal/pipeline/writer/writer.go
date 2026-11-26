@@ -221,7 +221,10 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 	if skill == "" {
 		skill = defaultSkillForFormat(format)
 	}
-	packs := resolveSkillPacks(w.FS, skill)
+	// rc.SkillPacks (ISI-7803) is the selected Agent's configured packs; when set
+	// it overrides the catalog composition for this skill. Empty => catalog
+	// default, byte-for-byte unchanged.
+	packs := resolveSkillPacks(w.FS, skill, rc.SkillPacks)
 
 	// Persona conditioning (design §5): additive to the style-only prompt and
 	// best-effort. Only runs when a conditioner is wired AND the run names a

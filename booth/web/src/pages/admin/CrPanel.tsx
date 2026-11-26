@@ -13,6 +13,7 @@ import {
   Textarea,
   useToast,
 } from "../../ui";
+import { Tooltip } from "../../ui";
 import { api, ApiError } from "../../app/api";
 import { useResource } from "./useResource";
 import { PanelForbidden, PanelError, PanelLoading, PanelEmpty } from "./panelStates";
@@ -66,6 +67,15 @@ export interface CrPanelConfig {
    * object stays GitOps-authored. Receives refresh so the editor can reload.
    */
   rowActions?: (o: CrObject, refresh: () => void) => ReactNode;
+  /**
+   * Returns a reason string to DISABLE a row's Delete button (shown as a
+   * tooltip), or null to allow deletion. Used to guard the seeded default rows
+   * (ISI-7803: default Agents are the stable by-kind handles the seeder and team
+   * nodes rely on). This is a UX affordance only — the server/seeder re-creates a
+   * seed on next boot if a delete slips through by hand. Kinds that pass nothing
+   * behave exactly as before (always-enabled Delete).
+   */
+  deleteGuard?: (o: CrObject) => string | null;
 }
 
 // CrPanel is the shared list/create/delete surface for the CR-backed admin
@@ -134,9 +144,28 @@ export function CrPanel(cfg: CrPanelConfig) {
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {cfg.rowActions?.(o, refresh)}
-                      <Button variant="danger" size="sm" onClick={() => remove(o.metadata.name)}>
-                        Delete
-                      </Button>
+                      {(() => {
+                        const guard = cfg.deleteGuard?.(o) ?? null;
+                        const btn = (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            disabled={!!guard}
+                            onClick={() => remove(o.metadata.name)}
+                          >
+                            Delete
+                          </Button>
+                        );
+                        // Wrap a disabled button in a span so the Tooltip trigger
+                        // still receives hover events (a disabled button does not).
+                        return guard ? (
+                          <Tooltip content={guard}>
+                            <span tabIndex={0}>{btn}</span>
+                          </Tooltip>
+                        ) : (
+                          btn
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>

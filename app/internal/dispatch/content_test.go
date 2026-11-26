@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
@@ -71,7 +72,9 @@ func TestContentStrategy_MapsWorkOrderToRunContext(t *testing.T) {
 		// what the writer previously derived from the format, so recycle:blog is
 		// byte-for-byte unchanged at the writer output.
 	}
-	if fp.gotRC != want {
+	// RunContext carries a []string (SkillPacks, ISI-7803), so it is no longer
+	// comparable with ==; DeepEqual is the field-wise equality this asserts.
+	if !reflect.DeepEqual(fp.gotRC, want) {
 		t.Fatalf("RunContext mismatch:\n got  %+v\n want %+v", fp.gotRC, want)
 	}
 	if fp.gotTarget != target {

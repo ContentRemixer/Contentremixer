@@ -26,7 +26,7 @@ func allContentPacks() map[string]string {
 func TestResolveSkillPacksComposesContentWriter(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureTree(t, root, allContentPacks())
-	packs := resolveSkillPacks(fixtureFS{root: root}, "content-writer")
+	packs := resolveSkillPacks(fixtureFS{root: root}, "content-writer", nil)
 
 	wantNames := []string{
 		"skills/blog-writing/SKILL.md",
@@ -46,7 +46,7 @@ func TestResolveSkillPacksComposesContentWriter(t *testing.T) {
 func TestResolveSkillPacksComposesTutorialWithSEO(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureTree(t, root, allContentPacks())
-	packs := resolveSkillPacks(fixtureFS{root: root}, "tutorial")
+	packs := resolveSkillPacks(fixtureFS{root: root}, "tutorial", nil)
 
 	wantNames := []string{
 		"skills/technical-tutorial/SKILL.md",
@@ -68,13 +68,13 @@ func TestResolveSkillPacksDegradesMissing(t *testing.T) {
 	writeFixtureTree(t, root, map[string]string{
 		"skills/blog-writing/SKILL.md": "BLOGWRITING_MARKER",
 	})
-	packs := resolveSkillPacks(fixtureFS{root: root}, "content-writer")
+	packs := resolveSkillPacks(fixtureFS{root: root}, "content-writer", nil)
 	if len(packs) != 1 || packs[0].name != "skills/blog-writing/SKILL.md" {
 		t.Fatalf("missing packs must be skipped, want only blog-writing, got %+v", packs)
 	}
 
 	// No packs present at all → nothing (degrade to style-only).
-	if got := resolveSkillPacks(fixtureFS{root: t.TempDir()}, "content-writer"); got != nil {
+	if got := resolveSkillPacks(fixtureFS{root: t.TempDir()}, "content-writer", nil); got != nil {
 		t.Fatalf("all packs missing must degrade to nil, got %+v", got)
 	}
 }
@@ -84,7 +84,7 @@ func TestResolveSkillPacksEmptyFileSkipped(t *testing.T) {
 	writeFixtureTree(t, root, map[string]string{
 		"skills/seo/SKILL.md": "   \n\t ", // whitespace-only
 	})
-	if got := resolveSkillPacks(fixtureFS{root: root}, "seo"); got != nil {
+	if got := resolveSkillPacks(fixtureFS{root: root}, "seo", nil); got != nil {
 		t.Fatalf("empty/whitespace SKILL.md must be skipped, got %+v", got)
 	}
 }
@@ -98,7 +98,7 @@ func TestResolveSkillPacksDynamicByName(t *testing.T) {
 		{"teleprompter", "teleprompter"},   // catalog-absent, dir == name
 		{"visual-design", "visual-design"}, // previously-unused pack, by name
 	} {
-		packs := resolveSkillPacks(fixtureFS{root: root}, tc.skill)
+		packs := resolveSkillPacks(fixtureFS{root: root}, tc.skill, nil)
 		want := "skills/" + tc.dir + "/SKILL.md"
 		if len(packs) != 1 || packs[0].name != want {
 			t.Fatalf("skill %q: want single pack %q, got %+v", tc.skill, want, packs)
@@ -106,8 +106,55 @@ func TestResolveSkillPacksDynamicByName(t *testing.T) {
 	}
 
 	// Empty skill resolves to nothing.
-	if got := resolveSkillPacks(fixtureFS{root: root}, "  "); got != nil {
+	if got := resolveSkillPacks(fixtureFS{root: root}, "  ", nil); got != nil {
 		t.Fatalf("empty skill must resolve to nil, got %+v", got)
+	}
+}
+
+// TestResolveSkillPacksOverride proves an Agent.spec.skillPacks[] override
+// (ISI-7803) replaces the catalog composition for the skill, resolved through
+// the same degrade-never-gate path.
+func TestResolveSkillPacksOverride(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureTree(t, root, allContentPacks())
+
+	// Override replaces content-writer's [blog-writing, human-voice-review, seo]
+	// with exactly the configured packs, in order.
+	packs := resolveSkillPacks(fixtureFS{root: root}, "content-writer", []string{"seo", "visual-design"})
+	want := []string{"skills/seo/SKILL.md", "skills/visual-design/SKILL.md"}
+	if len(packs) != len(want) {
+		t.Fatalf("override composed %d packs, want %d: %+v", len(packs), len(want), packs)
+	}
+	for i, w := range want {
+		if packs[i].name != w {
+			t.Fatalf("override pack %d = %q, want %q (order preserved)", i, packs[i].name, w)
+		}
+	}
+
+	// An unknown pack in the override is skipped (degrade), the known one stays.
+	packs = resolveSkillPacks(fixtureFS{root: root}, "", []string{"does-not-exist", "seo", "  "})
+	if len(packs) != 1 || packs[0].name != "skills/seo/SKILL.md" {
+		t.Fatalf("override must skip unknown/blank packs, want only seo, got %+v", packs)
+	}
+}
+
+// TestWriteSkillPacksOverrideFromAgent proves rc.SkillPacks threads into the
+// writer and overrides the format's catalog stack end to end.
+func TestWriteSkillPacksOverrideFromAgent(t *testing.T) {
+	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
+	root := t.TempDir()
+	writeFixtureTree(t, root, allContentPacks())
+	rc := blogRunContext() // OutputFormat = blog → catalog content-writer stack
+	rc.SkillPacks = []string{"visual-design"}
+	w := &Writer{FS: fixtureFS{root: root}, Generate: gen, Now: func() time.Time { return fixedNow }}
+	if _, err := w.Write(context.Background(), rc, teleprompterSample()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if !strings.Contains(last.System, "VISUALDESIGN_MARKER") {
+		t.Fatalf("agent skillPacks override did not load visual-design:\n%s", last.System)
+	}
+	if strings.Contains(last.System, "BLOGWRITING_MARKER") || strings.Contains(last.System, "SEO_MARKER") {
+		t.Fatalf("catalog content-writer stack leaked despite agent skillPacks override:\n%s", last.System)
 	}
 }
 

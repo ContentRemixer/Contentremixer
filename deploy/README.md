@@ -56,6 +56,14 @@ kubectl -n contentremixer create secret generic github-pat \
   --from-literal=token="$GITHUB_PAT"
 kubectl -n contentremixer create secret generic github-webhook \
   --from-literal=hmac="$GITHUB_WEBHOOK_SECRET"
+# GitHub App auth (ISI-7836) — OPTIONAL alternative to per-repo PATs. When the
+# github-app Secret exists, a ReferenceRepo may omit spec.tokenRef and the
+# operator mints a short-lived installation token per delivery (onboard a repo =
+# install the App, no PAT, no manual webhook). The App's webhook secret MUST
+# equal github-webhook/hmac above. See deploy/secrets/github-app.example.yaml.
+kubectl -n contentremixer create secret generic github-app \
+  --from-literal=app-id="$GITHUB_APP_ID" \
+  --from-file=private-key="$GITHUB_APP_PRIVATE_KEY_PEM"
 # Per-model keys — one per ModelProfile.spec.apiKeyRef (subtask C):
 kubectl -n contentremixer create secret generic openai-apikey \
   --from-literal=key="$OPENAI_API_KEY"

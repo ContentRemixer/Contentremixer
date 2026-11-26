@@ -185,12 +185,114 @@ test.describe("Admin console", () => {
     );
     await page.goto("/admin");
     await page.getByRole("tab", { name: "Agents" }).click();
-    await expect(page.getByText("The default specialists the content pipeline runs.", { exact: false })).toBeVisible();
+    await expect(page.getByText("The specialists the content pipeline runs.", { exact: false })).toBeVisible();
     // "architect"/"graphic" appear in BOTH the Name and Skill-kind columns, so
     // assert on the unique Role and Actor cells to avoid a strict-mode match.
     await expect(page.getByRole("cell", { name: "architect", exact: true }).first()).toBeVisible();
     await expect(page.getByRole("cell", { name: "System Architect", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "Graphic Designer", exact: true })).toBeVisible();
     await expect(page.getByRole("cell", { name: "media", exact: true })).toBeVisible();
+  });
+
+  // ISI-7803: "add extra agents" — the bespoke create form POSTs /v1/agents with
+  // the skill-kind/actor Selects and the skillPacks chips. spec.default is never
+  // set (new agents are non-default).
+  test("Admin adds an extra agent via the create form", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({
+        session: ADMIN,
+        agents: [],
+        models: [{ metadata: { name: "glm-cheap" }, spec: { litellmName: "glm-cheap" } }],
+      }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Agents" }).click();
+
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    // Match the dialog heading specifically — the helper text "New agents are
+    // always non-default…" also contains the substring "New agent".
+    await expect(page.getByRole("heading", { name: "New agent" })).toBeVisible();
+    await page.getByPlaceholder("coding-fast").fill("coding-fast");
+    await page.getByPlaceholder("Coding Specialist (fast)").fill("Coding Specialist (fast)");
+    // Add a skill pack chip via free text (the chip exposes an accessible
+    // "Remove skill pack <name>" button we can assert on without the × noise).
+    await page.getByPlaceholder("add a pack, e.g. concise").fill("concise");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Remove skill pack concise" })).toBeVisible();
+
+    const postReq = page.waitForRequest(
+      (r) => r.method() === "POST" && /\/v1\/agents$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const body = (await postReq).postDataJSON();
+
+    expect(body.metadata.name).toBe("coding-fast");
+    expect(body.spec.role).toBe("Coding Specialist (fast)");
+    expect(body.spec.skillKind).toBe("coding"); // the default Select value
+    expect(body.spec.skillPacks).toEqual(["concise"]);
+    expect(body.spec.default).toBeUndefined();
+  });
+
+  // ISI-7803: "modify skills" — the per-row Skills… editor GETs the one Agent and
+  // PUTs the round-tripped object with ONLY spec.skillPacks changed; every other
+  // field (role, skillKind, resourceVersion) is preserved untouched.
+  test("Admin edits an agent's skill packs and the PUT preserves other fields", async ({ page }) => {
+    const agent = {
+      metadata: { name: "content-writer", resourceVersion: "7" },
+      spec: {
+        role: "Content Writer",
+        skillKind: "writer",
+        modelProfile: "default",
+        actorTemplate: "content",
+        skillPacks: ["blog-writing"],
+        default: true,
+      },
+    };
+    await installApi(page, defaults({ session: ADMIN, agents: [agent] }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Agents" }).click();
+
+    await page.getByRole("button", { name: "Skills…", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Skills — content-writer" })).toBeVisible();
+    // Existing pack chip is shown (assert via its remove button); add another.
+    await expect(page.getByRole("button", { name: "Remove skill pack blog-writing" })).toBeVisible();
+    await page.getByPlaceholder("add a pack, e.g. concise").fill("seo");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+
+    const putReq = page.waitForRequest(
+      (r) => r.method() === "PUT" && /\/v1\/agents\/content-writer$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const body = (await putReq).postDataJSON();
+
+    expect(body.spec.skillPacks).toEqual(["blog-writing", "seo"]);
+    // Untouched fields round-tripped.
+    expect(body.spec.role).toBe("Content Writer");
+    expect(body.spec.skillKind).toBe("writer");
+    expect(body.metadata.resourceVersion).toBe("7");
+  });
+
+  // ISI-7803: default rows are delete-guarded (UX affordance). A default agent's
+  // Delete is disabled; a non-default one is enabled.
+  test("default agents are delete-guarded, extra agents are deletable", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({
+        session: ADMIN,
+        agents: [
+          { metadata: { name: "architect" }, spec: { role: "System Architect", skillKind: "architect", default: true } },
+          { metadata: { name: "coding-fast" }, spec: { role: "Coding Specialist (fast)", skillKind: "coding" } },
+        ],
+      }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Agents" }).click();
+
+    const rows = page.getByRole("row");
+    const defaultRow = rows.filter({ hasText: "System Architect" });
+    const extraRow = rows.filter({ hasText: "Coding Specialist (fast)" });
+    await expect(defaultRow.getByRole("button", { name: "Delete" })).toBeDisabled();
+    await expect(extraRow.getByRole("button", { name: "Delete" })).toBeEnabled();
   });
 });

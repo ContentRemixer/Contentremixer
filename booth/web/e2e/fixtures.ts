@@ -205,6 +205,33 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
     }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
     if (p === "/v1/agents" && method === "GET") return json(route, 200, data.agents);
+    // Agent CRUD (ISI-7803): create + scoped skillPacks edit over the generic
+    // /v1/agents routes (no new backend route).
+    if (p === "/v1/agents" && method === "POST") {
+      const b = bodyOf();
+      const created = { metadata: (b.metadata as Record<string, unknown>) ?? { name: "agent" }, spec: b.spec, status: {} };
+      data.agents.push(created);
+      return json(route, 201, created);
+    }
+    const agentByName = p.match(/^\/v1\/agents\/([^/]+)$/);
+    if (agentByName) {
+      const name = decodeURIComponent(agentByName[1]);
+      const idx = data.agents.findIndex((x) => (x.metadata as { name?: string })?.name === name);
+      if (method === "GET") {
+        return idx >= 0 ? json(route, 200, data.agents[idx]) : json(route, 404, { error: "not found" });
+      }
+      if (method === "PUT") {
+        const b = bodyOf();
+        const next = { ...(idx >= 0 ? data.agents[idx] : {}), metadata: b.metadata, spec: b.spec };
+        if (idx >= 0) data.agents[idx] = next;
+        else data.agents.push(next);
+        return json(route, 200, next);
+      }
+      if (method === "DELETE") {
+        if (idx >= 0) data.agents.splice(idx, 1);
+        return json(route, 200, {});
+      }
+    }
 
     // --- DevRel persona CRUD (D5/D7) ---------------------------------------
     // POST creates the caller's persona; the server stamps owner from the

@@ -73,13 +73,29 @@ func defaultSkillForFormat(format string) string {
 // resolveSkillPacks loads every pack the skill composes, in order, from the
 // reference-repo checkout. A pack whose SKILL.md is missing, unreadable, or
 // empty is skipped (degrade, never gate). An empty skill resolves to nothing.
-func resolveSkillPacks(fs StyleFS, skill string) []loadedPack {
+//
+// override (ISI-7803) is the selected Agent.spec.skillPacks[]: when non-empty it
+// REPLACES the catalog composition for the skill, so an admin configures packs on
+// an Agent instead of editing skillComposition. The override is still resolved
+// through the same degrade-never-gate path, so an unknown pack an admin typed is
+// skipped at run time rather than failing the write (matches the CRD note that
+// unknown packs warn, they do not gate). An override given with an empty skill is
+// honoured — the packs are what was configured, independent of a skill name.
+func resolveSkillPacks(fs StyleFS, skill string, override []string) []loadedPack {
 	skill = strings.TrimSpace(skill)
-	if skill == "" {
-		return nil
+	dirs := override
+	if len(dirs) == 0 {
+		if skill == "" {
+			return nil
+		}
+		dirs = packDirsForSkill(skill)
 	}
 	var packs []loadedPack
-	for _, dir := range packDirsForSkill(skill) {
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
 		name := "skills/" + dir + "/SKILL.md"
 		b, err := fs.ReadFile(name)
 		if err != nil {

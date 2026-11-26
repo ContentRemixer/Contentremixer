@@ -33,6 +33,23 @@ spec:
             - --metrics-bind-address=:8080
             - --health-probe-bind-address=:8081
             - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+          env:
+            # GitHub App auth (ISI-7836): optional so the operator still starts
+            # PAT-only when the github-app Secret is absent. When present, the
+            # operator mints installation tokens for ReferenceRepos with no
+            # spec.tokenRef (onboard a repo = install the App, no PAT).
+            - name: GITHUB_APP_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: app-id
+                  optional: true
+            - name: GITHUB_APP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: github-app
+                  key: private-key
+                  optional: true
           ports:
             - name: admission
               containerPort: 9443

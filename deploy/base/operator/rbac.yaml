@@ -24,6 +24,13 @@ rules:
   - apiGroups: ["contentremixer.io"]
     resources: ["modelprofiles", "referencerepos", "devrelpersonas"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Agent / AgentTeam are admin-authored (Booth owns CRUD). The operator only
+  # needs READ: the Agent admission webhook (ISI-7803) lists agents for the
+  # at-most-one-default-per-kind check and modelprofiles for model resolution;
+  # the cached client requires list/watch to back those reads.
+  - apiGroups: ["contentremixer.io"]
+    resources: ["agents", "agentteams"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["contentremixer.io"]
     resources: ["modelprofiles/status", "referencerepos/status", "devrelpersonas/status"]
     verbs: ["get", "update", "patch"]

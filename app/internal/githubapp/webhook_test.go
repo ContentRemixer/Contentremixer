@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -67,6 +68,7 @@ func newTestServer(t *testing.T) (*Server, *recordingPoster) {
 	}
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(repo).
 		WithObjects(repo, secrets[0], secrets[1]).Build()
 
 	poster := &recordingPoster{}
@@ -172,6 +174,97 @@ func TestHandleNonIssuesEventIgnored(t *testing.T) {
 	rec := post(t, s, "ping", "", []byte(`{"zen":"hi"}`))
 	if rec.Code != http.StatusOK || poster.calls != 0 {
 		t.Errorf("ping not ignored: code=%d calls=%d", rec.Code, poster.calls)
+	}
+}
+
+// installStatus reads back the ReferenceRepo install state from the server's client.
+func installStatus(t *testing.T, s *Server) (bool, int64) {
+	t.Helper()
+	var cr contentremixerv1alpha1.ReferenceRepo
+	if err := s.Client.Get(context.Background(), types.NamespacedName{Name: "crate", Namespace: testNS}, &cr); err != nil {
+		t.Fatalf("get ReferenceRepo: %v", err)
+	}
+	return cr.Status.AppInstalled, cr.Status.InstallationID
+}
+
+func TestHandleInstallationCreatedRecordsStatus(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := []byte(`{"action":"created","installation":{"id":424242},"repositories":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+
+	rec := post(t, s, "installation", sign(body, testSecret), body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	installed, id := installStatus(t, s)
+	if !installed || id != 424242 {
+		t.Fatalf("status not recorded: installed=%v id=%d, want true/424242", installed, id)
+	}
+}
+
+func TestHandleInstallationRepositoriesAddedAndRemoved(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	add := []byte(`{"action":"added","installation":{"id":777},"repositories_added":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+	if rec := post(t, s, "installation_repositories", sign(add, testSecret), add); rec.Code != http.StatusOK {
+		t.Fatalf("added: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if installed, id := installStatus(t, s); !installed || id != 777 {
+		t.Fatalf("after add: installed=%v id=%d, want true/777", installed, id)
+	}
+
+	rm := []byte(`{"action":"removed","installation":{"id":777},"repositories_removed":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+	if rec := post(t, s, "installation_repositories", sign(rm, testSecret), rm); rec.Code != http.StatusOK {
+		t.Fatalf("removed: status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if installed, id := installStatus(t, s); installed || id != 0 {
+		t.Fatalf("after remove: installed=%v id=%d, want false/0", installed, id)
+	}
+}
+
+func TestHandleInstallationDeletedClearsStatus(t *testing.T) {
+	s, _ := newTestServer(t)
+	// First install, then delete.
+	add := []byte(`{"action":"created","installation":{"id":9},"repositories":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+	post(t, s, "installation", sign(add, testSecret), add)
+	del := []byte(`{"action":"deleted","installation":{"id":9},"repositories":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+
+	rec := post(t, s, "installation", sign(del, testSecret), del)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if installed, id := installStatus(t, s); installed || id != 0 {
+		t.Fatalf("after delete: installed=%v id=%d, want false/0", installed, id)
+	}
+}
+
+func TestHandleInstallationBadSignatureRejected(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := []byte(`{"action":"created","installation":{"id":1},"repositories":[{"full_name":"ContentRemixer/Contentremixer"}]}`)
+
+	rec := post(t, s, "installation", sign(body, "wrong-secret"), body)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if installed, _ := installStatus(t, s); installed {
+		t.Error("install state flipped on a forged (bad-signature) delivery")
+	}
+}
+
+func TestHandleInstallationUnknownRepoIgnored(t *testing.T) {
+	s, _ := newTestServer(t)
+	body := []byte(`{"action":"created","installation":{"id":5},"repositories":[{"full_name":"someone/else"}]}`)
+
+	// No matching ReferenceRepo => nothing to verify/record => quiet 200.
+	rec := post(t, s, "installation", sign(body, testSecret), body)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if installed, _ := installStatus(t, s); installed {
+		t.Error("recorded install for a repo with no ReferenceRepo")
 	}
 }
 

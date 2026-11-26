@@ -1,7 +1,11 @@
 import { Badge, Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
 import { UsersPanel } from "./admin/UsersPanel";
 import { CrPanel, type CrObject } from "./admin/CrPanel";
-import { NewReferenceRepoButton, EditReferenceRepoButton } from "./admin/ReferenceRepoForm";
+import {
+  NewReferenceRepoButton,
+  EditReferenceRepoButton,
+  InstallGithubAppButton,
+} from "./admin/ReferenceRepoForm";
 import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
 import { NewTeamButton, EditTeamButton } from "./admin/TeamForm";
 
@@ -68,6 +72,17 @@ export function AdminPage() {
               { header: "Name", cell: (o) => o.metadata.name },
               { header: "Repo", cell: (o) => str(o, "spec.repo") || "—" },
               { header: "Routes", cell: (o) => str(o, "status.routeCount") || "0" },
+              {
+                header: "GitHub App",
+                cell: (o) =>
+                  str(o, "status.appInstalled") === "true" ? (
+                    <Badge tone="success" dot>
+                      Installed
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">Not installed</Badge>
+                  ),
+              },
             ]}
             // Bespoke create/edit form (ISI-7782): a ReferenceRepo's nested
             // tokenRef / webhookSecretRef / prTarget / labelRoutes cannot be
@@ -81,7 +96,10 @@ export function AdminPage() {
               <NewReferenceRepoButton path="/v1/referencerepos" onSaved={refresh} />
             )}
             rowActions={(o, refresh) => (
-              <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
+              <div className="flex items-center gap-2">
+                <InstallGithubAppButton repo={o} />
+                <EditReferenceRepoButton repo={o} path="/v1/referencerepos" onSaved={refresh} />
+              </div>
             )}
           />
         </TabsContent>

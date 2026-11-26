@@ -178,6 +178,20 @@ type ReferenceRepoStatus struct {
 	// TokenResolved is true once the PAT Secret ref resolves successfully.
 	// +optional
 	TokenResolved bool `json:"tokenResolved,omitempty"`
+
+	// AppInstalled is true once the GitHub App's `installation` /
+	// `installation_repositories` webhook reports the App is installed on this
+	// repo (ISI-7895). Together with a tokenRef-less spec it means the no-PAT
+	// write path is ready; the Admin UI surfaces it as "App installed ✓".
+	// Flipped back to false on an uninstall/suspend delivery.
+	// +optional
+	AppInstalled bool `json:"appInstalled,omitempty"`
+
+	// InstallationID is the GitHub App installation id captured from the
+	// installation webhook, surfaced for operators and used by the no-PAT
+	// write path. 0 until the App is installed (and cleared on uninstall).
+	// +optional
+	InstallationID int64 `json:"installationId,omitempty"`
 }
 
 // +kubebuilder:object:root=true

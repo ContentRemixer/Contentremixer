@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Badge,
   Button,
   Checkbox,
   Dialog,
@@ -13,6 +14,20 @@ import {
 } from "../../ui";
 import { api, ApiError } from "../../app/api";
 import type { CrObject } from "./CrPanel";
+
+// GITHUB_APP_SLUG is the ContentRemixer org's recycler App (app-id 5934686,
+// ISI-7836). Onboarding a repo = installing this App on it, which fires the
+// `installation` webhook the operator records as status.appInstalled (ISI-7895).
+// One stable App → a constant is the single source of truth; a build-time
+// override covers a future rename without a code change. The install surface is
+// GitHub's standard App-install flow (there is no per-repo preselect URL param).
+const GITHUB_APP_SLUG =
+  (import.meta.env.VITE_GITHUB_APP_SLUG as string | undefined)?.trim() || "contentremixer-recycler";
+const INSTALL_APP_URL = `https://github.com/apps/${GITHUB_APP_SLUG}/installations/new`;
+
+function isAppInstalled(repo: CrObject): boolean {
+  return (repo.status as Record<string, unknown> | undefined)?.appInstalled === true;
+}
 import {
   RoutesFields,
   emptyRoute,
@@ -137,6 +152,34 @@ export function EditReferenceRepoButton({
         />
       )}
     </>
+  );
+}
+
+// InstallGithubAppButton is the first-class "Install GitHub App" step (ISI-7895,
+// W2 of ISI-7887). When the App is already installed (status.appInstalled, set
+// by the operator's installation webhook) it shows the confirmed state with a
+// quiet "Manage" link; otherwise it deep-links the standard App-install flow in
+// a new tab. The click-through needs no server round-trip — install happens on
+// GitHub and the webhook flips status asynchronously, so refresh() re-reads it.
+export function InstallGithubAppButton({ repo }: { repo: CrObject }) {
+  const installed = isAppInstalled(repo);
+  const open = () => window.open(INSTALL_APP_URL, "_blank", "noopener,noreferrer");
+  if (installed) {
+    return (
+      <span className="inline-flex items-center gap-2">
+        <Badge tone="success" dot>
+          App installed
+        </Badge>
+        <Button variant="ghost" size="sm" onClick={open}>
+          Manage
+        </Button>
+      </span>
+    );
+  }
+  return (
+    <Button variant="secondary" size="sm" onClick={open}>
+      Install GitHub App
+    </Button>
   );
 }
 

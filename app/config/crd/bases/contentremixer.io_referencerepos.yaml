@@ -195,6 +195,14 @@ spec:
           status:
             description: ReferenceRepoStatus defines the observed state of a ReferenceRepo.
             properties:
+              appInstalled:
+                description: |-
+                  AppInstalled is true once the GitHub App's `installation` /
+                  `installation_repositories` webhook reports the App is installed on this
+                  repo (ISI-7895). Together with a tokenRef-less spec it means the no-PAT
+                  write path is ready; the Admin UI surfaces it as "App installed ✓".
+                  Flipped back to false on an uninstall/suspend delivery.
+                type: boolean
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -251,6 +259,13 @@ spec:
                   - type
                   type: object
                 type: array
+              installationId:
+                description: |-
+                  InstallationID is the GitHub App installation id captured from the
+                  installation webhook, surfaced for operators and used by the no-PAT
+                  write path. 0 until the App is installed (and cleared on uninstall).
+                format: int64
+                type: integer
               routeCount:
                 description: RouteCount mirrors len(spec.labelRoutes) once validated.
                 type: integer

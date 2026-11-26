@@ -81,6 +81,60 @@ type issuesEvent struct {
 	} `json:"installation"`
 }
 
+// installationEvent is the minimal slice of the `installation` /
+// `installation_repositories` payloads (ISI-7895). The App delivers one of
+// these when it is installed/uninstalled on a repo; we record install state on
+// the governing ReferenceRepo so the UI can show "App installed ✓" and the
+// no-PAT write path knows the installation id.
+type installationEvent struct {
+	Action       string `json:"action"`
+	Installation struct {
+		ID json.RawMessage `json:"id"`
+	} `json:"installation"`
+	// Repositories carries the full repo set on an `installation` delivery
+	// (created/deleted/suspend/unsuspend).
+	Repositories []repoRef `json:"repositories"`
+	// RepositoriesAdded / RepositoriesRemoved carry the delta on an
+	// `installation_repositories` delivery (added/removed).
+	RepositoriesAdded   []repoRef `json:"repositories_added"`
+	RepositoriesRemoved []repoRef `json:"repositories_removed"`
+}
+
+type repoRef struct {
+	FullName string `json:"full_name"`
+}
+
+// repoState pairs a repo full_name with whether the delivery leaves the App
+// installed on it.
+type repoState struct {
+	fullName  string
+	installed bool
+}
+
+// repoStates flattens a delivery into per-repo install states. An
+// `installation` delivery sets every listed repo to installed=true unless the
+// action is deleted/suspend; an `installation_repositories` delivery marks
+// added repos installed and removed repos uninstalled (both arrays may be
+// present on one delivery).
+func (ev *installationEvent) repoStates(event string) []repoState {
+	var out []repoState
+	switch event {
+	case "installation":
+		installed := ev.Action != "deleted" && ev.Action != "suspend"
+		for _, r := range ev.Repositories {
+			out = append(out, repoState{fullName: r.FullName, installed: installed})
+		}
+	case "installation_repositories":
+		for _, r := range ev.RepositoriesAdded {
+			out = append(out, repoState{fullName: r.FullName, installed: true})
+		}
+		for _, r := range ev.RepositoriesRemoved {
+			out = append(out, repoState{fullName: r.FullName, installed: false})
+		}
+	}
+	return out
+}
+
 // NeedLeaderElection reports false: the delivery receiver serves on every
 // replica, independent of controller leader election.
 func (s *Server) NeedLeaderElection() bool { return false }
@@ -127,28 +181,42 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-// handle processes one GitHub delivery. It only acts on verified `issues`
-// deliveries whose action is labeled/opened; everything else returns 200 so
-// GitHub does not retry.
+// handle is the delivery dispatcher: it reads the raw body once (the HMAC is
+// verified over these exact bytes downstream) and routes by X-GitHub-Event.
+// `issues` drives the recycle pipeline; `installation` /
+// `installation_repositories` record App-install state on the ReferenceRepo
+// (ISI-7895); everything else returns 200 so GitHub does not retry.
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	log := logf.FromContext(ctx).WithName("github-webhook")
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if ev := r.Header.Get("X-GitHub-Event"); ev != "issues" {
-		// ping and other events: acknowledge, do nothing.
-		writeStatus(w, http.StatusOK, "ignored event %q", ev)
-		return
-	}
 
+	event := r.Header.Get("X-GitHub-Event")
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		http.Error(w, "cannot read body", http.StatusBadRequest)
 		return
 	}
+
+	switch event {
+	case "issues":
+		s.handleIssues(ctx, w, r, body)
+	case "installation", "installation_repositories":
+		s.handleInstallation(ctx, w, r, body, event)
+	default:
+		// ping and other events: acknowledge, do nothing.
+		writeStatus(w, http.StatusOK, "ignored event %q", event)
+	}
+}
+
+// handleIssues processes one `issues` delivery: it acts only on verified
+// labeled/opened actions, acks the matching ReferenceRepo's resolved routes,
+// and enqueues pipeline runs.
+func (s *Server) handleIssues(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte) {
+	log := logf.FromContext(ctx).WithName("github-webhook")
 
 	var ev issuesEvent
 	if err := json.Unmarshal(body, &ev); err != nil {
@@ -243,6 +311,84 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("acked recycle issue", "repo", repoCR.Spec.Repo, "issue", ev.Issue.Number, "routes", len(matched), "ignored", len(unmapped))
 	writeStatus(w, http.StatusOK, "acked: %d route(s), %d ignored", len(matched), len(unmapped))
+}
+
+// handleInstallation records App-install state (ISI-7895) from an
+// `installation` / `installation_repositories` delivery onto every governing
+// ReferenceRepo. The unverified repo names only select which CR/secret verifies
+// the signature; status is written only after the per-repo HMAC passes (the
+// App's webhook secret is set to the same value as each repo's
+// webhookSecretRef, so the existing per-repo secret verifies App-level
+// deliveries too). Always 200s unless a matched repo's signature fails, so a
+// forged event cannot flip install state but an org-wide install on repos we
+// do not govern is silently ignored.
+func (s *Server) handleInstallation(ctx context.Context, w http.ResponseWriter, r *http.Request, body []byte, event string) {
+	log := logf.FromContext(ctx).WithName("github-webhook")
+
+	var ev installationEvent
+	if err := json.Unmarshal(body, &ev); err != nil {
+		http.Error(w, "bad payload", http.StatusBadRequest)
+		return
+	}
+	installationID := appauth.ParseInstallationID(ev.Installation.ID)
+	states := ev.repoStates(event)
+	if len(states) == 0 {
+		writeStatus(w, http.StatusOK, "no repositories in %s delivery", event)
+		return
+	}
+
+	sig := r.Header.Get("X-Hub-Signature-256")
+	var matched, verified, updated int
+	for _, st := range states {
+		repoCR, err := s.findReferenceRepo(ctx, st.fullName)
+		if err != nil {
+			log.Error(err, "listing ReferenceRepos", "repo", st.fullName)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if repoCR == nil {
+			continue // no CR governs this repo: nothing to record.
+		}
+		matched++
+
+		secret, err := s.secretValue(ctx, repoCR.Namespace, repoCR.Spec.WebhookSecretRef)
+		if err != nil {
+			log.Error(err, "resolving webhook secret", "repo", st.fullName)
+			continue
+		}
+		if !validSignature(sig, body, secret) {
+			log.Info("rejected installation delivery: bad signature", "repo", st.fullName)
+			continue
+		}
+		verified++
+
+		wantID := int64(0)
+		if st.installed {
+			wantID = installationID
+		}
+		if repoCR.Status.AppInstalled == st.installed && repoCR.Status.InstallationID == wantID {
+			continue // already in the desired state: no-op patch avoided.
+		}
+		patch := client.MergeFrom(repoCR.DeepCopy())
+		repoCR.Status.AppInstalled = st.installed
+		repoCR.Status.InstallationID = wantID
+		if err := s.Client.Status().Patch(ctx, repoCR, patch); err != nil {
+			log.Error(err, "patching ReferenceRepo install status", "repo", st.fullName)
+			http.Error(w, "failed to record install state", http.StatusInternalServerError)
+			return
+		}
+		updated++
+		log.Info("recorded App install state", "repo", repoCR.Spec.Repo, "installed", st.installed, "installationID", wantID)
+	}
+
+	// At least one governed repo was in the delivery but none verified: the
+	// secret is wrong or the delivery is forged. Answer 401 so GitHub surfaces
+	// the failure instead of silently dropping a real install.
+	if matched > 0 && verified == 0 {
+		http.Error(w, "signature verification failed", http.StatusUnauthorized)
+		return
+	}
+	writeStatus(w, http.StatusOK, "installation %s: %d matched, %d updated", event, matched, updated)
 }
 
 // resolveToken returns the write credential for a delivery. A ReferenceRepo

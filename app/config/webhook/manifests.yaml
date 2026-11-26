@@ -14,6 +14,15 @@ webhooks:
   failurePolicy: Fail
   name: vagent-v1alpha1.contentremixer.io
   rules:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-contentremixer-io-v1alpha1-agentteam
+  failurePolicy: Fail
+  name: vagentteam-v1alpha1.contentremixer.io
+  rules:
   - apiGroups:
     - contentremixer.io
     apiVersions:

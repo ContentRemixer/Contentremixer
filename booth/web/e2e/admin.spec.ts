@@ -296,3 +296,141 @@ test.describe("Admin console", () => {
     await expect(extraRow.getByRole("button", { name: "Delete" })).toBeEnabled();
   });
 });
+
+// ISI-7804: the Orchestration tab — the data-driven handoff/orchestration
+// editor over /v1/agentteams (team list, per-row "Team…" scoped editor with the
+// GET→swap→PUT discipline, live cycle/orphan validation, seeded default row).
+const teamFixture = () => ({
+  metadata: { name: "tutorial-default", resourceVersion: "9" },
+  spec: {
+    default: true,
+    entry: "architect",
+    nodes: [
+      { id: "architect", agentRef: "architect" },
+      { id: "research", agentRef: "research" },
+      { id: "coding", agentRef: "coding" },
+      { id: "observability", agentRef: "observability" },
+      { id: "graphic", agentRef: "graphic" },
+    ],
+    edges: [
+      { from: "architect", to: "research" },
+      { from: "architect", to: "coding" },
+      { from: "architect", to: "observability" },
+      { from: "architect", to: "graphic" },
+    ],
+  },
+});
+
+const linearTeamFixture = () => ({
+  metadata: { name: "content-default", resourceVersion: "3" },
+  spec: { entry: "writer", nodes: [{ id: "writer", agentRef: "content-writer" }] },
+});
+
+const seededAgents = () => [
+  { metadata: { name: "architect" }, spec: { role: "System Architect", skillKind: "architect" } },
+  { metadata: { name: "research" }, spec: { role: "Researcher", skillKind: "research" } },
+  { metadata: { name: "coding" }, spec: { role: "Coding Specialist", skillKind: "coding" } },
+  { metadata: { name: "observability" }, spec: { role: "Observability Specialist", skillKind: "observability" } },
+  { metadata: { name: "graphic" }, spec: { role: "Graphic Designer", skillKind: "graphic" } },
+  { metadata: { name: "content-writer" }, spec: { role: "Content Writer", skillKind: "writer" } },
+];
+
+test.describe("Orchestration tab (ISI-7804)", () => {
+  test("switching to the Orchestration tab lists the seeded teams", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agentteams: [teamFixture(), linearTeamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+    await expect(page.getByText("The hand-off graphs the content pipeline runs.", { exact: false })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "tutorial-default", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "content-default", exact: true })).toBeVisible();
+    // Entry column + the Default badge on the seeded default row.
+    await expect(page.getByRole("cell", { name: "architect", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Default", exact: true })).toBeVisible();
+  });
+
+  // The scoped editor round-trips the full object: only spec.entry/nodes/edges
+  // change; spec.default and every other field are preserved untouched.
+  test("Admin edits a team's handoffs and the PUT preserves other fields", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [teamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "Team…", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Team — tutorial-default" })).toBeVisible();
+
+    // Add handoff research → coding on the appended (5th) row.
+    await page.getByRole("button", { name: "Add handoff" }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 from" }).click();
+    await page.getByRole("option", { name: "research", exact: true }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 to" }).click();
+    await page.getByRole("option", { name: "coding", exact: true }).click();
+
+    const putReq = page.waitForRequest(
+      (r) => r.method() === "PUT" && r.url().endsWith("/v1/agentteams/tutorial-default"),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const body = (await putReq).postDataJSON();
+
+    expect(body.spec.entry).toBe("architect"); // preserved
+    expect(body.spec.default).toBe(true); // preserved — the editor never touches it
+    expect(body.spec.nodes).toHaveLength(5); // preserved
+    expect(body.spec.edges).toContainEqual({ from: "research", to: "coding" }); // the edit
+  });
+
+  // UX spec §3.2 T6: a cycle is flagged live (banner + disabled Save) BEFORE
+  // any request is sent — the server webhook is the authoritative backstop.
+  test("the team editor blocks a cycle before submit", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [teamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "Team…", exact: true }).click();
+    await page.getByRole("button", { name: "Add handoff" }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 from" }).click();
+    await page.getByRole("option", { name: "coding", exact: true }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 to" }).click();
+    await page.getByRole("option", { name: "architect", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("This creates a cycle");
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  });
+
+  // UX spec §4 F3: New team → editor → POST /v1/agentteams (never sets default).
+  test("Admin creates a new team via the editor", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "New team", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "New team" })).toBeVisible();
+    await page.getByPlaceholder("tutorial-fast").fill("tutorial-fast");
+    await page.getByRole("textbox", { name: "Node 1 id" }).fill("plan");
+    await page.getByRole("combobox", { name: "Agent for node 1" }).click();
+    await page.getByRole("option", { name: "System Architect — architect" }).click();
+    await page.getByRole("combobox", { name: "Entry node" }).click();
+    await page.getByRole("option", { name: "plan", exact: true }).click();
+
+    const postReq = page.waitForRequest(
+      (r) => r.method() === "POST" && r.url().endsWith("/v1/agentteams"),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const body = (await postReq).postDataJSON();
+
+    expect(body.metadata.name).toBe("tutorial-fast");
+    expect(body.spec.entry).toBe("plan");
+    expect(body.spec.nodes).toEqual([{ id: "plan", agentRef: "architect" }]);
+    expect(body.spec.default).toBeUndefined();
+  });
+});

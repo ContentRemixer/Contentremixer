@@ -44,6 +44,8 @@ export interface MockData {
   models: Record<string, unknown>[];
   /** default Agent CRs for the read-only Agents tab (ISI-7802). */
   agents: Record<string, unknown>[];
+  /** AgentTeam CRs for the Orchestration tab (ISI-7804). */
+  agentteams: Record<string, unknown>[];
   // --- DevRel onboarding + persona management (D6/D7, ISI-7361/7362) -------
   /** synthesized style profiles keyed by persona name; GET → 404 when absent (D3). */
   styleProfiles: Record<string, Record<string, unknown>>;
@@ -71,6 +73,7 @@ export function defaults(overrides: Partial<MockData> = {}): MockData {
     repos: [],
     models: [],
     agents: [],
+    agentteams: [],
     styleProfiles: {},
     contentTest: null,
     promote: null,
@@ -204,6 +207,33 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
       }
     }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
+    if (p === "/v1/agentteams" && method === "GET") return json(route, 200, data.agentteams);
+    // AgentTeam CRUD (ISI-7804): create + scoped team edit over the generic
+    // /v1/agentteams routes (no new backend route).
+    if (p === "/v1/agentteams" && method === "POST") {
+      const b = bodyOf();
+      const created = { metadata: (b.metadata as Record<string, unknown>) ?? { name: "team" }, spec: b.spec, status: {} };
+      data.agentteams.push(created);
+      return json(route, 201, created);
+    }
+    const teamName = p.startsWith("/v1/agentteams/") ? decodeURIComponent(p.slice("/v1/agentteams/".length)) : null;
+    if (teamName) {
+      const idx = data.agentteams.findIndex((x) => (x.metadata as { name?: string })?.name === teamName);
+      if (method === "GET") {
+        return idx >= 0 ? json(route, 200, data.agentteams[idx]) : json(route, 404, { error: "not found" });
+      }
+      if (method === "PUT") {
+        const b = bodyOf();
+        const next = { ...(idx >= 0 ? data.agentteams[idx] : {}), metadata: b.metadata, spec: b.spec };
+        if (idx >= 0) data.agentteams[idx] = next;
+        else data.agentteams.push(next);
+        return json(route, 200, next);
+      }
+      if (method === "DELETE") {
+        if (idx >= 0) data.agentteams.splice(idx, 1);
+        return json(route, 200, {});
+      }
+    }
     if (p === "/v1/agents" && method === "GET") return json(route, 200, data.agents);
     // Agent CRUD (ISI-7803): create + scoped skillPacks edit over the generic
     // /v1/agents routes (no new backend route).

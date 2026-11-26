@@ -3,6 +3,7 @@ import { UsersPanel } from "./admin/UsersPanel";
 import { CrPanel, type CrObject } from "./admin/CrPanel";
 import { NewReferenceRepoButton, EditReferenceRepoButton } from "./admin/ReferenceRepoForm";
 import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
+import { NewTeamButton, EditTeamButton } from "./admin/TeamForm";
 
 // AdminPage is the C1–C4 admin console (W6 / ISI-7213). Four Admin-only surfaces:
 // Users & roles (brand-new CRUD API), plus Personas / Reference repos / Model
@@ -26,6 +27,7 @@ export function AdminPage() {
           <TabsTrigger value="repos">Reference repos</TabsTrigger>
           <TabsTrigger value="models">Model profiles</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
+          <TabsTrigger value="orchestration">Orchestration</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users">
@@ -151,6 +153,37 @@ export function AdminPage() {
             deleteGuard={(o) =>
               str(o, "spec.default") === "true"
                 ? "Default agents are seeded and cannot be deleted. Add an extra agent of the same skill kind instead."
+                : null
+            }
+          />
+        </TabsContent>
+        <TabsContent value="orchestration">
+          <p className="mb-3 text-sm text-text-muted">
+            The <Badge tone="success">Default</Badge> team runs when a tutorial names no team. Exactly one team may
+            be the default. Edit a team to define its nodes and hand-offs; edits are picked up live.
+          </p>
+          <CrPanel
+            path="/v1/agentteams"
+            title="Orchestration"
+            subtitle="The hand-off graphs the content pipeline runs. Admin-only."
+            columns={[
+              { header: "Name", cell: (o) => o.metadata.name },
+              { header: "Entry", cell: (o) => str(o, "spec.entry") || "—" },
+              { header: "Nodes", cell: (o) => String(((o.spec?.nodes as unknown[]) ?? []).length) },
+              { header: "Handoffs", cell: (o) => String(((o.spec?.edges as unknown[]) ?? []).length) },
+              {
+                header: "Default",
+                cell: (o) =>
+                  str(o, "spec.default") === "true" ? <Badge tone="success">Default</Badge> : "",
+              },
+            ]}
+            customCreate={(refresh) => <NewTeamButton path="/v1/agentteams" onSaved={refresh} />}
+            rowActions={(o, refresh) => (
+              <EditTeamButton team={o} path="/v1/agentteams" onSaved={refresh} />
+            )}
+            deleteGuard={(o) =>
+              str(o, "spec.default") === "true"
+                ? "Default teams are seeded and cannot be deleted. Create another team and make it the default instead."
                 : null
             }
           />

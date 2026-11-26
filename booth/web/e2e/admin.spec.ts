@@ -215,9 +215,12 @@ test.describe("Admin console", () => {
     await expect(page.getByRole("heading", { name: "New agent" })).toBeVisible();
     await page.getByPlaceholder("coding-fast").fill("coding-fast");
     await page.getByPlaceholder("Coding Specialist (fast)").fill("Coding Specialist (fast)");
-    // Add a skill pack chip via free text (the chip exposes an accessible
-    // "Remove skill pack <name>" button we can assert on without the × noise).
-    await page.getByPlaceholder("add a pack, e.g. concise").fill("concise");
+    // Add a skill pack chip via the redesigned picker (ISI-7858). This fixture
+    // ships no catalog, so the picker falls back to the add-by-name escape hatch.
+    // The chip exposes an accessible "Remove skill pack <name>" button we can
+    // assert on without the × noise.
+    await page.getByRole("button", { name: "+ Add packs" }).click();
+    await page.getByLabel("Add pack by name").fill("concise");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByRole("button", { name: "Remove skill pack concise" })).toBeVisible();
 

@@ -183,6 +183,52 @@ export function InstallGithubAppButton({ repo }: { repo: CrObject }) {
   );
 }
 
+// SeedTemplateIssuesButton seeds the versioned content-template pack into the
+// repo as GitHub issues (ISI-7896, W3 of ISI-7887). The booth endpoint is
+// idempotent — templates already present are skipped — so the action is safe to
+// click more than once; the toast reports the created/skipped split. Requires a
+// GitHub token (spec.tokenRef) on the repo; the server returns 412 otherwise.
+type SeedResult = {
+  created: { id: string; number: number; url: string }[];
+  skipped: string[];
+};
+
+export function SeedTemplateIssuesButton({ repo }: { repo: CrObject }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const name = repo.metadata.name;
+
+  async function seed() {
+    setBusy(true);
+    try {
+      const res = await api.post<SeedResult>(
+        `/v1/referencerepos/${encodeURIComponent(name)}/seed-issues`,
+      );
+      const created = res.created?.length ?? 0;
+      const skipped = res.skipped?.length ?? 0;
+      toast({
+        title: created > 0 ? `Seeded ${created} template issue${created === 1 ? "" : "s"}` : "Template issues already present",
+        description: skipped > 0 ? `${skipped} already existed and were skipped.` : undefined,
+        tone: "success",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not seed template issues",
+        description: e instanceof ApiError ? e.message : e instanceof Error ? e.message : "request failed",
+        tone: "warning",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button variant="ghost" size="sm" onClick={seed} loading={busy}>
+      Seed template issues
+    </Button>
+  );
+}
+
 function ReferenceRepoDialog({
   mode,
   repo,

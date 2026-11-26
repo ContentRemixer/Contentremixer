@@ -358,7 +358,17 @@ images:
     # pgvector mirror, substrate actor adapter). booth-image-publish.yml
     # succeeded for this sha. Full ingestion wizard tail (login -> scrape ->
     # accept -> synthesize) re-verified green live on this image.
-    newTag: sha-f3a372a6ec1c
+    #
+    # ISI-7853 (2026-11-26): bumped f3a372a6ec1c -> dbf11cd41614 (main HEAD,
+    # PR #129 merge) to ship the admin-portal agent-management feature for board
+    # testing: ISI-7802 (Agent/AgentTeam read model + boot seeder + read-only
+    # Agents tab), ISI-7803 (Agent CRUD + skillPacks), ISI-7804 (AgentTeam engine
+    # loader + Orchestration tab), ISI-7820/7821 (AgentRequest + agent comments).
+    # Booth seeds the six default Agents + two teams on boot (seed.Defaults,
+    # best-effort create-if-absent). Requires the agents/agentteams CRDs + the
+    # operator bump below (webhooks are failurePolicy: Fail). booth-image-
+    # publish.yml succeeded for this sha.
+    newTag: sha-dbf11cd41614
   - name: ghcr.io/contentremixer/operator
     # Redirect to the dedicated image-only package. ISI-7121 moved publishing
     # from the legacy `operator` package to `content-operator`; the legacy pin
@@ -382,4 +392,12 @@ images:
     # operator with main HEAD f3a372a (carries the config-gated SubstrateStrategy
     # media flip, ISI-7397 — a no-op until SUBSTRATE_ENDPOINT/MEDIA_ACTOR_IMAGE
     # are set, tracked ISI-7522). image-publish.yml succeeded for this sha.
-    newTag: sha-f3a372a6ec1c
+    #
+    # ISI-7853 (2026-11-26): bumped f3a372a6ec1c -> dbf11cd41614 (main HEAD) in
+    # lockstep with booth above. The operator serves the NEW agent/agentteam
+    # admission webhooks (app/internal/webhook/agent_webhook.go, ISI-7803/7804);
+    # the webhook-configuration applied by base has failurePolicy: Fail, so
+    # f3a372a (no agent webhook handler) would 404 and fail-close every Agent CR
+    # create — including the booth boot seeder. This bump is REQUIRED, not
+    # optional, for the agents to seed. image-publish.yml succeeded for this sha.
+    newTag: sha-dbf11cd41614

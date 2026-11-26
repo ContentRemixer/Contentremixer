@@ -14,6 +14,17 @@ webhooks:
   failurePolicy: Fail
   name: vagent-v1alpha1.contentremixer.io
   rules:
+  - apiGroups:
+    - contentremixer.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - agents
+  sideEffects: None
+- admissionReviewVersions:
   - v1
   clientConfig:
     service:
@@ -31,7 +42,7 @@ webhooks:
     - CREATE
     - UPDATE
     resources:
-    - agents
+    - agentteams
   sideEffects: None
 - admissionReviewVersions:
   - v1

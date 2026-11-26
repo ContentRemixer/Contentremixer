@@ -33,13 +33,13 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
-	"github.com/ContentRemixer/Contentremixer/booth/internal/teamengine"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/seed"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/teamengine"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 )
 

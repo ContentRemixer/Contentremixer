@@ -74,7 +74,7 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         resources: ["agents"]
         scope: Namespaced
-{{- end }}
+
 
   - admissionReviewVersions: ["v1"]
     clientConfig:

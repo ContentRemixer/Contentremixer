@@ -210,7 +210,9 @@ test.describe("Admin console", () => {
     await page.getByRole("tab", { name: "Agents" }).click();
 
     await page.getByRole("button", { name: "New", exact: true }).click();
-    await expect(page.getByText("New agent")).toBeVisible();
+    // Match the dialog heading specifically — the helper text "New agents are
+    // always non-default…" also contains the substring "New agent".
+    await expect(page.getByRole("heading", { name: "New agent" })).toBeVisible();
     await page.getByPlaceholder("coding-fast").fill("coding-fast");
     await page.getByPlaceholder("Coding Specialist (fast)").fill("Coding Specialist (fast)");
     // Add a skill pack chip via free text (the chip exposes an accessible
@@ -252,7 +254,7 @@ test.describe("Admin console", () => {
     await page.getByRole("tab", { name: "Agents" }).click();
 
     await page.getByRole("button", { name: "Skills…", exact: true }).click();
-    await expect(page.getByText("Skills — content-writer")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Skills — content-writer" })).toBeVisible();
     // Existing pack chip is shown (assert via its remove button); add another.
     await expect(page.getByRole("button", { name: "Remove skill pack blog-writing" })).toBeVisible();
     await page.getByPlaceholder("add a pack, e.g. concise").fill("seo");

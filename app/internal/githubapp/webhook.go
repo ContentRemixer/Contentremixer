@@ -337,15 +337,24 @@ func (s *Server) handleInstallation(ctx context.Context, w http.ResponseWriter, 
 		return
 	}
 
+	// One List for the whole delivery, indexed by repo: an org-wide install
+	// names many repos, so listing once beats a List per repo.
+	var list contentremixerv1alpha1.ReferenceRepoList
+	if err := s.Client.List(ctx, &list); err != nil {
+		log.Error(err, "listing ReferenceRepos")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	byRepo := make(map[string]*contentremixerv1alpha1.ReferenceRepo, len(list.Items))
+	for i := range list.Items {
+		byRepo[strings.ToLower(list.Items[i].Spec.Repo)] = &list.Items[i]
+	}
+
 	sig := r.Header.Get("X-Hub-Signature-256")
 	var matched, verified, updated int
+	var internalErr bool
 	for _, st := range states {
-		repoCR, err := s.findReferenceRepo(ctx, st.fullName)
-		if err != nil {
-			log.Error(err, "listing ReferenceRepos", "repo", st.fullName)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+		repoCR := byRepo[strings.ToLower(st.fullName)]
 		if repoCR == nil {
 			continue // no CR governs this repo: nothing to record.
 		}
@@ -353,7 +362,10 @@ func (s *Server) handleInstallation(ctx context.Context, w http.ResponseWriter, 
 
 		secret, err := s.secretValue(ctx, repoCR.Namespace, repoCR.Spec.WebhookSecretRef)
 		if err != nil {
+			// A misconfigured secret ref is our internal error, not a bad
+			// signature — tracked so the response reflects it below.
 			log.Error(err, "resolving webhook secret", "repo", st.fullName)
+			internalErr = true
 			continue
 		}
 		if !validSignature(sig, body, secret) {
@@ -381,14 +393,20 @@ func (s *Server) handleInstallation(ctx context.Context, w http.ResponseWriter, 
 		log.Info("recorded App install state", "repo", repoCR.Spec.Repo, "installed", st.installed, "installationID", wantID)
 	}
 
-	// At least one governed repo was in the delivery but none verified: the
-	// secret is wrong or the delivery is forged. Answer 401 so GitHub surfaces
-	// the failure instead of silently dropping a real install.
-	if matched > 0 && verified == 0 {
+	switch {
+	case internalErr && updated == 0:
+		// A governed repo's secret failed to resolve and nothing else
+		// succeeded: surface our misconfig as 500 (GitHub retries), matching
+		// the issues path, rather than masking it as a signature failure.
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	case matched > 0 && verified == 0:
+		// Governed repos were in the delivery but none verified: the secret is
+		// wrong or the delivery is forged. 401 so GitHub surfaces the failure
+		// instead of silently dropping a real install.
 		http.Error(w, "signature verification failed", http.StatusUnauthorized)
-		return
+	default:
+		writeStatus(w, http.StatusOK, "installation %s: %d matched, %d updated", event, matched, updated)
 	}
-	writeStatus(w, http.StatusOK, "installation %s: %d matched, %d updated", event, matched, updated)
 }
 
 // resolveToken returns the write credential for a delivery. A ReferenceRepo

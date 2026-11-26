@@ -14,6 +14,14 @@ import {
 } from "../../ui";
 import { api, ApiError } from "../../app/api";
 import type { CrObject } from "./CrPanel";
+import {
+  RoutesFields,
+  emptyRoute,
+  routesSpec,
+  toRoutes,
+  validateRoutes,
+  type Route,
+} from "./LabelRoutesEditor";
 
 // GITHUB_APP_SLUG is the ContentRemixer org's recycler App (app-id 5934686,
 // ISI-7836). Onboarding a repo = installing this App on it, which fires the
@@ -28,14 +36,6 @@ const INSTALL_APP_URL = `https://github.com/apps/${GITHUB_APP_SLUG}/installation
 function isAppInstalled(repo: CrObject): boolean {
   return (repo.status as Record<string, unknown> | undefined)?.appInstalled === true;
 }
-import {
-  RoutesFields,
-  emptyRoute,
-  routesSpec,
-  toRoutes,
-  validateRoutes,
-  type Route,
-} from "./LabelRoutesEditor";
 
 // Bespoke create/edit form for ReferenceRepo (ISI-7782, W1 of ISI-7776). The
 // generic CrPanel flat-create cannot express the nested tokenRef /

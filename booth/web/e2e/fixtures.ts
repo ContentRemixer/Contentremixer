@@ -46,6 +46,8 @@ export interface MockData {
   agents: Record<string, unknown>[];
   /** AgentTeam CRs for the Orchestration tab (ISI-7804). */
   agentteams: Record<string, unknown>[];
+  /** GET /v1/skillpacks response (ISI-7856 W1): catalog + default composition. */
+  skillpacks: { packs: Record<string, unknown>[]; defaults: Record<string, string[]>; dynamicFallback: boolean };
   // --- DevRel onboarding + persona management (D6/D7, ISI-7361/7362) -------
   /** synthesized style profiles keyed by persona name; GET → 404 when absent (D3). */
   styleProfiles: Record<string, Record<string, unknown>>;
@@ -74,6 +76,7 @@ export function defaults(overrides: Partial<MockData> = {}): MockData {
     models: [],
     agents: [],
     agentteams: [],
+    skillpacks: { packs: [], defaults: {}, dynamicFallback: true },
     styleProfiles: {},
     contentTest: null,
     promote: null,
@@ -207,6 +210,10 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
       }
     }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
+    // ISI-7856 W1: the skill-pack catalog + default composition the "Skills…"
+    // editor reads on open (ISI-7858). Admin-gated server-side; here it is a
+    // pure read from the fixture.
+    if (p === "/v1/skillpacks" && method === "GET") return json(route, 200, data.skillpacks);
     if (p === "/v1/agentteams" && method === "GET") return json(route, 200, data.agentteams);
     // AgentTeam CRUD (ISI-7804): create + scoped team edit over the generic
     // /v1/agentteams routes (no new backend route).

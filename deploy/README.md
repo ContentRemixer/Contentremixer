@@ -60,10 +60,18 @@ kubectl -n contentremixer create secret generic github-webhook \
 # github-app Secret exists, a ReferenceRepo may omit spec.tokenRef and the
 # operator mints a short-lived installation token per delivery (onboard a repo =
 # install the App, no PAT, no manual webhook). The App's webhook secret MUST
-# equal github-webhook/hmac above. See deploy/secrets/github-app.example.yaml.
+# equal github-webhook/hmac above. Full owner walkthrough (register / App ID /
+# download key / install) is in deploy/secrets/github-app.example.yaml.
+# Quick UI pointers (GitHub 2026): App ID = General tab > About ("App ID: N",
+# NOT the Client ID). Private key = Credentials tab > Key pairs > New key — the
+# .pem auto-downloads once, no re-download later; the "Client secret" there is
+# OAuth-only, unused. Install = Install App > Only select repositories.
 kubectl -n contentremixer create secret generic github-app \
   --from-literal=app-id="$GITHUB_APP_ID" \
   --from-file=private-key="$GITHUB_APP_PRIVATE_KEY_PEM"
+# After creating/updating this Secret, roll the operator so it projects the env
+# and enables the minter (startup logs "GitHub App auth enabled"):
+#   kubectl -n contentremixer rollout restart deployment/contentremixer-operator
 # Per-model keys — one per ModelProfile.spec.apiKeyRef (subtask C):
 kubectl -n contentremixer create secret generic openai-apikey \
   --from-literal=key="$OPENAI_API_KEY"

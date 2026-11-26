@@ -215,9 +215,12 @@ test.describe("Admin console", () => {
     await expect(page.getByRole("heading", { name: "New agent" })).toBeVisible();
     await page.getByPlaceholder("coding-fast").fill("coding-fast");
     await page.getByPlaceholder("Coding Specialist (fast)").fill("Coding Specialist (fast)");
-    // Add a skill pack chip via free text (the chip exposes an accessible
-    // "Remove skill pack <name>" button we can assert on without the × noise).
-    await page.getByPlaceholder("add a pack, e.g. concise").fill("concise");
+    // Add a skill pack chip via the redesigned picker (ISI-7858). This fixture
+    // ships no catalog, so the picker falls back to the add-by-name escape hatch.
+    // The chip exposes an accessible "Remove skill pack <name>" button we can
+    // assert on without the × noise.
+    await page.getByRole("button", { name: "+ Add packs" }).click();
+    await page.getByLabel("Add pack by name").fill("concise");
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByRole("button", { name: "Remove skill pack concise" })).toBeVisible();
 
@@ -234,9 +237,22 @@ test.describe("Admin console", () => {
     expect(body.spec.default).toBeUndefined();
   });
 
-  // ISI-7803: "modify skills" — the per-row Skills… editor GETs the one Agent and
-  // PUTs the round-tripped object with ONLY spec.skillPacks changed; every other
-  // field (role, skillKind, resourceVersion) is preserved untouched.
+  // ISI-7856/7858: the catalog + default composition the Skills… editor reads.
+  const skillCatalog = {
+    packs: [
+      { name: "blog-writing", title: "Blog writing", description: "Long-form blog structure & flow." },
+      { name: "human-voice-review", title: "Human-voice review", description: "Strip AI tells; natural voice." },
+      { name: "seo", title: "SEO", description: "Keyword, metadata & structure discipline." },
+      { name: "concise", title: "Concise", description: "Tighten prose; cut filler." },
+    ],
+    defaults: { "content-writer": ["blog-writing", "human-voice-review", "seo"] },
+    dynamicFallback: true,
+  };
+
+  // ISI-7803/7858: "modify skills" — the per-row Skills… editor GETs the one Agent
+  // and PUTs the round-tripped object with ONLY spec.skillPacks changed; every
+  // other field (role, skillKind, resourceVersion) is preserved untouched. The
+  // added pack is picked from the real W1 catalog (ISI-7856), not a blind field.
   test("Admin edits an agent's skill packs and the PUT preserves other fields", async ({ page }) => {
     const agent = {
       metadata: { name: "content-writer", resourceVersion: "7" },
@@ -249,16 +265,21 @@ test.describe("Admin console", () => {
         default: true,
       },
     };
-    await installApi(page, defaults({ session: ADMIN, agents: [agent] }));
+    await installApi(page, defaults({ session: ADMIN, agents: [agent], skillpacks: skillCatalog }));
     await page.goto("/admin");
     await page.getByRole("tab", { name: "Agents" }).click();
 
     await page.getByRole("button", { name: "Skills…", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Skills — content-writer" })).toBeVisible();
-    // Existing pack chip is shown (assert via its remove button); add another.
+    // An existing override pack means State C: defaults show struck-through +
+    // "overridden", and the replace warn banner is present.
+    await expect(page.getByText("Default skill packs (overridden)")).toBeVisible();
+    await expect(page.getByText(/Your packs replace the writer default/)).toBeVisible();
+    // Existing override chip is shown (assert via its remove button); add another
+    // from the catalog picker.
     await expect(page.getByRole("button", { name: "Remove skill pack blog-writing" })).toBeVisible();
-    await page.getByPlaceholder("add a pack, e.g. concise").fill("seo");
-    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "+ Add packs" }).click();
+    await page.getByRole("option", { name: /SEO/ }).click();
 
     const putReq = page.waitForRequest(
       (r) => r.method() === "PUT" && /\/v1\/agents\/content-writer$/.test(r.url()),
@@ -271,6 +292,37 @@ test.describe("Admin console", () => {
     expect(body.spec.role).toBe("Content Writer");
     expect(body.spec.skillKind).toBe("writer");
     expect(body.metadata.resourceVersion).toBe("7");
+  });
+
+  // ISI-7858 W3: a default agent with no override packs still shows its default
+  // composition (D1 — never "No skill packs"), and the picker offers the real
+  // catalog with descriptions. Selecting a pack flips to the replace (State C).
+  test("Skills… shows the default composition and the catalog picker", async ({ page }) => {
+    const agent = {
+      metadata: { name: "content-writer", resourceVersion: "3" },
+      spec: { role: "Content Writer", skillKind: "writer", default: true },
+    };
+    await installApi(page, defaults({ session: ADMIN, agents: [agent], skillpacks: skillCatalog }));
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Agents" }).click();
+    await page.getByRole("button", { name: "Skills…", exact: true }).click();
+
+    // D1: default composition visible, not "No skill packs".
+    await expect(page.getByText("Default skill packs", { exact: true })).toBeVisible();
+    const defaultGroup = page.getByLabel("Default skill packs from the writer skill (read-only)");
+    await expect(defaultGroup.getByText("blog-writing")).toBeVisible();
+    await expect(defaultGroup.getByText("human-voice-review")).toBeVisible();
+    await expect(page.getByText("No added packs — this agent uses its default packs.")).toBeVisible();
+    // No replace banner while there is no override.
+    await expect(page.getByText(/Your packs replace the writer default/)).toHaveCount(0);
+
+    // Picker offers the catalog with descriptions.
+    await page.getByRole("button", { name: "+ Add packs" }).click();
+    await expect(page.getByRole("listbox", { name: "Skill packs" })).toBeVisible();
+    await expect(page.getByText("Tighten prose; cut filler.")).toBeVisible();
+    // Selecting a pack flips to State C (replace banner appears).
+    await page.getByRole("option", { name: /Concise/ }).click();
+    await expect(page.getByText(/Your packs replace the writer default/)).toBeVisible();
   });
 
   // ISI-7803: default rows are delete-guarded (UX affordance). A default agent's
@@ -294,5 +346,143 @@ test.describe("Admin console", () => {
     const extraRow = rows.filter({ hasText: "Coding Specialist (fast)" });
     await expect(defaultRow.getByRole("button", { name: "Delete" })).toBeDisabled();
     await expect(extraRow.getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+});
+
+// ISI-7804: the Orchestration tab — the data-driven handoff/orchestration
+// editor over /v1/agentteams (team list, per-row "Team…" scoped editor with the
+// GET→swap→PUT discipline, live cycle/orphan validation, seeded default row).
+const teamFixture = () => ({
+  metadata: { name: "tutorial-default", resourceVersion: "9" },
+  spec: {
+    default: true,
+    entry: "architect",
+    nodes: [
+      { id: "architect", agentRef: "architect" },
+      { id: "research", agentRef: "research" },
+      { id: "coding", agentRef: "coding" },
+      { id: "observability", agentRef: "observability" },
+      { id: "graphic", agentRef: "graphic" },
+    ],
+    edges: [
+      { from: "architect", to: "research" },
+      { from: "architect", to: "coding" },
+      { from: "architect", to: "observability" },
+      { from: "architect", to: "graphic" },
+    ],
+  },
+});
+
+const linearTeamFixture = () => ({
+  metadata: { name: "content-default", resourceVersion: "3" },
+  spec: { entry: "writer", nodes: [{ id: "writer", agentRef: "content-writer" }] },
+});
+
+const seededAgents = () => [
+  { metadata: { name: "architect" }, spec: { role: "System Architect", skillKind: "architect" } },
+  { metadata: { name: "research" }, spec: { role: "Researcher", skillKind: "research" } },
+  { metadata: { name: "coding" }, spec: { role: "Coding Specialist", skillKind: "coding" } },
+  { metadata: { name: "observability" }, spec: { role: "Observability Specialist", skillKind: "observability" } },
+  { metadata: { name: "graphic" }, spec: { role: "Graphic Designer", skillKind: "graphic" } },
+  { metadata: { name: "content-writer" }, spec: { role: "Content Writer", skillKind: "writer" } },
+];
+
+test.describe("Orchestration tab (ISI-7804)", () => {
+  test("switching to the Orchestration tab lists the seeded teams", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agentteams: [teamFixture(), linearTeamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+    await expect(page.getByText("The hand-off graphs the content pipeline runs.", { exact: false })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "tutorial-default", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "content-default", exact: true })).toBeVisible();
+    // Entry column + the Default badge on the seeded default row.
+    await expect(page.getByRole("cell", { name: "architect", exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Default", exact: true })).toBeVisible();
+  });
+
+  // The scoped editor round-trips the full object: only spec.entry/nodes/edges
+  // change; spec.default and every other field are preserved untouched.
+  test("Admin edits a team's handoffs and the PUT preserves other fields", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [teamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "Team…", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Team — tutorial-default" })).toBeVisible();
+
+    // Add handoff research → coding on the appended (5th) row.
+    await page.getByRole("button", { name: "Add handoff" }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 from" }).click();
+    await page.getByRole("option", { name: "research", exact: true }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 to" }).click();
+    await page.getByRole("option", { name: "coding", exact: true }).click();
+
+    const putReq = page.waitForRequest(
+      (r) => r.method() === "PUT" && r.url().endsWith("/v1/agentteams/tutorial-default"),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const body = (await putReq).postDataJSON();
+
+    expect(body.spec.entry).toBe("architect"); // preserved
+    expect(body.spec.default).toBe(true); // preserved — the editor never touches it
+    expect(body.spec.nodes).toHaveLength(5); // preserved
+    expect(body.spec.edges).toContainEqual({ from: "research", to: "coding" }); // the edit
+  });
+
+  // UX spec §3.2 T6: a cycle is flagged live (banner + disabled Save) BEFORE
+  // any request is sent — the server webhook is the authoritative backstop.
+  test("the team editor blocks a cycle before submit", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [teamFixture()] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "Team…", exact: true }).click();
+    await page.getByRole("button", { name: "Add handoff" }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 from" }).click();
+    await page.getByRole("option", { name: "coding", exact: true }).click();
+    await page.getByRole("combobox", { name: "Handoff 5 to" }).click();
+    await page.getByRole("option", { name: "architect", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("This creates a cycle");
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  });
+
+  // UX spec §4 F3: New team → editor → POST /v1/agentteams (never sets default).
+  test("Admin creates a new team via the editor", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({ session: ADMIN, agents: seededAgents(), agentteams: [] }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Orchestration" }).click();
+
+    await page.getByRole("button", { name: "New team", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "New team" })).toBeVisible();
+    await page.getByPlaceholder("tutorial-fast").fill("tutorial-fast");
+    await page.getByRole("textbox", { name: "Node 1 id" }).fill("plan");
+    await page.getByRole("combobox", { name: "Agent for node 1" }).click();
+    await page.getByRole("option", { name: "System Architect — architect" }).click();
+    await page.getByRole("combobox", { name: "Entry node" }).click();
+    await page.getByRole("option", { name: "plan", exact: true }).click();
+
+    const postReq = page.waitForRequest(
+      (r) => r.method() === "POST" && r.url().endsWith("/v1/agentteams"),
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const body = (await postReq).postDataJSON();
+
+    expect(body.metadata.name).toBe("tutorial-fast");
+    expect(body.spec.entry).toBe("plan");
+    expect(body.spec.nodes).toEqual([{ id: "plan", agentRef: "architect" }]);
+    expect(body.spec.default).toBeUndefined();
   });
 });

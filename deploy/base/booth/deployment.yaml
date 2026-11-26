@@ -157,6 +157,12 @@ spec:
               value: "default"
             - name: BOOTH_PROMOTE_MODEL
               value: "default"
+            # Skill-pack discovery (ISI-7856): GET /v1/skillpacks reads the
+            # catalog from <dir>/*/SKILL.md. The image COPYs the repo-root skills/
+            # to /skills (booth/Dockerfile); point the server there. Degrade-never
+            # — inert (empty catalog) on images built before ISI-7856 lands.
+            - name: BOOTH_SKILLS_DIR
+              value: /skills
             - name: LITELLM_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -20,6 +20,7 @@ the [repo README](../README.md).
 | If you want to… | Read |
 |---|---|
 | Understand the platform and run your first remix | **[Getting Started](getting-started.md)** |
+| Onboard a new GitHub repo as a reference repo | **[Onboarding a reference repo](onboarding/reference-repo.md)** |
 | Deploy to a cluster (full runbook) | [`deploy/README.md`](../deploy/README.md) |
 | Understand the architecture | [Phase-1 operator design](design/phase1-operator-design.md) |
 | Administer models, personas, and publishing | [The Booth](../booth/README.md) |
@@ -51,6 +52,10 @@ the [repo README](../README.md).
   — The Booth web UI (React SPA served from the Booth binary).
 
 ### Operations
+- [Onboarding a reference repo](onboarding/reference-repo.md) — the one
+  authoritative path to point ContentRemixer at a new GitHub repo: register the
+  `ReferenceRepo`, install the GitHub App (or supply a PAT), seed template
+  issues, and verify the first `recycle:*` PR.
 - [Deploy runbook](../deploy/README.md) — Kustomize bases/overlays, out-of-band
   secrets, image & CI lanes.
 - [Observability](observability/) — OpenTelemetry semantic conventions (Weaver

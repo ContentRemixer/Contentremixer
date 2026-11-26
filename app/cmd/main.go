@@ -277,6 +277,11 @@ func main() {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Agent")
 		os.Exit(1)
 	}
+	atValidator := &opwebhook.AgentTeamCustomValidator{Client: mgr.GetClient()}
+	if err := atValidator.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "AgentTeam")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	// One signal-aware context drives startup dials (pgvector) and the manager.

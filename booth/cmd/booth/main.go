@@ -33,13 +33,13 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/audit"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/content"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/contenttest"
-	"github.com/ContentRemixer/Contentremixer/booth/internal/orchestrator"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/promote"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/scrapejobs"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/secrets"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/seed"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/teamengine"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 )
 
@@ -134,12 +134,18 @@ func run() error {
 	// Multi-skill tutorial orchestration (ISI-7152, P3-4). Runs in-process with
 	// no external dependency, so it is always wired; the gate stamps RunContext.
 	// Owner from the session and reuses the P3-1 §6.3 predicate.
-	srv = srv.WithTutorialRuns(tutorialrun.New(tutorialrun.NewMemoryRepo(), orchestrator.DefaultEngine(), auditor))
+	srv = srv.WithTutorialRuns(tutorialrun.New(tutorialrun.NewMemoryRepo(), teamengine.New(k8s, namespace), auditor))
 	// Write-only Secret-write path for the reference-repo create flow (ISI-7776
 	// W2). Reuses the Booth SA's k8s client + namespace; the Secret-write SA RBAC
 	// is granted in deploy. Always wired — the create flow needs it to produce a
 	// working tokenRef+webhookSecretRef with no kubectl step.
 	srv = srv.WithReferenceRepoSecrets(secrets.New(k8s, namespace, auditor))
+	// Read-only skill-pack discovery (ISI-7856): GET /v1/skillpacks lists the packs
+	// under <BOOTH_SKILLS_DIR>/*/SKILL.md so the Agent "Skills…" editor suggests
+	// real packs. The image COPYs the repo-root skills/ to /skills (see
+	// booth/Dockerfile) and the deployment sets BOOTH_SKILLS_DIR=/skills.
+	// Degrade-never: a missing directory just yields an empty catalog.
+	srv = srv.WithSkillPacks(os.DirFS(envOr("BOOTH_SKILLS_DIR", "/skills")))
 
 	httpServer := &http.Server{
 		Addr:              addr,

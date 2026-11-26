@@ -328,7 +328,7 @@ func newE2EServer(t *testing.T, checkout, ghURL, llmURL string) *Server {
 	repo := starterRepo()
 	repo.ObjectMeta = metav1.ObjectMeta{Name: "crate", Namespace: testNS}
 	repo.Spec.WebhookSecretRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-webhook", Key: "hmac"}
-	repo.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
+	repo.Spec.TokenRef = &contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		repo,
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: testNS}, Data: map[string][]byte{"hmac": []byte(testSecret)}},

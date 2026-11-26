@@ -14,7 +14,15 @@ type ReferenceRepoSpec struct {
 
 	// TokenRef references the Secret key holding the GitHub PAT used to read the
 	// repo, post ack comments, and open PRs. Never inlined.
-	TokenRef SecretKeyRef `json:"tokenRef"`
+	//
+	// Optional since ISI-7836: when omitted, the operator authenticates writes
+	// with a GitHub App installation token minted per delivery (the repo is
+	// onboarded by installing the App, no PAT in cluster). A GitHub App must be
+	// configured on the operator (github-app Secret) for the no-PAT path to work.
+	// A pointer so an absent tokenRef is omitted entirely rather than serialized
+	// as an empty object (which would violate the name/key minLength on the ref).
+	// +optional
+	TokenRef *SecretKeyRef `json:"tokenRef,omitempty"`
 
 	// WebhookSecretRef references the Secret key holding the GitHub webhook HMAC
 	// secret used to verify `X-Hub-Signature-256` on deliveries.

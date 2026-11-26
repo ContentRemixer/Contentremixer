@@ -38,6 +38,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/app/internal/controller"
 	"github.com/ContentRemixer/Contentremixer/app/internal/dispatch"
 	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp"
+	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp/appauth"
 	"github.com/ContentRemixer/Contentremixer/app/internal/litellm"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/analyzer"
 	"github.com/ContentRemixer/Contentremixer/app/internal/pipeline/checker"
@@ -287,6 +288,19 @@ func main() {
 	// routes also execute the recycle pipeline (E–H: analyzer → writer →
 	// checker → PR assembly) on the run worker.
 	ghServer := &githubapp.Server{Addr: githubWebhookAddr, Client: mgr.GetClient()}
+	// GitHub App auth (ISI-7836): when the github-app Secret is projected
+	// (GITHUB_APP_ID + GITHUB_APP_PRIVATE_KEY), mint installation tokens for
+	// ReferenceRepos that omit spec.tokenRef. Configured-but-invalid fails loud;
+	// unset leaves the operator PAT-only (every repo must carry a tokenRef).
+	if appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID")); appID != "" {
+		minter, err := appauth.New(appID, []byte(os.Getenv("GITHUB_APP_PRIVATE_KEY")))
+		if err != nil {
+			setupLog.Error(err, "GITHUB_APP_ID set but App private key is invalid")
+			os.Exit(1)
+		}
+		ghServer.AppTokens = minter
+		setupLog.Info("GitHub App auth enabled", "appID", appID)
+	}
 	if recycleCheckout != "" && litellmEndpoint != "" {
 		sourceFS := &analyzer.LocalFS{Root: recycleCheckout}
 		gatewayClient := &litellm.Client{

@@ -59,7 +59,7 @@ func newTestServer(t *testing.T) (*Server, *recordingPoster) {
 	repo := starterRepo()
 	repo.ObjectMeta = metav1.ObjectMeta{Name: "crate", Namespace: testNS}
 	repo.Spec.WebhookSecretRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-webhook", Key: "hmac"}
-	repo.Spec.TokenRef = contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
+	repo.Spec.TokenRef = &contentremixerv1alpha1.SecretKeyRef{Name: "github-pat", Key: "token"}
 
 	secrets := []*corev1.Secret{
 		{ObjectMeta: metav1.ObjectMeta{Name: "github-webhook", Namespace: testNS}, Data: map[string][]byte{"hmac": []byte(testSecret)}},

@@ -47,8 +47,14 @@ func (r *ReferenceRepoReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	status := repo.Status.DeepCopy()
 
-	// Resolve PAT Secret (TokenRef).
-	tokenErr := resolveSecretKey(ctx, r, repo.Namespace, repo.Spec.TokenRef)
+	// Resolve PAT Secret (TokenRef). Optional since ISI-7836: a ReferenceRepo
+	// with no tokenRef authenticates writes via a GitHub App installation token
+	// (minted per delivery from the github-app Secret), so an empty tokenRef is
+	// valid and reports TokenResolved=true (nothing to resolve — App path).
+	var tokenErr error
+	if repo.Spec.TokenRef != nil {
+		tokenErr = resolveSecretKey(ctx, r, repo.Namespace, *repo.Spec.TokenRef)
+	}
 	status.TokenResolved = tokenErr == nil
 	setRepoCondition(status, "TokenResolved", status.TokenResolved, tokenErr)
 
@@ -100,7 +106,7 @@ func (r *ReferenceRepoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 				reqs := make([]reconcile.Request, 0, len(list.Items))
 				for i := range list.Items {
-					if list.Items[i].Spec.TokenRef.Name == o.GetName() ||
+					if (list.Items[i].Spec.TokenRef != nil && list.Items[i].Spec.TokenRef.Name == o.GetName()) ||
 						list.Items[i].Spec.WebhookSecretRef.Name == o.GetName() {
 						reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{
 							Namespace: list.Items[i].Namespace, Name: list.Items[i].Name,

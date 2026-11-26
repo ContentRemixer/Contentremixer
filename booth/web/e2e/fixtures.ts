@@ -193,8 +193,12 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
     if (p === "/v1/referencerepos" && method === "GET") return json(route, 200, data.repos);
     if (p === "/v1/referencerepos" && method === "POST") {
       const body = req.postDataJSON() as Record<string, unknown>;
-      data.repos.push(body);
-      return json(route, 201, body);
+      // Echo a status like the real apiserver (and the agents/teams stubs) so a
+      // follow-up GET-by-name — e.g. the ISI-7897 wizard loading the just-created
+      // repo — gets an object whose status.appInstalled reads cleanly as absent.
+      const created = { ...body, status: (body.status as Record<string, unknown>) ?? {} };
+      data.repos.push(created);
+      return json(route, 201, created);
     }
     const repoByName = p.match(/^\/v1\/referencerepos\/([^/]+)$/);
     if (repoByName) {

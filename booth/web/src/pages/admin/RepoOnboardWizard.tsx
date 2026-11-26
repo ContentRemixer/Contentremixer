@@ -142,7 +142,12 @@ function RepoOnboardWizard({ onClose, onComplete }: { onClose: () => void; onCom
           )}
 
           {step === 3 && (
-            <SeedStep repo={repo} footer={<NavFooter onBack={back} onNext={next} />} />
+            <SeedStep
+              repo={repo}
+              reloading={reloading}
+              onRefresh={() => repoName && loadRepo(repoName)}
+              footer={<NavFooter onBack={back} onNext={next} />}
+            />
           )}
 
           {step === 4 && (
@@ -296,20 +301,34 @@ function InstallStep({
           )}
         </div>
       ) : (
-        <RepoUnavailable />
+        <RepoUnavailable reloading={reloading} onRefresh={onRefresh} />
       )}
     </StepScaffold>
   );
 }
 
-function SeedStep({ repo, footer }: { repo: CrObject | null; footer: ReactNode }) {
+function SeedStep({
+  repo,
+  reloading,
+  onRefresh,
+  footer,
+}: {
+  repo: CrObject | null;
+  reloading: boolean;
+  onRefresh: () => void;
+  footer: ReactNode;
+}) {
   return (
     <StepScaffold
       title="Seed template issues"
       lead="Seed the versioned content-template pack into the repo as GitHub issues. This is idempotent — templates already present are skipped — so it is safe to run more than once. Requires a GitHub token on the repo."
       footer={footer}
     >
-      {repo ? <SeedTemplateIssuesButton repo={repo} /> : <RepoUnavailable />}
+      {repo ? (
+        <SeedTemplateIssuesButton repo={repo} />
+      ) : (
+        <RepoUnavailable reloading={reloading} onRefresh={onRefresh} />
+      )}
     </StepScaffold>
   );
 }
@@ -342,10 +361,19 @@ function VerifyStep({ repoSlug, footer }: { repoSlug: string | null; footer: Rea
   );
 }
 
-function RepoUnavailable() {
+// RepoUnavailable is shown on steps ②–③ when the repo failed to load (the single
+// create-time fetch errored). It offers an in-place retry so the Admin can
+// recover without stepping back — seeding/install need the object loaded.
+function RepoUnavailable({ reloading, onRefresh }: { reloading: boolean; onRefresh: () => void }) {
   return (
-    <p className="text-sm text-text-muted">
-      The repo isn’t loaded yet. Go back to step 1, or close and reopen the wizard.
-    </p>
+    <div className="space-y-3">
+      <p className="text-sm text-text-muted">
+        The repo status isn’t loaded yet — the last read didn’t complete. Re-check to continue.
+      </p>
+      <Button variant="ghost" size="sm" onClick={onRefresh} loading={reloading}>
+        <RefreshIcon width={14} height={14} />
+        <span className="ml-1.5">Check status</span>
+      </Button>
+    </div>
   );
 }

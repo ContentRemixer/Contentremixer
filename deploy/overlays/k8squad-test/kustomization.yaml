@@ -400,4 +400,11 @@ images:
     # f3a372a (no agent webhook handler) would 404 and fail-close every Agent CR
     # create — including the booth boot seeder. This bump is REQUIRED, not
     # optional, for the agents to seed. image-publish.yml succeeded for this sha.
-    newTag: sha-dbf11cd41614
+    #
+    # ISI-7945 (2026-11-27): bumped dbf11cd41614 -> 7a14a2a48024 (main HEAD,
+    # PR #139 merge) to ship the crash-loop fix: rest.Config QPS=50/Burst=100 +
+    # LeaseDuration=60s/RenewDeadline=40s/RetryPeriod=8s in app/cmd/main.go.
+    # Fixes "client rate limiter Wait ... leader election lost" on k8squad-test,
+    # which dropped GitHub webhook deliveries while the pod restarted.
+    # image-publish.yml run 46009513263 succeeded for this sha.
+    newTag: sha-7a14a2a48024

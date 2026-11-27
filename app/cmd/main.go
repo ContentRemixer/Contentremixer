@@ -360,8 +360,10 @@ func main() {
 			DefaultModel: os.Getenv("LITELLM_DEFAULT_MODEL"),
 		}
 		runWriter := &writer.Writer{
-			FS:       sourceFS,
-			Generate: writer.LiteLLMGenerator(gatewayClient),
+			FS:             sourceFS,
+			Generate:       writer.LiteLLMGenerator(gatewayClient),
+			Styles:         &writer.K8sStyleLookup{Client: mgr.GetClient()},
+			StyleNamespace: os.Getenv("POD_NAMESPACE"),
 		}
 		// P2-D persona conditioning (design §5): best-effort voice overlay,
 		// wired only when a pgvector DSN is configured (ISI-7148 deploy). Without

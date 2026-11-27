@@ -71,6 +71,15 @@ type StyleFS interface {
 	ReadFile(name string) ([]byte, error)
 }
 
+// StyleLookup resolves a ContentStyle CR guide for a given output format
+// (ISI-7976 W2). Returns ("", nil) when no CR exists for the format —
+// that signals the caller to fall back to the repo file. Returns a non-nil
+// error only on a hard lookup failure (k8s unavailable etc.).
+// Production wiring: K8sStyleLookup; tests inject stubs.
+type StyleLookup interface {
+	LookupStyle(ctx context.Context, namespace, outputFormat string) (string, error)
+}
+
 // GenerateRequest is one model call: the alias to serve (empty = gateway
 // default) and the two prompt parts.
 type GenerateRequest struct {
@@ -176,6 +185,13 @@ type Writer struct {
 	// guide) and best-effort — a Condition error degrades to style-only, it
 	// never fails the write (§5.4).
 	Conditioner PersonaConditioner
+	// Styles resolves ContentStyle CRs (ISI-7976 W2). Optional: nil => repo-only
+	// path, byte-for-byte unchanged. When set, the CR guide takes priority over
+	// the repo file; the repo file is the transitional fallback until W5 cutover.
+	Styles StyleLookup
+	// StyleNamespace is the namespace to query ContentStyle CRs from. Defaults
+	// to the pod namespace (POD_NAMESPACE env var). Used only when Styles != nil.
+	StyleNamespace string
 	// Now clocks the generated timestamp in Mix.Meta. Defaults to
 	// time.Now; injectable for deterministic tests.
 	Now func() time.Time
@@ -201,17 +217,13 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		return pipeline.Mix{}, fmt.Errorf("writer: sample from %q has an empty body; nothing to recycle", s.SourcePath)
 	}
 
-	styleName := "styles/" + format + ".md"
-	styleBytes, err := w.FS.ReadFile(styleName)
+	// Style resolution (ISI-7976 W2): ContentStyle CR first, repo fallback.
+	// Fail-closed only when NEITHER source yields a non-empty guide.
+	style, styleSource, err := w.resolveStyle(ctx, format)
 	if err != nil {
-		// §2.2a: the webhook names the missing style file to aid Admins;
-		// the writer is the runtime fail-closed enforcement point.
-		return pipeline.Mix{}, fmt.Errorf("writer: reading %s: %w", styleName, err)
+		return pipeline.Mix{}, err
 	}
-	style := strings.TrimSpace(string(styleBytes))
-	if style == "" {
-		return pipeline.Mix{}, fmt.Errorf("writer: style guide %s is empty", styleName)
-	}
+	_ = styleSource // carried for observability; not yet surfaced in Mix
 
 	// Skill packs (ISI-7394 dynamic registry): additive writer guidance from
 	// skills/<dir>/SKILL.md, selected by the run's Skill name (or the format
@@ -516,4 +528,35 @@ func metaTags(meta map[string]any) []string {
 		return nil
 	}
 	return tags
+}
+
+// resolveStyle returns the style guide for outputFormat using the CR-first
+// + repo fallback strategy (ISI-7976 W2).  styleSource is "cr" or "repo"
+// for observability. Fails closed only when both sources are empty.
+func (w *Writer) resolveStyle(ctx context.Context, format string) (style, styleSource string, err error) {
+	// 1. ContentStyle CR (primary source).
+	if w.Styles != nil {
+		ns := strings.TrimSpace(w.StyleNamespace)
+		guide, lerr := w.Styles.LookupStyle(ctx, ns, format)
+		if lerr != nil {
+			// Hard lookup failure — degrade to repo rather than fail the run.
+			// The repo fallback is the transitional safety net until W5.
+			_ = lerr
+		} else if guide != "" {
+			return guide, "cr", nil
+		}
+	}
+
+	// 2. Repo fallback (styles/<format>.md). Transitional until W5.
+	styleName := "styles/" + format + ".md"
+	styleBytes, ferr := w.FS.ReadFile(styleName)
+	if ferr == nil {
+		if s := strings.TrimSpace(string(styleBytes)); s != "" {
+			return s, "repo", nil
+		}
+		return "", "", fmt.Errorf("writer: style guide %s is empty", styleName)
+	}
+
+	// Neither source yielded a guide — fail closed.
+	return "", "", fmt.Errorf("writer: no style guide for format %q: ContentStyle CR not found and repo file missing (%v)", format, ferr)
 }

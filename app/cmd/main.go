@@ -205,6 +205,29 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	// ISI-7945: client-go's defaults (QPS 5 / Burst 10) are too low for this
+	// operator's watch fan-out (ModelProfile, ReferenceRepo, DevRelPersona,
+	// Agent, AgentTeam + Deployment/ConfigMap/Secret). When the k8squad-test
+	// apiserver is slow under load, lease-renewal requests queue behind the
+	// rate limiter and the renew deadline expires ("client rate limiter Wait
+	// returned an error: context deadline exceeded" → leader election lost →
+	// crash-loop). Raise QPS/Burst and widen the lease window so a slow
+	// round-trip no longer drops leadership. All tunable without a rebuild.
+	var kubeAPIQPS float64
+	var kubeAPIBurst int
+	var leaseDurationSec int
+	var renewDeadlineSec int
+	var retryPeriodSec int
+	flag.Float64Var(&kubeAPIQPS, "kube-api-qps", envFloat("KUBE_API_QPS", 50),
+		"Client-go QPS to the apiserver (default 50, up from client-go's 5).")
+	flag.IntVar(&kubeAPIBurst, "kube-api-burst", envInt("KUBE_API_BURST", 100),
+		"Client-go burst to the apiserver (default 100, up from client-go's 10).")
+	flag.IntVar(&leaseDurationSec, "leader-elect-lease-duration", envInt("LEADER_ELECT_LEASE_DURATION_SEC", 60),
+		"Leader-election lease duration in seconds (default 60, up from controller-runtime's 15).")
+	flag.IntVar(&renewDeadlineSec, "leader-elect-renew-deadline", envInt("LEADER_ELECT_RENEW_DEADLINE_SEC", 40),
+		"Leader-election renew deadline in seconds (default 40, up from controller-runtime's 10). Must be < lease duration.")
+	flag.IntVar(&retryPeriodSec, "leader-elect-retry-period", envInt("LEADER_ELECT_RETRY_PERIOD_SEC", 8),
+		"Leader-election retry period in seconds (default 8, up from controller-runtime's 2).")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -220,7 +243,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	// ISI-7945: lift client-go rate limits off the rest.Config before the
+	// manager builds its clients, so cache sync and lease renewal share the
+	// higher budget.
+	restCfg := ctrl.GetConfigOrDie()
+	restCfg.QPS = float32(kubeAPIQPS)
+	restCfg.Burst = kubeAPIBurst
+
+	leaseDuration := time.Duration(leaseDurationSec) * time.Second
+	renewDeadline := time.Duration(renewDeadlineSec) * time.Second
+	retryPeriod := time.Duration(retryPeriodSec) * time.Second
+
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
@@ -229,7 +263,13 @@ func main() {
 		}),
 		LeaderElection:   enableLeaderElection,
 		LeaderElectionID: "contentremixer-operator.lock",
+		LeaseDuration:    &leaseDuration,
+		RenewDeadline:    &renewDeadline,
+		RetryPeriod:      &retryPeriod,
 	})
+	setupLog.Info("manager client-go tuning",
+		"qps", kubeAPIQPS, "burst", kubeAPIBurst,
+		"leaseDuration", leaseDuration, "renewDeadline", renewDeadline, "retryPeriod", retryPeriod)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -432,4 +472,24 @@ func mediaTokenSecretRef() *dispatch.SecretRef {
 		return nil
 	}
 	return &dispatch.SecretRef{Name: name, Key: key}
+}
+
+// envInt returns the integer value of env var key, or def when unset/unparseable.
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+// envFloat returns the float value of env var key, or def when unset/unparseable.
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }

@@ -1,5 +1,7 @@
 // Package writer implements pipeline subtask F (ISI-7081, design §3
-// consumer 3 + §4 Writer): generation driven by outputFormat — it loads
+// consumer 3 + §4 Writer): generation driven by outputFormat — it resolves the format style guide
+// (ContentStyle CR first when a resolver is wired, ISI-7965 W2; the repo
+// styles/<outputFormat>.md file is the transitional fallback until W5),
 // styles/<outputFormat>.md, conditions on the analyzer Sample brief (source
 // meta.yaml + body) and the run Notes, and emits the Mix (draft + output
 // meta.yaml with the Sample-clearance source refs, design §5).
@@ -176,6 +178,13 @@ type Writer struct {
 	// guide) and best-effort — a Condition error degrades to style-only, it
 	// never fails the write (§5.4).
 	Conditioner PersonaConditioner
+	// Styles resolves the output-format style guide from ContentStyle CRs
+	// (ISI-7965 W2). Optional: nil keeps the writer repo-file sourced,
+	// byte-for-byte the pre-W2 path. When wired, the CR source is tried
+	// FIRST and the repo styles/<format>.md file stays as the transitional
+	// fallback (removed in W5 after the CRD source is verified live);
+	// fail-closed only when NEITHER source yields a usable guide.
+	Styles StyleResolver
 	// Now clocks the generated timestamp in Mix.Meta. Defaults to
 	// time.Now; injectable for deterministic tests.
 	Now func() time.Time
@@ -201,16 +210,20 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		return pipeline.Mix{}, fmt.Errorf("writer: sample from %q has an empty body; nothing to recycle", s.SourcePath)
 	}
 
-	styleName := "styles/" + format + ".md"
-	styleBytes, err := w.FS.ReadFile(styleName)
+	// Style resolution (ISI-7965 W2): the ContentStyle CR source first (when
+	// a resolver is wired), the repo styles/<format>.md file as the
+	// transitional fallback. Fail-closed only when NEITHER source yields a
+	// usable guide — the writer never breaks live generation mid-migration
+	// (the repo fallback is removed in W5 after the CRD source is live).
+	style, styleSource, err := w.resolveStyle(ctx, rc, format)
 	if err != nil {
-		// §2.2a: the webhook names the missing style file to aid Admins;
-		// the writer is the runtime fail-closed enforcement point.
-		return pipeline.Mix{}, fmt.Errorf("writer: reading %s: %w", styleName, err)
+		return pipeline.Mix{}, err
 	}
-	style := strings.TrimSpace(string(styleBytes))
-	if style == "" {
-		return pipeline.Mix{}, fmt.Errorf("writer: style guide %s is empty", styleName)
+	styleLabel := styleSource
+	if styleLabel == "" {
+		// No resolver wired (Phase-1): the prompt keeps its literal
+		// styles/<format>.md header, byte-for-byte the pre-W2 output.
+		styleLabel = "styles/" + format + ".md"
 	}
 
 	// Skill packs (ISI-7394 dynamic registry): additive writer guidance from
@@ -241,7 +254,7 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 
 	resp, err := w.Generate.Generate(ctx, GenerateRequest{
 		Model:  strings.TrimSpace(rc.ModelName),
-		System: systemPrompt(format, style, packs, overlay),
+		System: systemPrompt(format, styleLabel, style, packs, overlay),
 		Prompt: userPrompt(rc, s, overlay),
 	})
 	if err != nil {
@@ -272,9 +285,65 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 		OutputFormat: format,
 		Title:        title,
 		Markdown:     draft,
-		Meta:         mixMeta(now, rc, s, modelUsed, title, draft),
+		Meta:         mixMeta(now, rc, s, modelUsed, title, draft, styleSource),
 		ModelUsed:    modelUsed,
 	}, nil
+}
+
+// resolveStyle resolves the style guide for the run's output format
+// (ISI-7965 W2): the ContentStyle CR source first (when a StyleResolver is
+// wired), then the repo styles/<format>.md file as the transitional
+// fallback. Fail-closed only when NEITHER source yields a usable guide —
+// the fail-closed writer never breaks live generation mid-migration; the
+// repo fallback is removed in W5, after the CRD source is verified live.
+//
+// The returned source is "" on the repo path when no resolver is wired (the
+// Phase-1 path: the system prompt keeps its literal styles/<format>.md
+// header and Mix.Meta omits style_source, byte-for-byte the pre-W2 output).
+// Wired deployments return "contentstyle:<ns>/<name>" or
+// "repo:styles/<format>.md" so W5's cutover verification can see which
+// source served each run.
+func (w *Writer) resolveStyle(ctx context.Context, rc pipeline.RunContext, format string) (guide, source string, err error) {
+	fromRepo := func() (string, string, error) {
+		styleName := "styles/" + format + ".md"
+		styleBytes, rerr := w.FS.ReadFile(styleName)
+		if rerr != nil {
+			// The webhook names the missing style file to aid Admins; the
+			// writer is the runtime fail-closed enforcement point.
+			return "", "", fmt.Errorf("writer: reading %s: %w", styleName, rerr)
+		}
+		style := strings.TrimSpace(string(styleBytes))
+		if style == "" {
+			return "", "", fmt.Errorf("writer: style guide %s is empty", styleName)
+		}
+		return style, "repo:" + styleName, nil
+	}
+	if w.Styles == nil {
+		// Phase-1 / unwired deployment: repo file only, source empty.
+		g, _, gerr := fromRepo()
+		return g, "", gerr
+	}
+	sg, serr := w.Styles.ResolveStyleGuide(ctx, rc, format)
+	if serr == nil {
+		if g := strings.TrimSpace(sg.Guide); g != "" {
+			src := strings.TrimSpace(sg.Source)
+			if src == "" {
+				src = "contentstyle"
+			}
+			return g, src, nil
+		}
+		// A nil error with an empty guide is a resolver bug: treat it as
+		// no-guide and fall back, never fail the run on it.
+		serr = fmt.Errorf("style resolver returned an empty guide: %w", ErrNoContentStyle)
+	}
+	// Transitional fallback (ISI-7965 W2 scope): the CR source yielded no
+	// guide — missing CR, empty guide, or a read error — so the repo file
+	// serves the run. Only a repo failure fails the write (fail-closed).
+	g, src, gerr := fromRepo()
+	if gerr != nil {
+		return "", "", fmt.Errorf("%v; fallback also failed: %w", serr, gerr)
+	}
+	return g, src, nil
 }
 
 // systemPrompt binds the style guide into the model's instructions. When the
@@ -283,10 +352,10 @@ func (w *Writer) Write(ctx context.Context, rc pipeline.RunContext, s pipeline.S
 // voice anchor that applies even when retrieval is empty/degraded. Precedence
 // is explicit — style guide outranks the persona voice — so the overlay never
 // overrides a correct-format draft.
-func systemPrompt(format, style string, packs []loadedPack, overlay PersonaOverlay) string {
+func systemPrompt(format, styleSource, style string, packs []loadedPack, overlay PersonaOverlay) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "You are the ContentRemixer writer agent. Produce a %s-format Mix (a recycled derivative of the source provided in the user message).\n", format)
-	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- styles/%s.md ---\n%s\n--- end of style guide ---\n", format, format, style)
+	_, _ = fmt.Fprintf(&b, "Follow this style guide exactly — it is the definition of a correct %s draft:\n\n--- %s ---\n%s\n--- end of style guide ---\n", format, styleSource, style)
 	if len(packs) > 0 {
 		b.WriteString("Apply these writing skill packs on top of the style guide — on any conflict the style guide wins:\n")
 		for _, p := range packs {
@@ -342,7 +411,7 @@ func userPrompt(rc pipeline.RunContext, s pipeline.Sample, overlay PersonaOverla
 // fields carried over, the source block, and the sample_clearance block
 // (design §5 — source path, source commit, model, input → output, recycle
 // issue), so clearance survives outside the PR.
-func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed, title, draft string) map[string]any {
+func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed, title, draft, styleSource string) map[string]any {
 	meta := map[string]any{
 		"title":         title,
 		"output_format": rc.OutputFormat,
@@ -360,6 +429,14 @@ func mixMeta(now time.Time, rc pipeline.RunContext, s pipeline.Sample, modelUsed
 			"output_format": rc.OutputFormat,
 			"recycle_issue": rc.IssueNumber,
 		},
+	}
+	// style_source (ISI-7965 W2): provenance of the guide this run rendered
+	// against — "contentstyle:<ns>/<name>" (CR) or "repo:styles/<format>.md"
+	// (transitional fallback). Empty (no resolver wired) omits the key,
+	// keeping the Phase-1 meta byte-for-byte. W5's cutover verification reads
+	// this key to confirm the CRD source serves live runs.
+	if styleSource != "" {
+		meta["style_source"] = styleSource
 	}
 	if a := metaString(s.Meta, "author"); a != "" {
 		meta["author"] = a

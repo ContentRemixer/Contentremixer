@@ -48,9 +48,17 @@ spec:
           spec:
             description: |-
               ContentStyleSpec defines the desired state of a ContentStyle: one
-              output-format style guide per CR. Admin-owned and GLOBAL in scope - one
-              set of guides shared across all reference repos (per-repo overrides are
-              deferred; see the ISI-7965 plan).
+              output-format style guide per CR (ISI-7965 plan W1). Admin-owned and
+              GLOBAL in scope - one set of guides shared across all reference repos
+              (per-repo overrides are deferred).
+
+              The outputFormat contract is the platform-wide KnownOutputFormats set
+              declared in common_types.go (the same set the writer validFormats map
+              and the DevRelPersona ContentFormatTarget enum use). The OpenAPI enum
+              below is the first gate; the validating webhook re-checks against
+              KnownOutputFormats. Adding a format is a LOCK-STEP change across:
+              common_types.go, the Enum marker here, the writer validFormats map, and
+              the regenerated CRD manifests (app/config/crd/bases + deploy/base/crds
             properties:
               description:
                 description: Description is a human-readable summary shown in the

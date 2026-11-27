@@ -71,19 +71,31 @@ func (f *memRepo) ListContents(_ context.Context, ownerFilter string) ([]appcont
 	return out, nil
 }
 
-func (f *memRepo) UpdateContent(_ context.Context, id string, title, bodyMD *string, status *appcontent.ContentStatus) (appcontent.Content, error) {
+func (f *memRepo) UpdateContent(_ context.Context, id string, patch appcontent.ContentPatch) (appcontent.Content, error) {
 	c, ok := f.contents[id]
 	if !ok {
 		return appcontent.Content{}, appcontent.ErrNotFound
 	}
-	if title != nil {
-		c.Title = *title
+	if patch.Title != nil {
+		c.Title = *patch.Title
 	}
-	if bodyMD != nil {
-		c.BodyMD = *bodyMD
+	if patch.BodyMD != nil {
+		c.BodyMD = *patch.BodyMD
 	}
-	if status != nil {
-		c.Status = *status
+	if patch.Status != nil {
+		c.Status = *patch.Status
+	}
+	if patch.TargetRepo != nil {
+		c.TargetRepo = *patch.TargetRepo
+	}
+	if patch.TargetPath != nil {
+		c.TargetPath = *patch.TargetPath
+	}
+	if patch.ScrubFindings != nil {
+		c.ScrubFindings = patch.ScrubFindings
+	}
+	if patch.PRURL != nil {
+		c.PRURL = *patch.PRURL
 	}
 	f.contents[id] = c
 	return c, nil

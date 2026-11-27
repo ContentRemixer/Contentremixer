@@ -70,7 +70,7 @@ type Repository interface {
 	InsertContent(ctx context.Context, c appcontent.Content) error
 	GetContent(ctx context.Context, id string) (appcontent.Content, error)
 	ListContents(ctx context.Context, ownerFilter string) ([]appcontent.Content, error)
-	UpdateContent(ctx context.Context, id string, title, bodyMD *string, status *appcontent.ContentStatus) (appcontent.Content, error)
+	UpdateContent(ctx context.Context, id string, patch appcontent.ContentPatch) (appcontent.Content, error)
 	DeleteContent(ctx context.Context, id string) error
 
 	InsertComment(ctx context.Context, c appcontent.Comment) error
@@ -108,12 +108,17 @@ type CreateContentRequest struct {
 	BodyMD string `json:"bodyMd"`
 }
 
-// UpdateContentRequest is the PUT /v1/content/{id} payload. Nil fields keep
-// the stored value.
+// UpdateContentRequest is the PUT /v1/content/{id} payload — the interactive
+// edit surface. Nil fields keep the stored value. It carries the human-editable
+// columns only; the provenance fields (source, origin) are immutable, and the
+// machine-populated fields (scrubFindings, prUrl) are back-filled by the C2/C3
+// seams (Backfill), never by this route.
 type UpdateContentRequest struct {
-	Title  *string                   `json:"title"`
-	BodyMD *string                   `json:"bodyMd"`
-	Status *appcontent.ContentStatus `json:"status"`
+	Title      *string                   `json:"title"`
+	BodyMD     *string                   `json:"bodyMd"`
+	Status     *appcontent.ContentStatus `json:"status"`
+	TargetRepo *string                   `json:"targetRepo"`
+	TargetPath *string                   `json:"targetPath"`
 }
 
 // CreateCommentRequest is the POST /v1/content/{id}/comments payload.
@@ -167,29 +172,23 @@ type UpdateIllustrationRequestPayload struct {
 
 // --- contents ---------------------------------------------------------------
 
-// CreateContent stores a new working document owned by the CALLER (§6.3: the
-// owner is stamped from the session, never taken from the payload).
+// CreateContent stores a new manual draft owned by the CALLER (§6.3: the owner
+// is stamped from the session, never taken from the payload). Manual authoring
+// is one of the two ingest paths, so it funnels through the same seam C2 uses
+// (ingestDraft) — the single place a draft is validated and inserted.
 func (s *Store) CreateContent(ctx context.Context, sess auth.Session, req CreateContentRequest) (appcontent.Content, error) {
-	if req.Title == "" {
-		return appcontent.Content{}, fmt.Errorf("%w: title is required", ErrBadRequest)
-	}
-	c := appcontent.Content{
-		ID:           newID(),
-		OwnerSubject: sess.Subject, // §6.3 clause 2: owner == creator
-		Title:        req.Title,
-		BodyMD:       req.BodyMD,
-		Status:       appcontent.ContentDraft,
-	}
-	if !s.authorize(sess, c.OwnerSubject) {
-		s.audit(ctx, sess, verbCreate, kindContent, c.ID, false)
+	if !s.authorize(sess, sess.Subject) { // §6.3 clause 2: owner == creator
+		s.audit(ctx, sess, verbCreate, kindContent, "", false)
 		return appcontent.Content{}, ErrForbidden
 	}
-	if err := s.db.InsertContent(ctx, c); err != nil {
-		s.audit(ctx, sess, verbCreate, kindContent, c.ID, false)
-		return appcontent.Content{}, err
-	}
-	s.audit(ctx, sess, verbCreate, kindContent, c.ID, true)
-	return s.db.GetContent(ctx, c.ID)
+	out, err := s.ingestDraft(ctx, DepositRequest{
+		Owner:  sess.Subject,
+		Source: appcontent.SourceManual,
+		Title:  req.Title,
+		BodyMD: req.BodyMD,
+	})
+	s.audit(ctx, sess, verbCreate, kindContent, out.ID, err == nil)
+	return out, err
 }
 
 // GetContent returns one document if §6.3 admits the caller, else
@@ -237,7 +236,13 @@ func (s *Store) UpdateContent(ctx context.Context, sess auth.Session, id string,
 	if req.Status != nil && !appcontent.ValidContentStatus(*req.Status) {
 		return appcontent.Content{}, fmt.Errorf("%w: unknown content status %q", ErrBadRequest, *req.Status)
 	}
-	out, err := s.db.UpdateContent(ctx, id, req.Title, req.BodyMD, req.Status)
+	out, err := s.db.UpdateContent(ctx, id, appcontent.ContentPatch{
+		Title:      req.Title,
+		BodyMD:     req.BodyMD,
+		Status:     req.Status,
+		TargetRepo: req.TargetRepo,
+		TargetPath: req.TargetPath,
+	})
 	if err != nil {
 		s.audit(ctx, sess, verbUpdate, kindContent, id, false)
 		return appcontent.Content{}, err
@@ -263,6 +268,114 @@ func (s *Store) DeleteContent(ctx context.Context, sess auth.Session, id string)
 	}
 	s.audit(ctx, sess, verbDelete, kindContent, id, true)
 	return nil
+}
+
+// --- ingest seam (ISI-7968) -------------------------------------------------
+//
+// Deposit and Backfill are THE internal entry points other workstreams use to
+// put content into /content and to annotate it afterwards. They take an explicit
+// actor/owner instead of an auth.Session because the callers run server-side with
+// no interactive session (C2 recycle deposit on a GitHub webhook; C2 scrub and
+// C3 publish back-fill). Every call is still audited — under the named system
+// actor — and still routes through the one validate-and-insert helper the
+// interactive CreateContent uses, so there is a single funnel for new drafts.
+//
+// Contract for callers (C2/C5):
+//   - Recycle deposit: Deposit({Owner, Source: SourceRecycle, Origin: {Repo,
+//     Issue}, Title, BodyMD, TargetRepo, TargetPath}). Owner is the DevRel the
+//     draft belongs to (its §6.3 tenant); it must be non-empty or the draft is
+//     invisible to everyone but an Admin.
+//   - Manual authoring: handled by CreateContent, which delegates here with
+//     Source: SourceManual.
+//   - Scrub annotation (C2) / PR back-fill (C3): Backfill(id, {ScrubFindings}
+//     / {PRURL, Status}). Nil fields keep the stored value.
+
+// systemActor labels ingest-seam audit rows whose caller has no session.
+const systemActor = "system:ingest"
+
+// DepositRequest is the ingest seam's input — the single shape every new draft
+// is deposited with. Owner, Source, and Title are required.
+type DepositRequest struct {
+	Owner      string
+	Source     appcontent.ContentSource
+	Title      string
+	BodyMD     string
+	Origin     *appcontent.Origin
+	TargetRepo string
+	TargetPath string
+}
+
+// BackfillRequest is the back-fill seam's input: the system-side annotation
+// C2/C3 apply after a draft exists. Nil fields keep the stored value; a non-nil
+// ScrubFindings replaces the stored slice.
+type BackfillRequest struct {
+	Status        *appcontent.ContentStatus
+	TargetRepo    *string
+	TargetPath    *string
+	ScrubFindings []appcontent.ScrubFinding
+	PRURL         *string
+}
+
+// Deposit inserts a new draft through the ingest seam and audits it under the
+// system actor. Callers that have a session (interactive create) use
+// CreateContent instead; this is for server-side workstreams.
+func (s *Store) Deposit(ctx context.Context, req DepositRequest) (appcontent.Content, error) {
+	out, err := s.ingestDraft(ctx, req)
+	s.auditSystem(ctx, verbCreate, kindContent, out.ID, err == nil)
+	return out, err
+}
+
+// ingestDraft is the one validate-and-insert path for a new draft, shared by
+// Deposit (system) and CreateContent (session). It performs NO authz/audit —
+// its two callers own that — so the single invariant it enforces is input
+// validity and the stamping of defaults.
+func (s *Store) ingestDraft(ctx context.Context, req DepositRequest) (appcontent.Content, error) {
+	if req.Owner == "" {
+		return appcontent.Content{}, fmt.Errorf("%w: owner is required", ErrBadRequest)
+	}
+	if req.Title == "" {
+		return appcontent.Content{}, fmt.Errorf("%w: title is required", ErrBadRequest)
+	}
+	source := req.Source
+	if source == "" {
+		source = appcontent.SourceManual
+	}
+	if !appcontent.ValidContentSource(source) {
+		return appcontent.Content{}, fmt.Errorf("%w: unknown content source %q", ErrBadRequest, source)
+	}
+	c := appcontent.Content{
+		ID:           newID(),
+		OwnerSubject: req.Owner,
+		Title:        req.Title,
+		BodyMD:       req.BodyMD,
+		Status:       appcontent.ContentDraft,
+		Source:       source,
+		Origin:       req.Origin,
+		TargetRepo:   req.TargetRepo,
+		TargetPath:   req.TargetPath,
+	}
+	if err := s.db.InsertContent(ctx, c); err != nil {
+		return appcontent.Content{}, err
+	}
+	return s.db.GetContent(ctx, c.ID)
+}
+
+// Backfill applies a system-side annotation to an existing draft (C2 scrub
+// findings, C3 PR link / status) and audits it under the system actor. It does
+// not re-check §6.3 — the caller is a trusted workstream, not a user session.
+func (s *Store) Backfill(ctx context.Context, id string, req BackfillRequest) (appcontent.Content, error) {
+	if req.Status != nil && !appcontent.ValidContentStatus(*req.Status) {
+		return appcontent.Content{}, fmt.Errorf("%w: unknown content status %q", ErrBadRequest, *req.Status)
+	}
+	out, err := s.db.UpdateContent(ctx, id, appcontent.ContentPatch{
+		Status:        req.Status,
+		TargetRepo:    req.TargetRepo,
+		TargetPath:    req.TargetPath,
+		ScrubFindings: req.ScrubFindings,
+		PRURL:         req.PRURL,
+	})
+	s.auditSystem(ctx, verbUpdate, kindContent, id, err == nil)
+	return out, err
 }
 
 // --- comments ---------------------------------------------------------------
@@ -637,6 +750,24 @@ func (s *Store) audit(ctx context.Context, sess auth.Session, verb, kind, name s
 	s.auditor.Log(ctx, audit.Entry{
 		Subject:      sess.Subject,
 		Role:         string(sess.Role),
+		Verb:         verb,
+		ResourceKind: kind,
+		ResourceName: name,
+		Decision:     decision,
+	})
+}
+
+// auditSystem records one §6.4 entry for an ingest-seam call that has no user
+// session (the caller is a trusted server-side workstream). The row is stamped
+// with the named system actor so the audit trail still attributes the write.
+func (s *Store) auditSystem(ctx context.Context, verb, kind, name string, allowed bool) {
+	decision := audit.DecisionDeny
+	if allowed {
+		decision = audit.DecisionAllow
+	}
+	s.auditor.Log(ctx, audit.Entry{
+		Subject:      systemActor,
+		Role:         "system",
 		Verb:         verb,
 		ResourceKind: kind,
 		ResourceName: name,

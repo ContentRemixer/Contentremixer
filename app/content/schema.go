@@ -24,6 +24,20 @@ CREATE TABLE IF NOT EXISTS booth.contents (
 );
 CREATE INDEX IF NOT EXISTS contents_owner_idx ON booth.contents (owner_subject);
 
+-- ISI-7968 (Part 2 C1): /content becomes the hub for recycled + manual content.
+-- Additive, idempotent columns so existing (manual) rows keep working — each
+-- defaults to the back-compat value, so a pre-redesign row reads as a manual
+-- draft with no origin/target/findings/PR. ADD COLUMN IF NOT EXISTS is a no-op
+-- once applied, matching the apply-on-every-startup discipline above.
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS source         TEXT  NOT NULL DEFAULT 'manual';
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS origin_repo    TEXT  NOT NULL DEFAULT '';
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS origin_issue   INT   NOT NULL DEFAULT 0;
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS target_repo    TEXT  NOT NULL DEFAULT '';
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS target_path    TEXT  NOT NULL DEFAULT '';
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS scrub_findings JSONB;
+ALTER TABLE booth.contents ADD COLUMN IF NOT EXISTS pr_url         TEXT  NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS contents_source_idx ON booth.contents (source);
+
 -- Anchored inline comments: text-range anchors over contents.body_md.
 CREATE TABLE IF NOT EXISTS booth.comments (
     id             TEXT        PRIMARY KEY,

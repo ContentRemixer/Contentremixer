@@ -45,8 +45,43 @@ func TestStore_ContentLifecycle(t *testing.T) {
 	if err != nil || got.Title != "T" {
 		t.Fatalf("get: %v %+v", err, got)
 	}
+	// Back-compat (ISI-7968): a row inserted without a source reads back as
+	// manual with no provenance/target/findings.
+	if got.Source != SourceManual || got.Origin != nil || got.PRURL != "" || got.ScrubFindings != nil {
+		t.Fatalf("back-compat defaults wrong: %+v", got)
+	}
 	if _, err := st.GetContent(ctx, "missing"); err != ErrNotFound {
 		t.Fatalf("missing: want ErrNotFound, got %v", err)
+	}
+
+	// Recycle row with the full ISI-7968 field set round-trips through SQL
+	// (origin flattened columns, target, published status, scrub JSONB, PR URL).
+	rec := Content{
+		ID: "rec1", OwnerSubject: "alice", Title: "R", BodyMD: "b", Status: ContentDraft,
+		Source: SourceRecycle, Origin: &Origin{Repo: "Org/Repo", Issue: 7},
+		TargetRepo: "Org/Content", TargetPath: "p.md",
+	}
+	if err := st.InsertContent(ctx, rec); err != nil {
+		t.Fatalf("insert recycle: %v", err)
+	}
+	pr := "https://github.com/Org/Content/pull/1"
+	pub := ContentPublished
+	recUpd, err := st.UpdateContent(ctx, "rec1", ContentPatch{
+		Status:        &pub,
+		ScrubFindings: []ScrubFinding{{Rule: "aws-key", Severity: "block"}},
+		PRURL:         &pr,
+	})
+	if err != nil {
+		t.Fatalf("update recycle: %v", err)
+	}
+	if recUpd.Source != SourceRecycle || recUpd.Origin == nil || recUpd.Origin.Issue != 7 ||
+		recUpd.Status != ContentPublished || recUpd.PRURL != pr ||
+		len(recUpd.ScrubFindings) != 1 || recUpd.ScrubFindings[0].Rule != "aws-key" ||
+		recUpd.TargetPath != "p.md" {
+		t.Fatalf("recycle round-trip wrong: %+v", recUpd)
+	}
+	if err := st.DeleteContent(ctx, "rec1"); err != nil {
+		t.Fatalf("delete recycle: %v", err)
 	}
 
 	if err := st.InsertContent(ctx, Content{ID: "c2", OwnerSubject: "bob", Title: "B"}); err != nil {
@@ -63,7 +98,7 @@ func TestStore_ContentLifecycle(t *testing.T) {
 
 	newTitle := "T2"
 	review := ContentInReview
-	upd, err := st.UpdateContent(ctx, "c1", &newTitle, nil, &review)
+	upd, err := st.UpdateContent(ctx, "c1", ContentPatch{Title: &newTitle, Status: &review})
 	if err != nil || upd.Title != "T2" || upd.Status != review {
 		t.Fatalf("update: %v %+v", err, upd)
 	}

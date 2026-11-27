@@ -47,14 +47,69 @@ func (s *Store) Close() { s.pool.Close() }
 
 // --- contents -------------------------------------------------------------
 
+// contentCols is the column list shared by every contents SELECT, kept in one
+// place so Insert/Get/List/Update stay in lockstep with scanContent.
+const contentCols = `id, owner_subject, title, body_md, status,
+	source, origin_repo, origin_issue, target_repo, target_path, scrub_findings, pr_url,
+	created_at, updated_at`
+
+// scanContent materializes one booth.contents row. Legacy rows read back with
+// zero-valued ISI-7968 fields; an empty source is normalised to SourceManual so
+// callers never see the empty discriminator.
+func scanContent(row scanner) (Content, error) {
+	var c Content
+	var status, source string
+	var origin Origin
+	var findings []byte
+	if err := row.Scan(&c.ID, &c.OwnerSubject, &c.Title, &c.BodyMD, &status,
+		&source, &origin.Repo, &origin.Issue, &c.TargetRepo, &c.TargetPath, &findings, &c.PRURL,
+		&c.CreatedAt, &c.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Content{}, ErrNotFound
+		}
+		return Content{}, fmt.Errorf("content: scan content: %w", err)
+	}
+	c.Status = ContentStatus(status)
+	c.Source = ContentSource(source)
+	if c.Source == "" {
+		c.Source = SourceManual
+	}
+	if origin.Repo != "" || origin.Issue != 0 {
+		c.Origin = &origin
+	}
+	if len(findings) > 0 {
+		if err := json.Unmarshal(findings, &c.ScrubFindings); err != nil {
+			return Content{}, fmt.Errorf("content: unmarshal scrub findings: %w", err)
+		}
+	}
+	return c, nil
+}
+
 // InsertContent stores a new row as-is (ids and owners are assigned by the
-// caller — the Booth gate stamps them from the session).
+// caller — the Booth gate stamps them from the session; the ingest seam stamps
+// source/origin/target).
 func (s *Store) InsertContent(ctx context.Context, c Content) error {
-	_, err := s.pool.Exec(ctx, `
-INSERT INTO booth.contents (id, owner_subject, title, body_md, status, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())`,
-		c.ID, c.OwnerSubject, c.Title, c.BodyMD, string(c.Status))
+	findings, err := marshalFindings(c.ScrubFindings)
 	if err != nil {
+		return err
+	}
+	var originRepo string
+	var originIssue int
+	if c.Origin != nil {
+		originRepo, originIssue = c.Origin.Repo, c.Origin.Issue
+	}
+	source := c.Source
+	if source == "" {
+		source = SourceManual
+	}
+	if _, err := s.pool.Exec(ctx, `
+INSERT INTO booth.contents
+	(id, owner_subject, title, body_md, status,
+	 source, origin_repo, origin_issue, target_repo, target_path, scrub_findings, pr_url,
+	 created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())`,
+		c.ID, c.OwnerSubject, c.Title, c.BodyMD, string(c.Status),
+		string(source), originRepo, originIssue, c.TargetRepo, c.TargetPath, findings, c.PRURL); err != nil {
 		return fmt.Errorf("content: insert content: %w", err)
 	}
 	return nil
@@ -62,27 +117,14 @@ VALUES ($1, $2, $3, $4, $5, now(), now())`,
 
 // GetContent returns one row by id, or ErrNotFound.
 func (s *Store) GetContent(ctx context.Context, id string) (Content, error) {
-	row := s.pool.QueryRow(ctx, `
-SELECT id, owner_subject, title, body_md, status, created_at, updated_at
-  FROM booth.contents WHERE id = $1`, id)
-	var c Content
-	var status string
-	if err := row.Scan(&c.ID, &c.OwnerSubject, &c.Title, &c.BodyMD, &status, &c.CreatedAt, &c.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Content{}, ErrNotFound
-		}
-		return Content{}, fmt.Errorf("content: get content: %w", err)
-	}
-	c.Status = ContentStatus(status)
-	return c, nil
+	return scanContent(s.pool.QueryRow(ctx, `SELECT `+contentCols+` FROM booth.contents WHERE id = $1`, id))
 }
 
 // ListContents returns rows ordered newest-first. ownerFilter "" means all
 // owners; the §6.3 filter is decided by the gate, which passes the caller's
 // subject for a DevRel and "" for an Admin.
 func (s *Store) ListContents(ctx context.Context, ownerFilter string) ([]Content, error) {
-	q := `SELECT id, owner_subject, title, body_md, status, created_at, updated_at
-  FROM booth.contents`
+	q := `SELECT ` + contentCols + ` FROM booth.contents`
 	args := []any{}
 	if ownerFilter != "" {
 		args = append(args, ownerFilter)
@@ -96,41 +138,73 @@ func (s *Store) ListContents(ctx context.Context, ownerFilter string) ([]Content
 	defer rows.Close()
 	var out []Content
 	for rows.Next() {
-		var c Content
-		var status string
-		if err := rows.Scan(&c.ID, &c.OwnerSubject, &c.Title, &c.BodyMD, &status, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("content: scan content: %w", err)
+		c, err := scanContent(rows)
+		if err != nil {
+			return nil, err
 		}
-		c.Status = ContentStatus(status)
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
-// UpdateContent patches the mutable columns of one row (owner is immutable —
-// re-homing tenancy is not a supported operation) and returns the updated row.
-func (s *Store) UpdateContent(ctx context.Context, id string, title, bodyMD *string, status *ContentStatus) (Content, error) {
+// UpdateContent patches the mutable columns of one row (owner, source, and
+// origin are immutable — re-homing tenancy and rewriting provenance are not
+// supported) and returns the updated row. A nil ContentPatch field keeps the
+// stored value; a non-nil ScrubFindings replaces the stored slice. This single
+// path serves the interactive PUT and the C2/C3 back-fill seams alike.
+func (s *Store) UpdateContent(ctx context.Context, id string, patch ContentPatch) (Content, error) {
 	cur, err := s.GetContent(ctx, id)
 	if err != nil {
 		return Content{}, err
 	}
-	if title != nil {
-		cur.Title = *title
+	if patch.Title != nil {
+		cur.Title = *patch.Title
 	}
-	if bodyMD != nil {
-		cur.BodyMD = *bodyMD
+	if patch.BodyMD != nil {
+		cur.BodyMD = *patch.BodyMD
 	}
-	if status != nil {
-		cur.Status = *status
+	if patch.Status != nil {
+		cur.Status = *patch.Status
+	}
+	if patch.TargetRepo != nil {
+		cur.TargetRepo = *patch.TargetRepo
+	}
+	if patch.TargetPath != nil {
+		cur.TargetPath = *patch.TargetPath
+	}
+	if patch.ScrubFindings != nil {
+		cur.ScrubFindings = patch.ScrubFindings
+	}
+	if patch.PRURL != nil {
+		cur.PRURL = *patch.PRURL
+	}
+	findings, err := marshalFindings(cur.ScrubFindings)
+	if err != nil {
+		return Content{}, err
 	}
 	if _, err := s.pool.Exec(ctx, `
 UPDATE booth.contents
-   SET title = $2, body_md = $3, status = $4, updated_at = now()
+   SET title = $2, body_md = $3, status = $4,
+       target_repo = $5, target_path = $6, scrub_findings = $7, pr_url = $8,
+       updated_at = now()
  WHERE id = $1`,
-		id, cur.Title, cur.BodyMD, string(cur.Status)); err != nil {
+		id, cur.Title, cur.BodyMD, string(cur.Status),
+		cur.TargetRepo, cur.TargetPath, findings, cur.PRURL); err != nil {
 		return Content{}, fmt.Errorf("content: update content: %w", err)
 	}
 	return s.GetContent(ctx, id)
+}
+
+// marshalFindings encodes scrub findings to JSONB, or SQL NULL when empty.
+func marshalFindings(f []ScrubFinding) ([]byte, error) {
+	if len(f) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		return nil, fmt.Errorf("content: marshal scrub findings: %w", err)
+	}
+	return b, nil
 }
 
 // DeleteContent removes one row; dependent comments/threads/requests cascade.

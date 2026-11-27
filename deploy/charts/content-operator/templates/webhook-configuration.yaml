@@ -92,4 +92,20 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         resources: ["agentteams"]
         scope: Namespaced
+  - admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: {{ .Values.webhook.serviceName }}
+        namespace: {{ include "content-operator.namespace" . }}
+        path: /validate-contentremixer-io-v1alpha1-contentstyle
+        port: 443
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    sideEffects: None
+    name: vcontentstyle-v1alpha1.contentremixer.io
+    rules:
+      - apiGroups: ["contentremixer.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["contentstyles"]
+        scope: Namespaced
 {{- end }}

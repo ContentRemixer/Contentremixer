@@ -152,45 +152,50 @@ func (s *Store) ListContents(ctx context.Context, ownerFilter string) ([]Content
 // supported) and returns the updated row. A nil ContentPatch field keeps the
 // stored value; a non-nil ScrubFindings replaces the stored slice. This single
 // path serves the interactive PUT and the C2/C3 back-fill seams alike.
+//
+// It writes ONLY the columns the patch names (not a read-modify-write of every
+// mutable column), so two concurrent writers of disjoint fields don't clobber
+// each other — e.g. a C2 scrub back-fill of scrubFindings cannot drop a user's
+// in-flight title/body edit, and vice-versa. (Still a last-writer-wins race for
+// the SAME column, which no caller contends on.)
 func (s *Store) UpdateContent(ctx context.Context, id string, patch ContentPatch) (Content, error) {
-	cur, err := s.GetContent(ctx, id)
-	if err != nil {
-		return Content{}, err
+	sets := []string{"updated_at = now()"}
+	args := []any{id}
+	add := func(col string, val any) {
+		args = append(args, val)
+		sets = append(sets, fmt.Sprintf("%s = $%d", col, len(args)))
 	}
 	if patch.Title != nil {
-		cur.Title = *patch.Title
+		add("title", *patch.Title)
 	}
 	if patch.BodyMD != nil {
-		cur.BodyMD = *patch.BodyMD
+		add("body_md", *patch.BodyMD)
 	}
 	if patch.Status != nil {
-		cur.Status = *patch.Status
+		add("status", string(*patch.Status))
 	}
 	if patch.TargetRepo != nil {
-		cur.TargetRepo = *patch.TargetRepo
+		add("target_repo", *patch.TargetRepo)
 	}
 	if patch.TargetPath != nil {
-		cur.TargetPath = *patch.TargetPath
+		add("target_path", *patch.TargetPath)
 	}
 	if patch.ScrubFindings != nil {
-		cur.ScrubFindings = patch.ScrubFindings
+		findings, err := marshalFindings(patch.ScrubFindings)
+		if err != nil {
+			return Content{}, err
+		}
+		add("scrub_findings", findings)
 	}
 	if patch.PRURL != nil {
-		cur.PRURL = *patch.PRURL
+		add("pr_url", *patch.PRURL)
 	}
-	findings, err := marshalFindings(cur.ScrubFindings)
+	ct, err := s.pool.Exec(ctx, `UPDATE booth.contents SET `+strings.Join(sets, ", ")+` WHERE id = $1`, args...)
 	if err != nil {
-		return Content{}, err
-	}
-	if _, err := s.pool.Exec(ctx, `
-UPDATE booth.contents
-   SET title = $2, body_md = $3, status = $4,
-       target_repo = $5, target_path = $6, scrub_findings = $7, pr_url = $8,
-       updated_at = now()
- WHERE id = $1`,
-		id, cur.Title, cur.BodyMD, string(cur.Status),
-		cur.TargetRepo, cur.TargetPath, findings, cur.PRURL); err != nil {
 		return Content{}, fmt.Errorf("content: update content: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return Content{}, ErrNotFound
 	}
 	return s.GetContent(ctx, id)
 }

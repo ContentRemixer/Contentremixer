@@ -156,9 +156,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install trivy
+        # Pin the version: install.sh otherwise resolves "latest" from the
+        # GitHub API at runtime, which intermittently returns an empty tag
+        # ("unable to find ''") and fails the install, breaking the scan
+        # (ISI-7968). Bump TRIVY_VERSION deliberately.
+        env:
+          TRIVY_VERSION: v0.76.2
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
+            | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
           trivy --version
       - name: Trivy filesystem scan → SARIF
         run: |
@@ -302,9 +308,15 @@ jobs:
           tags: ${{ env.IMAGE }}
           build-args: VERSION=ci-${{ github.sha }}
       - name: Install trivy
+        # Pin the version: install.sh otherwise resolves "latest" from the
+        # GitHub API at runtime, which intermittently returns an empty tag
+        # ("unable to find ''") and fails the install, breaking the scan
+        # (ISI-7968). Bump TRIVY_VERSION deliberately.
+        env:
+          TRIVY_VERSION: v0.76.2
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
+            | sudo sh -s -- -b /usr/local/bin "${TRIVY_VERSION}"
           trivy --version
       - name: Trivy image scan → SARIF (report)
         run: |

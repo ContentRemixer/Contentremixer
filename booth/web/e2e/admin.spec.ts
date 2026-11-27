@@ -41,6 +41,50 @@ test.describe("Admin console", () => {
     await expect(page.getByText("Owner-scoped DevRel voice profiles.", { exact: false })).toBeVisible();
     await expect(page.getByText("robin-voice")).toBeVisible();
   });
+  // ISI-7965 W4: the Content styles tab lists per-format guides and the scoped
+  // guide editor PUTs the markdown body with a full-object round-trip (the
+  // AgentForm contract) — description + guide change, the format never does.
+  test("Admin edits a content style guide and the PUT carries the body", async ({ page }) => {
+    await installApi(
+      page,
+      defaults({
+        session: ADMIN,
+        contentStyles: [
+          {
+            metadata: { name: "blog", resourceVersion: "7" },
+            spec: {
+              outputFormat: "blog",
+              guide: "# Blog style\n\nBe sharp.",
+              description: "Blog voice",
+            },
+          },
+        ],
+      }),
+    );
+    await page.goto("/admin");
+    await page.getByRole("tab", { name: "Content styles" }).click();
+    await expect(page.getByText("Per-format markdown style guides", { exact: false })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "blog", exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit guide" }).click();
+    await expect(page.getByText("Style guide — blog")).toBeVisible();
+    const guide = page.locator("textarea");
+    await expect(guide).toHaveValue("# Blog style\n\nBe sharp.");
+    await guide.fill("# Blog style\n\nBe sharp. Land the hook fast.");
+
+    const putReq = page.waitForRequest(
+      (r) => r.method() === "PUT" && /\/v1\/contentstyles\/blog$/.test(r.url()),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const body = (await putReq).postDataJSON();
+    // Round-trip: the format is untouched, the guide body is sent, and the
+    // resourceVersion from the fresh GET rides along.
+    expect(body.spec.outputFormat).toBe("blog");
+    expect(body.spec.guide).toContain("Land the hook fast.");
+    expect(body.metadata.resourceVersion).toBe("7");
+    await expect(page.getByRole("cell", { name: "blog", exact: true })).toBeVisible();
+  });
+
 
   // ISI-7514: in-UI editor for ReferenceRepo.spec.labelRoutes. The editor must
   // round-trip the full object so the token/webhook Secret refs are preserved

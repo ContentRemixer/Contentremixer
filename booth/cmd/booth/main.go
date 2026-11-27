@@ -40,6 +40,7 @@ import (
 	"github.com/ContentRemixer/Contentremixer/booth/internal/seedissues"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/server"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/store"
+	"github.com/ContentRemixer/Contentremixer/booth/internal/styleimport"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/teamengine"
 	"github.com/ContentRemixer/Contentremixer/booth/internal/tutorialrun"
 )
@@ -87,6 +88,28 @@ func run() error {
 
 	auditor := audit.NewSlogLogger(log)
 	st := store.New(k8s, namespace, auditor)
+
+	// One-time style migration importer (ISI-7965 W3): env-gated boot seed,
+	// same pattern as the DevRel seed user (booth/auth). While
+	// BOOTH_STYLE_IMPORT_DIR is set, the markdown guides in that directory
+	// stay the source of truth and are (re)applied to the ContentStyle CRs on
+	// every boot — idempotent, so a partial failure simply retries next boot.
+	// W5 removes the env var at cutover, after which the Admin UI owns the
+	// guides.
+	if dir := os.Getenv(styleimport.EnvImportDir); dir != "" {
+		ictx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		res, err := styleimport.Import(ictx, k8s, namespace, dir, log)
+		cancel()
+		if err != nil {
+			log.Error("style import failed", slog.Any("err", err))
+		} else {
+			log.Info("style import done",
+				slog.Int("created", res.Created),
+				slog.Int("updated", res.Updated),
+				slog.Int("unchanged", res.Unchanged),
+				slog.Int("missing", res.Missing))
+		}
+	}
 
 	// Seed the default Agents + AgentTeams (ISI-7800 §6 / ISI-7802), create-if-
 	// absent so admin edits are never clobbered. Best-effort: a failure (e.g. the

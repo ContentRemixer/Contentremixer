@@ -93,7 +93,7 @@ func (s *Server) Handler() http.Handler {
 
 	// CRUD over the registered kinds, each wrapped by the auth Middleware so the
 	// session is resolved (or the request 401'd) before the handler runs.
-	for _, kind := range []store.ResourceKind{store.DevRelPersonaKind, store.ModelProfileKind, store.ReferenceRepoKind, store.AgentKind, store.AgentTeamKind} {
+	for _, kind := range []store.ResourceKind{store.DevRelPersonaKind, store.ModelProfileKind, store.ReferenceRepoKind, store.AgentKind, store.AgentTeamKind, store.ContentStyleKind} {
 		base := "/v1/" + routeName(kind.Kind)
 		kind := kind // capture
 		mux.Handle("GET "+base, s.protect(s.listHandler(kind)))

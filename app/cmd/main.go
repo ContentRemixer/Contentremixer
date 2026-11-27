@@ -312,6 +312,12 @@ func main() {
 		setupLog.Error(err, "unable to create webhook", "webhook", "DevRelPersona")
 		os.Exit(1)
 	}
+
+	csValidator := &opwebhook.ContentStyleCustomValidator{Client: mgr.GetClient()}
+	if err := csValidator.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "ContentStyle")
+		os.Exit(1)
+	}
 	agValidator := &opwebhook.AgentCustomValidator{Client: mgr.GetClient()}
 	if err := agValidator.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "Agent")

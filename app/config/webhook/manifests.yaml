@@ -50,6 +50,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /validate-contentremixer-io-v1alpha1-contentstyle
+  failurePolicy: Fail
+  name: vcontentstyle-v1alpha1.contentremixer.io
+  rules:
+  - apiGroups:
+    - contentremixer.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - contentstyles
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /validate-contentremixer-io-v1alpha1-devrelpersona
   failurePolicy: Fail
   name: vdevrelpersona-v1alpha1.contentremixer.io

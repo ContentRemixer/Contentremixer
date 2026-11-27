@@ -155,3 +155,26 @@ var ReferenceRepoKind = ResourceKind{
 		return out
 	},
 }
+
+// ContentStyleKind — admin-only, platform-owned output-format style guides
+// (ISI-7965, W3). A ContentStyle carries the markdown guide one writer output
+// format renders against; guides are global platform config with NO owner
+// subject (per §6.3 an empty owner can never match clause 2), so the class is
+// AdminOnly and ownerOf is a constant empty string: an Admin lists, reads, and
+// edits the guides; a DevRel is filtered from List and forbidden on
+// Get/Create/Update/Delete, exactly like the other admin-only classes.
+var ContentStyleKind = ResourceKind{
+	Kind:      "ContentStyle",
+	AdminOnly: true,
+	newObject: func() client.Object { return &v1alpha1.ContentStyle{} },
+	newList:   func() client.ObjectList { return &v1alpha1.ContentStyleList{} },
+	ownerOf:   func(client.Object) string { return "" },
+	items: func(l client.ObjectList) []client.Object {
+		src := l.(*v1alpha1.ContentStyleList).Items
+		out := make([]client.Object, len(src))
+		for i := range src {
+			out[i] = &src[i]
+		}
+		return out
+	},
+}

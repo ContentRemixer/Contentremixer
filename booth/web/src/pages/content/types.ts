@@ -4,8 +4,12 @@
 // reader, inline comments, peer-review threads, and illustration-request flow
 // (plan §3.2 B3) consume the API without a translation layer.
 
-export type ContentStatus = "draft" | "in_review" | "approved";
+export type ContentStatus = "draft" | "in_review" | "approved" | "published";
 
+// Statuses a user can SELECT in the UI. "published" is a first-class,
+// API-returned status (set by the PR path, C3) but is never chosen
+// interactively, so it is intentionally excluded from the dropdown array while
+// remaining a valid, displayable ContentStatus (ISI-7971 review F1).
 export const contentStatuses: ContentStatus[] = ["draft", "in_review", "approved"];
 
 /**

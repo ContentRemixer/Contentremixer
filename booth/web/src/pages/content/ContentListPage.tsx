@@ -25,6 +25,7 @@ const statusMeta: Record<ContentStatus, { label: string; tone: BadgeTone }> = {
   draft: { label: "Draft", tone: "neutral" },
   in_review: { label: "In review", tone: "warning" },
   approved: { label: "Approved", tone: "success" },
+  published: { label: "Published", tone: "primary" },
 };
 
 export function ContentListPage() {

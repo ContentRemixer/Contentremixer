@@ -43,6 +43,7 @@ const statusMeta: Record<ContentStatus, { label: string; tone: BadgeTone }> = {
   draft: { label: "Draft", tone: "neutral" },
   in_review: { label: "In review", tone: "warning" },
   approved: { label: "Approved", tone: "success" },
+  published: { label: "Published", tone: "primary" },
 };
 
 interface Selection {
@@ -497,7 +498,11 @@ export function ContentDetailPage() {
                   status only; a dedicated verdict table is a follow-up. */}
               <ReviewPanel
                 reviews={[]}
-                summary={content.status === "approved" ? "approved" : "pending"}
+                summary={
+                  content.status === "approved" || content.status === "published"
+                    ? "approved"
+                    : "pending"
+                }
                 busy={statusBusy || reviewCreating}
                 onSubmitReview={(verdict, note) => {
                   if (verdict === "approved") void changeStatus("approved");

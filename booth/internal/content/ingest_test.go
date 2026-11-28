@@ -143,4 +143,32 @@ func TestManualDraftTargetBinding(t *testing.T) {
 	if _, err := s.UpdateContent(ctx, bob, full.ID, UpdateContentRequest{Status: &approved}); err != nil {
 		t.Fatalf("approve pre-targeted manual draft: %v", err)
 	}
+
+	// Review F3: a whitespace-only target is not a target — a direct API caller
+	// cannot approve past the server gate with blanks.
+	blankRepo, blankPath := "   ", "\t"
+	ws, err := s.CreateContent(ctx, bob, CreateContentRequest{Title: "ws"})
+	if err != nil {
+		t.Fatalf("CreateContent ws: %v", err)
+	}
+	if _, err := s.UpdateContent(ctx, bob, ws.ID, UpdateContentRequest{
+		Status: &approved, TargetRepo: &blankRepo, TargetPath: &blankPath,
+	}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("approve with whitespace target: want ErrBadRequest, got %v", err)
+	}
+
+	// Review F2: the system Backfill seam re-applies the invariant — it cannot
+	// publish a targetless draft, but publishing a targeted one is fine.
+	pub := appcontent.ContentPublished
+	bare, err := s.Deposit(ctx, DepositRequest{Owner: "carol", Source: appcontent.SourceManual, Title: "bare"})
+	if err != nil {
+		t.Fatalf("Deposit bare: %v", err)
+	}
+	if _, err := s.Backfill(ctx, bare.ID, BackfillRequest{Status: &pub}); !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("Backfill publish without target: want ErrBadRequest, got %v", err)
+	}
+	pr := "https://github.com/Org/Content/pull/9"
+	if _, err := s.Backfill(ctx, full.ID, BackfillRequest{Status: &pub, PRURL: &pr}); err != nil {
+		t.Fatalf("Backfill publish a targeted draft: %v", err)
+	}
 }

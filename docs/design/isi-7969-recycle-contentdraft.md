@@ -29,6 +29,19 @@ operator without a content DSN is byte-for-byte unchanged) and is the exact
 commit/PR logic **C3 reuses on approval** — `Assembler` is preserved, not
 deleted.
 
+### Idempotency per origin
+
+GitHub redelivers a recycle issue's webhook and fires both `opened` and
+`labeled`, so the same origin (repo + issue) can drive the pipeline more than
+once; a `recycle:*` re-label is also a deliberate retry. The pre-C2 path was
+idempotent because the `Assembler` converged on one branch/PR per issue. The
+deposit path preserves that: `Store.Deposit` is **idempotent per origin** for
+recycled drafts — a repeat deposit for an origin that already has a draft
+**refreshes** that draft's title/body/target in place (same row id) instead of
+spawning a duplicate, and leaves `Status` untouched so a re-delivery can never
+regress a draft a human already advanced to `in_review`/`approved`. Manual
+drafts (nil origin) are never deduplicated.
+
 ## Key decision — deposit directly via the shared DSN, not a new HTTP route
 
 The recycle pipeline runs in the **operator** process; the C1 Go seam

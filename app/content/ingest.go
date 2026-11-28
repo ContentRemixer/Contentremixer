@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 )
 
@@ -47,6 +48,16 @@ type BackfillRequest struct {
 // enforces is input validity and the stamping of defaults (status=draft, a
 // random id, source normalised to manual when empty), identical to the Booth
 // seam so a recycle draft and a session draft are indistinguishable at rest.
+//
+// Deposit is IDEMPOTENT per origin for recycled drafts (C2): GitHub redelivers
+// a recycle issue's webhook and fires both `opened` and `labeled`, so the same
+// origin (repo + issue) can drive the pipeline more than once. Rather than
+// spawn a duplicate draft each time — the pre-C2 PR path converged on one
+// branch/PR per issue — a repeat deposit for an origin that already has a draft
+// REFRESHES that draft's title/body/target in place and returns it. The stored
+// Status is deliberately preserved so a re-delivery can never regress a draft a
+// human already moved to in_review/approved. Manual drafts (nil Origin) are
+// never deduplicated.
 func (s *Store) Deposit(ctx context.Context, req DepositRequest) (Content, error) {
 	if req.Owner == "" {
 		return Content{}, fmt.Errorf("%w: owner is required", ErrBadRequest)
@@ -60,6 +71,20 @@ func (s *Store) Deposit(ctx context.Context, req DepositRequest) (Content, error
 	}
 	if !ValidContentSource(source) {
 		return Content{}, fmt.Errorf("%w: unknown content source %q", ErrBadRequest, source)
+	}
+	if source == SourceRecycle && req.Origin != nil {
+		if existing, err := s.findByOrigin(ctx, req.Origin.Repo, req.Origin.Issue); err == nil {
+			// Refresh the existing draft; Status is left nil so the human's
+			// lifecycle position is never clobbered by a re-delivery.
+			return s.UpdateContent(ctx, existing.ID, ContentPatch{
+				Title:      &req.Title,
+				BodyMD:     &req.BodyMD,
+				TargetRepo: &req.TargetRepo,
+				TargetPath: &req.TargetPath,
+			})
+		} else if !errors.Is(err, ErrNotFound) {
+			return Content{}, err
+		}
 	}
 	c := Content{
 		ID:           newID(),
@@ -76,6 +101,17 @@ func (s *Store) Deposit(ctx context.Context, req DepositRequest) (Content, error
 		return Content{}, err
 	}
 	return s.GetContent(ctx, c.ID)
+}
+
+// findByOrigin returns the most recent recycled draft for a given GitHub origin
+// (repo + issue), or ErrNotFound. It scopes to source=recycle so it can never
+// collide with a manual draft (manual drafts carry no origin).
+func (s *Store) findByOrigin(ctx context.Context, repo string, issue int) (Content, error) {
+	return scanContent(s.pool.QueryRow(ctx,
+		`SELECT `+contentCols+` FROM booth.contents
+		 WHERE source = $1 AND origin_repo = $2 AND origin_issue = $3
+		 ORDER BY created_at ASC LIMIT 1`,
+		string(SourceRecycle), repo, issue))
 }
 
 // Backfill applies a system-side annotation to an existing draft (C2 scrub

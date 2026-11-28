@@ -183,6 +183,7 @@ func main() {
 	var litellmEndpoint string
 	var pgvectorDSN string
 	var personaNamespace string
+	var contentStyleNamespace string
 	var substrateEndpoint string
 	var mediaActorImage string
 	var enableLeaderElection bool
@@ -198,6 +199,8 @@ func main() {
 		"Postgres/pgvector DSN for persona voice retrieval (P2-D). Empty disables persona conditioning (recycle runs stay style-only, Phase-1).")
 	flag.StringVar(&personaNamespace, "persona-namespace", os.Getenv("PERSONA_NAMESPACE"),
 		"Namespace DevRelPersona CRs live in, for write-time conditioning lookup. Defaults to the pod namespace (POD_NAMESPACE) when empty.")
+	flag.StringVar(&contentStyleNamespace, "contentstyle-namespace", os.Getenv("CONTENTSTYLE_NAMESPACE"),
+		"Namespace ContentStyle CRs (global output-format style guides) live in, for write-time style resolution (ISI-7965 W2). Defaults to the pod namespace (POD_NAMESPACE) when empty. Empty keeps the writer repo-file sourced (transitional).")
 	flag.StringVar(&substrateEndpoint, "substrate-endpoint", os.Getenv("SUBSTRATE_ENDPOINT"),
 		"Substrate control-plane base URL (agentgateway front door, e.g. http://substrate.contentremixer.svc:8080). Set with --media-actor-image to flip the media template from a k8s-Job to a substrate actor (ISI-7397). Empty keeps the k8s-Job path.")
 	flag.StringVar(&mediaActorImage, "media-actor-image", os.Getenv("MEDIA_ACTOR_IMAGE"),
@@ -360,10 +363,23 @@ func main() {
 			DefaultModel: os.Getenv("LITELLM_DEFAULT_MODEL"),
 		}
 		runWriter := &writer.Writer{
-			FS:             sourceFS,
-			Generate:       writer.LiteLLMGenerator(gatewayClient),
-			Styles:         &writer.K8sStyleLookup{Client: mgr.GetClient()},
-			StyleNamespace: os.Getenv("POD_NAMESPACE"),
+			FS:       sourceFS,
+			Generate: writer.LiteLLMGenerator(gatewayClient),
+		}
+		// ISI-7965 W2: the writer resolves the output-format style guide from
+		// ContentStyle CRs (Admin-owned, GLOBAL scope) via the manager's cached
+		// client, with the repo styles/<format>.md file as the transitional
+		// fallback — fail-closed only when neither yields. An unset namespace
+		// keeps the writer repo-file sourced (Phase-1).
+		nsForStyle := contentStyleNamespace
+		if nsForStyle == "" {
+			nsForStyle = os.Getenv("POD_NAMESPACE")
+		}
+		if nsForStyle != "" {
+			runWriter.Styles = &writer.ContentStyleResolver{Reader: mgr.GetClient(), Namespace: nsForStyle}
+			setupLog.Info("contentstyle CR style resolution enabled", "namespace", nsForStyle)
+		} else {
+			setupLog.Info("contentstyle CR style resolution disabled: no namespace (set --contentstyle-namespace or POD_NAMESPACE); writer stays repo-file sourced")
 		}
 		// P2-D persona conditioning (design §5): best-effort voice overlay,
 		// wired only when a pgvector DSN is configured (ISI-7148 deploy). Without

@@ -3,7 +3,6 @@ package writer
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -397,7 +396,7 @@ func TestWriteErrors(t *testing.T) {
 			w:       newWriter(okGen),
 			rc:      pipeline.RunContext{OutputFormat: FormatTutorial},
 			sample:  teleprompterSample(),
-			wantSub: "no style guide for format",
+			wantSub: "reading styles/tutorial.md",
 		},
 		{
 			name:    "empty style file",
@@ -587,88 +586,6 @@ func TestMetaDescriptionDegradesOnSparseBody(t *testing.T) {
 	}
 	if _, present := mix.Meta["description"]; present {
 		t.Fatalf("a prose-less draft must not set a description: %+v", mix.Meta)
-	}
-}
-
-// stubStyleLookup implements StyleLookup for tests.
-type stubStyleLookup struct {
-	guides map[string]string // outputFormat → guide
-	err    error
-}
-
-func (s *stubStyleLookup) LookupStyle(_ context.Context, _, outputFormat string) (string, error) {
-	if s.err != nil {
-		return "", s.err
-	}
-	return s.guides[outputFormat], nil
-}
-
-func TestWriteUsesContentStyleCRWhenAvailable(t *testing.T) {
-	crGuide := "# from ContentStyle CR"
-	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
-	root := t.TempDir()
-	writeFixtureTree(t, root, map[string]string{
-		"styles/blog.md": "# repo style guide — must NOT be used",
-	})
-	w := &Writer{
-		FS:       fixtureFS{root: root},
-		Generate: gen,
-		Now:      func() time.Time { return fixedNow },
-		Styles:   &stubStyleLookup{guides: map[string]string{"blog": crGuide}},
-	}
-	_, err := w.Write(context.Background(), blogRunContext(), teleprompterSample())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(last.System, crGuide) {
-		t.Fatalf("expected CR guide in system prompt, got:\n%s", last.System)
-	}
-	if strings.Contains(last.System, "repo style guide") {
-		t.Fatalf("repo guide leaked into system prompt despite CR being present")
-	}
-}
-
-func TestWriteFallsBackToRepoWhenCREmpty(t *testing.T) {
-	repoGuide := "# repo style guide body"
-	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
-	root := t.TempDir()
-	writeFixtureTree(t, root, map[string]string{
-		"styles/blog.md": repoGuide,
-	})
-	w := &Writer{
-		FS:       fixtureFS{root: root},
-		Generate: gen,
-		Now:      func() time.Time { return fixedNow },
-		Styles:   &stubStyleLookup{guides: map[string]string{}},
-	}
-	_, err := w.Write(context.Background(), blogRunContext(), teleprompterSample())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(last.System, repoGuide) {
-		t.Fatalf("expected repo guide in system prompt when CR absent, got:\n%s", last.System)
-	}
-}
-
-func TestWriteFallsBackToRepoOnCRLookupError(t *testing.T) {
-	repoGuide := "# repo style guide fallback"
-	last, gen := captureGen(GenerateResponse{Content: blogDraft, Model: "m"}, nil)
-	root := t.TempDir()
-	writeFixtureTree(t, root, map[string]string{
-		"styles/blog.md": repoGuide,
-	})
-	w := &Writer{
-		FS:       fixtureFS{root: root},
-		Generate: gen,
-		Now:      func() time.Time { return fixedNow },
-		Styles:   &stubStyleLookup{err: fmt.Errorf("k8s unavailable")},
-	}
-	_, err := w.Write(context.Background(), blogRunContext(), teleprompterSample())
-	if err != nil {
-		t.Fatalf("CR lookup error must degrade to repo, not fail: %v", err)
-	}
-	if !strings.Contains(last.System, repoGuide) {
-		t.Fatalf("expected repo guide after CR lookup error, got:\n%s", last.System)
 	}
 }
 

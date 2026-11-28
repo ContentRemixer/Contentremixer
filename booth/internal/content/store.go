@@ -28,6 +28,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	appcontent "github.com/ContentRemixer/Contentremixer/app/content"
 	"github.com/ContentRemixer/Contentremixer/booth/auth"
@@ -102,10 +103,16 @@ func New(db Repository, auditor audit.Logger) *Store {
 
 // --- request payloads -------------------------------------------------------
 
-// CreateContentRequest is the POST /v1/content payload.
+// CreateContentRequest is the POST /v1/content payload. TargetRepo/TargetPath
+// are optional at authoring time (ISI-7971): a manual draft may be created
+// without a target and stay editable, then bind one later via PUT before it can
+// be approved onto the PR path. Supplying them here binds the target in one
+// shot.
 type CreateContentRequest struct {
-	Title  string `json:"title"`
-	BodyMD string `json:"bodyMd"`
+	Title      string `json:"title"`
+	BodyMD     string `json:"bodyMd"`
+	TargetRepo string `json:"targetRepo"`
+	TargetPath string `json:"targetPath"`
 }
 
 // UpdateContentRequest is the PUT /v1/content/{id} payload — the interactive
@@ -182,10 +189,12 @@ func (s *Store) CreateContent(ctx context.Context, sess auth.Session, req Create
 		return appcontent.Content{}, ErrForbidden
 	}
 	out, err := s.ingestDraft(ctx, DepositRequest{
-		Owner:  sess.Subject,
-		Source: appcontent.SourceManual,
-		Title:  req.Title,
-		BodyMD: req.BodyMD,
+		Owner:      sess.Subject,
+		Source:     appcontent.SourceManual,
+		Title:      req.Title,
+		BodyMD:     req.BodyMD,
+		TargetRepo: req.TargetRepo,
+		TargetPath: req.TargetPath,
 	})
 	s.audit(ctx, sess, verbCreate, kindContent, out.ID, err == nil)
 	return out, err
@@ -235,6 +244,12 @@ func (s *Store) UpdateContent(ctx context.Context, sess auth.Session, id string,
 	}
 	if req.Status != nil && !appcontent.ValidContentStatus(*req.Status) {
 		return appcontent.Content{}, fmt.Errorf("%w: unknown content status %q", ErrBadRequest, *req.Status)
+	}
+	// PR-eligibility invariant (ISI-7971) — the interactive write path. A draft
+	// with no target "remains editable but is not PR-eligible": the edit
+	// succeeds, the approve does not.
+	if err := requirePRTarget(req.Status, req.TargetRepo, req.TargetPath, cur.TargetRepo, cur.TargetPath); err != nil {
+		return appcontent.Content{}, err
 	}
 	out, err := s.db.UpdateContent(ctx, id, appcontent.ContentPatch{
 		Title:      req.Title,
@@ -362,10 +377,23 @@ func (s *Store) ingestDraft(ctx context.Context, req DepositRequest) (appcontent
 
 // Backfill applies a system-side annotation to an existing draft (C2 scrub
 // findings, C3 PR link / status) and audits it under the system actor. It does
-// not re-check §6.3 — the caller is a trusted workstream, not a user session.
+// not re-check §6.3 — the caller is a trusted workstream, not a user session —
+// but it DOES re-apply the PR-eligibility invariant (ISI-7971) so a draft can
+// never reach a PR-handoff state without a target even on the system path. C3
+// operates post-approval so this is normally a no-op; it fails closed if a
+// caller ever tries to publish a targetless draft directly.
 func (s *Store) Backfill(ctx context.Context, id string, req BackfillRequest) (appcontent.Content, error) {
 	if req.Status != nil && !appcontent.ValidContentStatus(*req.Status) {
 		return appcontent.Content{}, fmt.Errorf("%w: unknown content status %q", ErrBadRequest, *req.Status)
+	}
+	if req.Status != nil && appcontent.IsPRHandoff(*req.Status) {
+		cur, err := s.db.GetContent(ctx, id)
+		if err != nil {
+			return appcontent.Content{}, err
+		}
+		if err := requirePRTarget(req.Status, req.TargetRepo, req.TargetPath, cur.TargetRepo, cur.TargetPath); err != nil {
+			return appcontent.Content{}, err
+		}
 	}
 	out, err := s.db.UpdateContent(ctx, id, appcontent.ContentPatch{
 		Status:        req.Status,
@@ -376,6 +404,30 @@ func (s *Store) Backfill(ctx context.Context, id string, req BackfillRequest) (a
 	})
 	s.auditSystem(ctx, verbUpdate, kindContent, id, err == nil)
 	return out, err
+}
+
+// requirePRTarget enforces the PR-eligibility invariant (ISI-7971): a draft may
+// only enter a PR-handoff state (approved/published) once it names BOTH a target
+// repo and path. effRepo/effPath is the EFFECTIVE target — the patch value when
+// this request sets it, else the stored value. Shared by the interactive
+// (UpdateContent) and system (Backfill) write paths so the rule is genuinely
+// enforced at the whole write seam and is source-agnostic. Values are trimmed so
+// a whitespace-only target cannot slip past a direct API caller (review F3).
+func requirePRTarget(next *appcontent.ContentStatus, patchRepo, patchPath *string, storedRepo, storedPath string) error {
+	if next == nil || !appcontent.IsPRHandoff(*next) {
+		return nil
+	}
+	effRepo, effPath := storedRepo, storedPath
+	if patchRepo != nil {
+		effRepo = *patchRepo
+	}
+	if patchPath != nil {
+		effPath = *patchPath
+	}
+	if strings.TrimSpace(effRepo) == "" || strings.TrimSpace(effPath) == "" {
+		return fmt.Errorf("%w: a draft needs a target repo and path before it can be %s", ErrBadRequest, *next)
+	}
+	return nil
 }
 
 // --- comments ---------------------------------------------------------------

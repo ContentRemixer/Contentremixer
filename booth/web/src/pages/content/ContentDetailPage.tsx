@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import {
   Badge,
   Button,
+  Input,
   Select,
   SelectContent,
   SelectItem,
@@ -42,6 +43,7 @@ const statusMeta: Record<ContentStatus, { label: string; tone: BadgeTone }> = {
   draft: { label: "Draft", tone: "neutral" },
   in_review: { label: "In review", tone: "warning" },
   approved: { label: "Approved", tone: "success" },
+  published: { label: "Published", tone: "primary" },
 };
 
 interface Selection {
@@ -76,12 +78,20 @@ export function ContentDetailPage() {
   const [illusBusyId, setIllusBusyId] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
 
+  // Publish-target binding (ISI-7971). Seeded from the loaded document; a draft
+  // is PR-eligible — approvable onto C3's PR path — only once both are set.
+  const [targetRepo, setTargetRepo] = useState("");
+  const [targetPath, setTargetPath] = useState("");
+  const [targetBusy, setTargetBusy] = useState(false);
+
   const reload = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const doc = await contentApi.get(id);
       setContent(doc);
+      setTargetRepo(doc.targetRepo ?? "");
+      setTargetPath(doc.targetPath ?? "");
       // Collaboration data is best-effort; a failure here shouldn't blank the
       // reader. Each list defaults to [] on error.
       const [cs, rs, ir] = await Promise.all([
@@ -271,8 +281,38 @@ export function ContentDetailPage() {
     }
   }
 
+  async function saveTarget() {
+    if (!content) return;
+    setTargetBusy(true);
+    try {
+      const updated = await contentApi.update(id, {
+        targetRepo: targetRepo.trim(),
+        targetPath: targetPath.trim(),
+      });
+      setContent(updated);
+      setTargetRepo(updated.targetRepo ?? "");
+      setTargetPath(updated.targetPath ?? "");
+      toast({ tone: "success", title: "Publish target saved" });
+    } catch (err) {
+      toast({ tone: "warning", title: "Could not save target", description: errMsg(err) });
+    } finally {
+      setTargetBusy(false);
+    }
+  }
+
   async function changeStatus(next: ContentStatus) {
     if (!content || next === content.status) return;
+    // PR-eligibility (ISI-7971): approving hands the draft to C3's PR path, so
+    // it must name a target first. The server enforces this too (400); the
+    // client guard turns that into a clear, pre-emptive message.
+    if (next === "approved" && !(content.targetRepo && content.targetPath)) {
+      toast({
+        tone: "warning",
+        title: "Set a publish target first",
+        description: "A draft needs a target repo and path before it can be approved.",
+      });
+      return;
+    }
     setStatusBusy(true);
     try {
       const updated = await contentApi.update(id, { status: next });
@@ -315,6 +355,10 @@ export function ContentDetailPage() {
 
   if (!content) return null;
   const meta = statusMeta[content.status];
+  const prEligible = !!(content.targetRepo && content.targetPath);
+  const targetDirty =
+    targetRepo.trim() !== (content.targetRepo ?? "") ||
+    targetPath.trim() !== (content.targetPath ?? "");
 
   return (
     <section className="flex flex-col gap-5">
@@ -357,6 +401,44 @@ export function ContentDetailPage() {
           </div>
         </div>
       </header>
+
+      {/* Publish-target binding (ISI-7971): a draft must name where it will be
+          published before it can be approved onto the GitHub PR path. Manual
+          and recycled drafts share this gate, so a manually authored draft
+          rides the same review → approve → PR path once a target is set. */}
+      <div className="rounded-lg border border-border bg-surface p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex min-w-[12rem] flex-1 flex-col gap-1">
+            <span className="text-xs font-medium text-text-muted">Target repo</span>
+            <Input
+              value={targetRepo}
+              onChange={(e) => setTargetRepo(e.target.value)}
+              placeholder="owner/name"
+            />
+          </label>
+          <label className="flex min-w-[12rem] flex-1 flex-col gap-1">
+            <span className="text-xs font-medium text-text-muted">Target path</span>
+            <Input
+              value={targetPath}
+              onChange={(e) => setTargetPath(e.target.value)}
+              placeholder="posts/my-article.md"
+            />
+          </label>
+          <Button
+            variant="secondary"
+            loading={targetBusy}
+            disabled={!targetDirty}
+            onClick={() => void saveTarget()}
+          >
+            Save target
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-text-muted">
+          {prEligible
+            ? "This draft is PR-eligible — it can be approved and published."
+            : "Add a target repo and path to make this draft PR-eligible (approvable)."}
+        </p>
+      </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         {/* Reader */}
@@ -416,7 +498,11 @@ export function ContentDetailPage() {
                   status only; a dedicated verdict table is a follow-up. */}
               <ReviewPanel
                 reviews={[]}
-                summary={content.status === "approved" ? "approved" : "pending"}
+                summary={
+                  content.status === "approved" || content.status === "published"
+                    ? "approved"
+                    : "pending"
+                }
                 busy={statusBusy || reviewCreating}
                 onSubmitReview={(verdict, note) => {
                   if (verdict === "approved") void changeStatus("approved");

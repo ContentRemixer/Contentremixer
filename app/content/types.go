@@ -191,11 +191,45 @@ type Origin struct {
 // detection and populates these; C1 defines a minimal, forward-compatible shape
 // so the column exists and round-trips. Anchor pins the finding to BodyMD when
 // the finding is span-local (nil for document-level findings).
+//
+// Waived/WaivedBy are the C3/C4 gate contract (ISI-7970): a finding blocks the
+// approval→publish terminal action until it is RESOLVED or explicitly WAIVED.
+// "Resolved" is removal — C2/C4 re-scrub a fixed body and the finding drops out
+// of the slice. "Waived" is an explicit, attributable keep-but-accept decision
+// a reviewer records through C4's review UX. Both are additive JSONB fields
+// (scrub_findings round-trips the whole struct), so no migration is needed and
+// pre-ISI-7970 rows read back as unwaived. The gate is Blocks()/UnresolvedFindings().
 type ScrubFinding struct {
 	Rule     string  `json:"rule"`               // detector id, e.g. "aws-access-key"
 	Severity string  `json:"severity,omitempty"` // C2-defined, e.g. "block"/"warn"
 	Message  string  `json:"message,omitempty"`  // human-readable detail
 	Anchor   *Anchor `json:"anchor,omitempty"`   // span in BodyMD, if local
+	// Waived marks the finding as explicitly accepted by a reviewer (C4), so it
+	// no longer blocks publish. WaivedBy records who accepted it (§6.4 audit
+	// anchor); set together with Waived.
+	Waived   bool   `json:"waived,omitempty"`
+	WaivedBy string `json:"waivedBy,omitempty"`
+}
+
+// Blocks reports whether this finding still gates the approval→publish action
+// (ISI-7970 C3): a finding blocks until it is explicitly waived. A resolved
+// finding is removed from the slice and so never reaches this predicate, which
+// is why removal and waiver are the only two ways past the gate. Fail-closed:
+// a fresh (unwaived) finding of ANY severity blocks, so nothing is silently
+// published over.
+func (f ScrubFinding) Blocks() bool { return !f.Waived }
+
+// UnresolvedFindings returns the subset of findings that still block publish
+// (every unwaived finding). An empty result means the scrub gate is clear. It
+// never returns the input slice, so callers can surface the blockers verbatim.
+func UnresolvedFindings(findings []ScrubFinding) []ScrubFinding {
+	var out []ScrubFinding
+	for _, f := range findings {
+		if f.Blocks() {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // ContentPatch is the set of mutable draft columns UpdateContent can set. A nil

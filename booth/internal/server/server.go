@@ -37,6 +37,7 @@ type Server struct {
 	promote      *promote.Store
 	tutorial     *tutorialrun.Store
 	approve      *approve.Store
+	publishDraft *approve.DraftGate
 	refSecrets   *secrets.Writer
 	seeder       *seedissues.Seeder
 	skillPacksFS fs.FS
@@ -50,6 +51,15 @@ type Server struct {
 // never calling this) simply leaves the tutorial-run routes unmounted.
 func (s *Server) WithTutorialRuns(t *tutorialrun.Store) *Server {
 	s.tutorial = t
+	return s
+}
+
+// WithDraftPublish attaches the approval→publish terminal action (ISI-7970 C3)
+// and returns the Server for chaining. Like WithTutorialRuns it is a setter so
+// New's signature is unchanged. A nil gate (no content store or no GitHub token)
+// leaves POST /v1/content/{id}/publish unmounted.
+func (s *Server) WithDraftPublish(g *approve.DraftGate) *Server {
+	s.publishDraft = g
 	return s
 }
 

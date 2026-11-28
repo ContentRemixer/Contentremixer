@@ -8,6 +8,13 @@ export type ContentStatus = "draft" | "in_review" | "approved";
 
 export const contentStatuses: ContentStatus[] = ["draft", "in_review", "approved"];
 
+/**
+ * ContentSource records how a draft entered /content (ISI-7968): "manual" is
+ * authored in the web UI, "recycle" is deposited from a GitHub issue. Absent on
+ * pre-redesign rows, which the server reads back as "manual".
+ */
+export type ContentSource = "manual" | "recycle";
+
 export type ThreadStatus = "open" | "resolved";
 
 export type IllustrationStatus =
@@ -44,6 +51,13 @@ export interface Content {
   title: string;
   bodyMd: string;
   status: ContentStatus;
+  /** How the draft entered /content (ISI-7968). */
+  source: ContentSource;
+  /** Where the draft is destined to be published — the file C3's PR writes.
+   * A draft is PR-eligible (approvable) only once BOTH are set (ISI-7971);
+   * empty until a target is bound. */
+  targetRepo?: string;
+  targetPath?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -108,12 +122,20 @@ export type IllustrationRequest = AgentRequest;
 export interface CreateContentRequest {
   title: string;
   bodyMd: string;
+  /** Optional at authoring time (ISI-7971): bind the publish target now, or
+   * leave empty and bind it later via update before approving. */
+  targetRepo?: string;
+  targetPath?: string;
 }
 
 export interface UpdateContentRequest {
   title?: string;
   bodyMd?: string;
   status?: ContentStatus;
+  /** Bind/rebind the publish target. A draft cannot be set to "approved"
+   * unless both are non-empty (server-enforced, ISI-7971). */
+  targetRepo?: string;
+  targetPath?: string;
 }
 
 export interface CreateCommentRequest {

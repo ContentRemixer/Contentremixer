@@ -43,6 +43,17 @@ func ValidContentStatus(s ContentStatus) bool {
 	return false
 }
 
+// IsPRHandoff reports whether s is a state that hands a draft to the GitHub PR
+// path (C3): "approved" enters it, "published" is its terminal state. The
+// PR-eligibility invariant — a draft needs a publish target before it may reach
+// these states (ISI-7971) — is enforced at the write seam
+// (booth/internal/content) and is source-agnostic: manual and recycled drafts
+// obey the same rule, which is exactly what lets a manual draft ride the same
+// review → approve → PR path as a recycled one.
+func IsPRHandoff(s ContentStatus) bool {
+	return s == ContentApproved || s == ContentPublished
+}
+
 // ContentSource records how a draft entered /content (ISI-7968). It is the
 // discriminator the ingest seam stamps and is immutable after creation.
 type ContentSource string

@@ -102,10 +102,16 @@ func New(db Repository, auditor audit.Logger) *Store {
 
 // --- request payloads -------------------------------------------------------
 
-// CreateContentRequest is the POST /v1/content payload.
+// CreateContentRequest is the POST /v1/content payload. TargetRepo/TargetPath
+// are optional at authoring time (ISI-7971): a manual draft may be created
+// without a target and stay editable, then bind one later via PUT before it can
+// be approved onto the PR path. Supplying them here binds the target in one
+// shot.
 type CreateContentRequest struct {
-	Title  string `json:"title"`
-	BodyMD string `json:"bodyMd"`
+	Title      string `json:"title"`
+	BodyMD     string `json:"bodyMd"`
+	TargetRepo string `json:"targetRepo"`
+	TargetPath string `json:"targetPath"`
 }
 
 // UpdateContentRequest is the PUT /v1/content/{id} payload — the interactive
@@ -182,10 +188,12 @@ func (s *Store) CreateContent(ctx context.Context, sess auth.Session, req Create
 		return appcontent.Content{}, ErrForbidden
 	}
 	out, err := s.ingestDraft(ctx, DepositRequest{
-		Owner:  sess.Subject,
-		Source: appcontent.SourceManual,
-		Title:  req.Title,
-		BodyMD: req.BodyMD,
+		Owner:      sess.Subject,
+		Source:     appcontent.SourceManual,
+		Title:      req.Title,
+		BodyMD:     req.BodyMD,
+		TargetRepo: req.TargetRepo,
+		TargetPath: req.TargetPath,
 	})
 	s.audit(ctx, sess, verbCreate, kindContent, out.ID, err == nil)
 	return out, err
@@ -235,6 +243,25 @@ func (s *Store) UpdateContent(ctx context.Context, sess auth.Session, id string,
 	}
 	if req.Status != nil && !appcontent.ValidContentStatus(*req.Status) {
 		return appcontent.Content{}, fmt.Errorf("%w: unknown content status %q", ErrBadRequest, *req.Status)
+	}
+	// PR-eligibility invariant (ISI-7971): a draft may only advance to a
+	// PR-handoff state once it names where it will be published. The target may
+	// be bound in this same request or already stored, so the check is against
+	// the EFFECTIVE target (patch value wins over stored). This is where a draft
+	// with no target "remains editable but is not PR-eligible" — the edit
+	// succeeds, the approve does not. The rule is source-agnostic, so a manual
+	// draft rides the identical review → approve → PR path as a recycled one.
+	if req.Status != nil && appcontent.IsPRHandoff(*req.Status) {
+		effRepo, effPath := cur.TargetRepo, cur.TargetPath
+		if req.TargetRepo != nil {
+			effRepo = *req.TargetRepo
+		}
+		if req.TargetPath != nil {
+			effPath = *req.TargetPath
+		}
+		if effRepo == "" || effPath == "" {
+			return appcontent.Content{}, fmt.Errorf("%w: a draft needs a target repo and path before it can be %s", ErrBadRequest, *req.Status)
+		}
 	}
 	out, err := s.db.UpdateContent(ctx, id, appcontent.ContentPatch{
 		Title:      req.Title,

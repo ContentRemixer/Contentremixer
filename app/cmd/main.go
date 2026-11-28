@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	contentremixerv1alpha1 "github.com/ContentRemixer/Contentremixer/app/api/v1alpha1"
+	appcontent "github.com/ContentRemixer/Contentremixer/app/content"
 	"github.com/ContentRemixer/Contentremixer/app/internal/controller"
 	"github.com/ContentRemixer/Contentremixer/app/internal/dispatch"
 	"github.com/ContentRemixer/Contentremixer/app/internal/githubapp"
@@ -184,6 +185,8 @@ func main() {
 	var pgvectorDSN string
 	var personaNamespace string
 	var contentStyleNamespace string
+	var contentDSN string
+	var recycleDraftOwner string
 	var substrateEndpoint string
 	var mediaActorImage string
 	var enableLeaderElection bool
@@ -201,6 +204,10 @@ func main() {
 		"Namespace DevRelPersona CRs live in, for write-time conditioning lookup. Defaults to the pod namespace (POD_NAMESPACE) when empty.")
 	flag.StringVar(&contentStyleNamespace, "contentstyle-namespace", os.Getenv("CONTENTSTYLE_NAMESPACE"),
 		"Namespace ContentStyle CRs (global output-format style guides) live in, for write-time style resolution (ISI-7965 W2). Defaults to the pod namespace (POD_NAMESPACE) when empty. Empty keeps the writer repo-file sourced (transitional).")
+	flag.StringVar(&contentDSN, "content-dsn", os.Getenv("CONTENT_DSN"),
+		"Postgres DSN for the booth.contents table the recycle pipeline deposits ContentDrafts into (C2, ISI-7969). Defaults to PGVECTOR_DSN (the same Postgres Booth uses for BOOTH_CONTENT_DSN) when unset. Empty keeps the recycle terminus on the pre-C2 open-a-PR path.")
+	flag.StringVar(&recycleDraftOwner, "recycle-draft-owner", os.Getenv("RECYCLE_DRAFT_OWNER"),
+		"Owner subject stamped on deposited recycle drafts (§6.3 tenant). Recycle runs are platform-owned, so this is a sentinel (default system:recycle, Admin-visible) or a DevRel subject. Never empty — an empty owner is invisible to everyone but an Admin and rejected by the ingest seam.")
 	flag.StringVar(&substrateEndpoint, "substrate-endpoint", os.Getenv("SUBSTRATE_ENDPOINT"),
 		"Substrate control-plane base URL (agentgateway front door, e.g. http://substrate.contentremixer.svc:8080). Set with --media-actor-image to flip the media template from a k8s-Job to a substrate actor (ISI-7397). Empty keeps the k8s-Job path.")
 	flag.StringVar(&mediaActorImage, "media-actor-image", os.Getenv("MEDIA_ACTOR_IMAGE"),
@@ -234,6 +241,16 @@ func main() {
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	// C2 (ISI-7969): the content DSN defaults to the pgvector DSN — Booth's
+	// BOOTH_CONTENT_DSN points at the same Postgres, so the operator already has
+	// the credential — and the draft owner to an Admin-visible sentinel.
+	if contentDSN == "" {
+		contentDSN = pgvectorDSN
+	}
+	if recycleDraftOwner == "" {
+		recycleDraftOwner = "system:recycle"
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -416,6 +433,23 @@ func main() {
 			Checker:   checker.New(),
 			Assembler: &pr.Assembler{GitHub: &pr.GitHubClient{}},
 			Comments:  &githubapp.GitHubClient{},
+		}
+		// C2 (ISI-7969): when a content DSN is configured, the recycle terminus
+		// DEPOSITS a ContentDraft into /content (source=recycle) instead of
+		// opening a PR — the scrubber's findings ride along as annotations, not a
+		// fail-closed block. Without it, the terminus stays on the pre-C2
+		// assemble-a-PR path (which C3 also reuses on approval), so an operator
+		// without the DSN is byte-for-byte unchanged.
+		if contentDSN != "" {
+			contentStore, err := appcontent.Open(runCtx, contentDSN)
+			if err != nil {
+				setupLog.Error(err, "recycle deposit disabled: cannot open content store (terminus falls back to opening a PR)")
+			} else {
+				defer contentStore.Close()
+				contentRunner.Deposit = contentStore
+				contentRunner.DraftOwner = recycleDraftOwner
+				setupLog.Info("recycle terminus deposits ContentDrafts", "draftOwner", recycleDraftOwner)
+			}
 		}
 		// SEO enrichment (ISI-7806): a bounded post-write LLM pass that fills
 		// Mix.Meta (description/canonical_url/primary_keyword/tags + JSON-LD)

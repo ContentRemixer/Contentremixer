@@ -28,6 +28,55 @@ func testStore(t *testing.T) *Store {
 	return st
 }
 
+// TestDepositIdempotentPerOrigin proves a repeat recycle deposit for the same
+// origin (GitHub's opened+labeled double-fire) REFRESHES the one draft rather
+// than spawning a duplicate, and never regresses a human-advanced status.
+func TestDepositIdempotentPerOrigin(t *testing.T) {
+	st := testStore(t)
+	ctx := context.Background()
+	origin := &Origin{Repo: "Org/Repo", Issue: 7}
+
+	first, err := st.Deposit(ctx, DepositRequest{Owner: "system:recycle", Source: SourceRecycle, Title: "v1", BodyMD: "body one", Origin: origin, TargetRepo: "Org/Repo", TargetPath: "recycled/7-blog/index.md"})
+	if err != nil {
+		t.Fatalf("first deposit: %v", err)
+	}
+	// A human moves it along before the webhook redelivers.
+	inReview := ContentInReview
+	if _, err := st.Backfill(ctx, first.ID, BackfillRequest{Status: &inReview}); err != nil {
+		t.Fatalf("advance status: %v", err)
+	}
+
+	second, err := st.Deposit(ctx, DepositRequest{Owner: "system:recycle", Source: SourceRecycle, Title: "v2", BodyMD: "body two", Origin: origin, TargetRepo: "Org/Repo", TargetPath: "recycled/7-blog/index.md"})
+	if err != nil {
+		t.Fatalf("second deposit: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("re-deposit spawned a duplicate: %s != %s", second.ID, first.ID)
+	}
+	if second.BodyMD != "body two" || second.Title != "v2" {
+		t.Errorf("re-deposit did not refresh content: %+v", second)
+	}
+	if second.Status != ContentInReview {
+		t.Errorf("re-deposit regressed status to %q, want in_review preserved", second.Status)
+	}
+	all, err := st.ListContents(ctx, "system:recycle")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("expected exactly one draft for the origin, got %d", len(all))
+	}
+
+	// A DIFFERENT origin is a distinct draft.
+	other, err := st.Deposit(ctx, DepositRequest{Owner: "system:recycle", Source: SourceRecycle, Title: "o", BodyMD: "b", Origin: &Origin{Repo: "Org/Repo", Issue: 8}})
+	if err != nil {
+		t.Fatalf("other-origin deposit: %v", err)
+	}
+	if other.ID == first.ID {
+		t.Fatalf("different origin must be a distinct draft")
+	}
+}
+
 func TestStore_ContentLifecycle(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()

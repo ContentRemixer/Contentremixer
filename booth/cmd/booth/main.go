@@ -159,6 +159,19 @@ func run() error {
 	// no external dependency, so it is always wired; the gate stamps RunContext.
 	// Owner from the session and reuses the P3-1 §6.3 predicate.
 	srv = srv.WithTutorialRuns(tutorialrun.New(tutorialrun.NewMemoryRepo(), teamengine.New(k8s, namespace), auditor))
+	// Approval→publish terminal action (ISI-7970 C3). Needs the content store
+	// (the draft) and a GitHub token (same per-repo PAT as the dual-approval
+	// reflector; swappable for an ISI-7836 App installation token later). Wired
+	// only when both are present, else POST /v1/content/{id}/publish is unmounted.
+	if contentStore != nil {
+		if token := os.Getenv("BOOTH_GITHUB_TOKEN"); token != "" {
+			publisher := approve.NewGitHubPublisher(token, os.Getenv("BOOTH_GITHUB_API_URL"))
+			srv = srv.WithDraftPublish(approve.NewDraftGate(contentStore, publisher, auditor))
+			log.Info("approval→publish enabled")
+		} else {
+			log.Info("approval→publish disabled: BOOTH_GITHUB_TOKEN not set")
+		}
+	}
 	// Write-only Secret-write path for the reference-repo create flow (ISI-7776
 	// W2). Reuses the Booth SA's k8s client + namespace; the Secret-write SA RBAC
 	// is granted in deploy. Always wired — the create flow needs it to produce a

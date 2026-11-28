@@ -14,10 +14,32 @@ import (
 // approve.Store. A nil store (Booth built without a GitHub token) leaves the
 // route unmounted.
 func (s *Server) mountApprove(mux *http.ServeMux) {
-	if s.approve == nil {
+	if s.approve != nil {
+		mux.Handle("POST /v1/approve", s.protect(s.approvePR))
+	}
+	// Approval→publish terminal action (ISI-7970 C3). Independent of the
+	// reflect-onto-existing-PR action above: it needs the content store + a
+	// publisher token, wired as the DraftGate. Unmounted when absent.
+	if s.publishDraft != nil {
+		mux.Handle("POST /v1/content/{id}/publish", s.protect(s.publishContentDraft))
+	}
+}
+
+// publishContentDraft is the terminal approve action: approving a reviewed draft
+// opens exactly one PR to its target repo, records the link on the draft and the
+// origin issue, and moves the draft to published (ISI-7970 C3).
+func (s *Server) publishContentDraft(w http.ResponseWriter, r *http.Request) {
+	sess, ok := session(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	mux.Handle("POST /v1/approve", s.protect(s.approvePR))
+	out, err := s.publishDraft.PublishDraft(r.Context(), sess, r.PathValue("id"))
+	if err != nil {
+		s.writeApproveErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) approvePR(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +72,8 @@ func (s *Server) writeApproveErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, approve.ErrBadRequest):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, approve.ErrBlocked):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, approve.ErrReflect):
 		s.log.Error("booth approve reflection error", slog.Any("err", err))
 		writeError(w, http.StatusBadGateway, "reflecting approval to GitHub failed")

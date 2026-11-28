@@ -10,6 +10,7 @@ import {
 import { OnboardRepoButton } from "./admin/RepoOnboardWizard";
 import { NewAgentButton, EditAgentSkillsButton } from "./admin/AgentForm";
 import { NewTeamButton, EditTeamButton } from "./admin/TeamForm";
+import { ContentStylesTab } from "./admin/ContentStylePanel";
 
 // AdminPage is the C1–C4 admin console (W6 / ISI-7213). Four Admin-only surfaces:
 // Users & roles (brand-new CRUD API), plus Personas / Reference repos / Model
@@ -22,7 +23,7 @@ export function AdminPage() {
       <header className="mb-6">
         <h1 className="text-xl font-semibold text-text">Admin</h1>
         <p className="mt-1 text-sm text-text-muted">
-          Platform configuration — personas, reference repos, model profiles, agents, and users &amp; roles.
+          Platform configuration — personas, reference repos, model profiles, content styles, agents, and users &amp; roles.
         </p>
       </header>
 
@@ -32,6 +33,7 @@ export function AdminPage() {
           <TabsTrigger value="personas">Personas</TabsTrigger>
           <TabsTrigger value="repos">Reference repos</TabsTrigger>
           <TabsTrigger value="models">Model profiles</TabsTrigger>
+          <TabsTrigger value="styles">Content styles</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="orchestration">Orchestration</TabsTrigger>
         </TabsList>
@@ -134,6 +136,10 @@ export function AdminPage() {
               }),
             }}
           />
+        </TabsContent>
+
+        <TabsContent value="styles">
+          <ContentStylesTab />
         </TabsContent>
 
         <TabsContent value="agents">

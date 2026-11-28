@@ -46,6 +46,8 @@ export interface MockData {
   agents: Record<string, unknown>[];
   /** AgentTeam CRs for the Orchestration tab (ISI-7804). */
   agentteams: Record<string, unknown>[];
+  /** ContentStyle CRs for the Admin "Content styles" tab (ISI-7965 W4). */
+  contentStyles: Record<string, unknown>[];
   /** GET /v1/skillpacks response (ISI-7856 W1): catalog + default composition. */
   skillpacks: { packs: Record<string, unknown>[]; defaults: Record<string, string[]>; dynamicFallback: boolean };
   // --- DevRel onboarding + persona management (D6/D7, ISI-7361/7362) -------
@@ -76,6 +78,7 @@ export function defaults(overrides: Partial<MockData> = {}): MockData {
     models: [],
     agents: [],
     agentteams: [],
+    contentStyles: [],
     skillpacks: { packs: [], defaults: {}, dynamicFallback: true },
     styleProfiles: {},
     contentTest: null,
@@ -214,6 +217,42 @@ export async function installApi(page: Page, data: MockData): Promise<MockData> 
       }
     }
     if (p === "/v1/modelprofiles" && method === "GET") return json(route, 200, data.models);
+    // ISI-7965 W4: ContentStyle CRUD for the Admin "Content styles" tab — the
+    // same generic shape as the agentteams stub (list/create/get/put/delete).
+    if (p === "/v1/contentstyles" && method === "GET") return json(route, 200, data.contentStyles);
+    if (p === "/v1/contentstyles" && method === "POST") {
+      const b = bodyOf();
+      const created = {
+        metadata: (b.metadata as Record<string, unknown>) ?? {},
+        spec: (b.spec as Record<string, unknown>) ?? {},
+        status: {},
+      };
+      data.contentStyles.push(created);
+      return json(route, 201, created);
+    }
+    const styleName = p.startsWith("/v1/contentstyles/")
+      ? decodeURIComponent(p.slice("/v1/contentstyles/".length))
+      : null;
+    if (styleName) {
+      const idx = data.contentStyles.findIndex(
+        (x) => (x.metadata as { name?: string })?.name === styleName,
+      );
+      if (method === "GET") {
+        return idx >= 0 ? json(route, 200, data.contentStyles[idx]) : json(route, 404, { error: "not found" });
+      }
+      if (method === "PUT") {
+        const b = bodyOf();
+        const next = { ...(idx >= 0 ? data.contentStyles[idx] : {}), metadata: b.metadata, spec: b.spec };
+        if (idx >= 0) data.contentStyles[idx] = next;
+        else data.contentStyles.push(next);
+        return json(route, 200, next);
+      }
+      if (method === "DELETE") {
+        if (idx >= 0) data.contentStyles.splice(idx, 1);
+        return route.fulfill({ status: 204 });
+      }
+    }
+
     // ISI-7856 W1: the skill-pack catalog + default composition the "Skills…"
     // editor reads on open (ISI-7858). Admin-gated server-side; here it is a
     // pure read from the fixture.

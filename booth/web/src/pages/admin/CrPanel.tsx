@@ -10,6 +10,11 @@ import {
   DialogFooter,
   Field,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
   useToast,
 } from "../../ui";
@@ -37,6 +42,14 @@ export interface CrCreateField {
   required?: boolean;
   hint?: string;
   multiline?: boolean;
+  /**
+   * Render a select instead of a free-text input — for fields whose value set
+   * is a server-side enum (e.g. ContentStyle.spec.outputFormat, ISI-7965 W4).
+   * Free text on such fields is an avoidable webhook 400.
+   */
+  options?: string[];
+  /** Rows for a multiline field; defaults to the Textarea's own default. */
+  rows?: number;
 }
 
 export interface CrCreateSpec {
@@ -230,9 +243,26 @@ function CreateDialog({
           {spec.fields.map((f) => (
             <Field key={f.key} label={f.label} hint={f.hint} required={f.required}>
               {({ id }) =>
-                f.multiline ? (
+                f.options ? (
+                  <Select
+                    value={values[f.key] ?? undefined}
+                    onValueChange={(v) => setValues((s) => ({ ...s, [f.key]: v }))}
+                  >
+                    <SelectTrigger id={id}>
+                      <SelectValue placeholder="Select…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {f.options.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : f.multiline ? (
                   <Textarea
                     id={id}
+                    rows={f.rows}
                     value={values[f.key] ?? ""}
                     onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
                   />
